@@ -18,12 +18,21 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
   const [keyPoints, setKeyPoints] = useState(initial?.keyPoints.join('\n') ?? '')
   const [tagsInput, setTagsInput] = useState(initial?.tags.join(', ') ?? '')
   const [source, setSource] = useState(initial?.source ?? '')
+  const [accuracyInput, setAccuracyInput] = useState(() =>
+    initial?.accuracy != null ? String(initial.accuracy) : '',
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async () => {
     if (!title.trim()) {
       setError('请填写母题题干')
+      return
+    }
+    const accuracyRaw = accuracyInput.trim()
+    const accuracy = accuracyRaw === '' ? undefined : Number(accuracyRaw)
+    if (accuracy !== undefined && (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100)) {
+      setError('正确率需为 0–100 的数字')
       return
     }
     setSaving(true)
@@ -39,6 +48,7 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
         keyPoints: keyPoints.split('\n').map((line) => line.trim()).filter(Boolean),
         tags: parseTags(tagsInput),
         source: source.trim() || undefined,
+        accuracy,
         createdAt: initial?.createdAt ?? now,
         updatedAt: now,
       }
@@ -101,6 +111,29 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
           style={{ minHeight: 90 }}
         />
         <span className="form-hint">每行一条，保存后会自动拆分为要点列表</span>
+      </div>
+
+      <div className="form-field" style={{ maxWidth: 260 }}>
+        <label className="form-label">自评正确率（可选）</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={accuracyInput}
+            onChange={(e) => {
+              const value = e.target.value
+              if (value === '') { setAccuracyInput(''); return }
+              const num = Number(value)
+              if (Number.isFinite(num) && num >= 0 && num <= 100) setAccuracyInput(value)
+            }}
+            placeholder="0–100"
+          />
+          <span className="small muted" style={{ flex: '0 0 auto' }}>%</span>
+        </div>
+        <span className="form-hint">手动记录这类母题的掌握程度</span>
       </div>
 
       <div className="form-field">

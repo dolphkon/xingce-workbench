@@ -97,6 +97,7 @@ export default function MotherDetail() {
           <h2 className="card-title">母题题干</h2>
           <div className="tag-row">
             <span className="chip chip-primary">{item.type}</span>
+            {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
             {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
             {item.source && <span className="chip">来源：{item.source}</span>}
           </div>

@@ -99,6 +99,7 @@ export default function MistakeDetail() {
           <h2 className="card-title">题目</h2>
           <div className="tag-row">
             <span className="chip chip-primary">{item.type}</span>
+            {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
             {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
             {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
           </div>

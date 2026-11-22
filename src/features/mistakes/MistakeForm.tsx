@@ -33,6 +33,9 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const [analysis, setAnalysis] = useState(initial?.analysis ?? '')
   const [tagsInput, setTagsInput] = useState(initial?.tags.join(', ') ?? '')
   const [source, setSource] = useState(initial?.source ?? '')
+  const [accuracyInput, setAccuracyInput] = useState(() =>
+    initial?.accuracy != null ? String(initial.accuracy) : '',
+  )
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const imagesRef = useRef(images)
   const [motherId, setMotherId] = useState(initial?.motherId ?? '')
@@ -132,6 +135,12 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
       setError('请填写题干（可用 OCR 识别后校对）')
       return
     }
+    const accuracyRaw = accuracyInput.trim()
+    const accuracy = accuracyRaw === '' ? undefined : Number(accuracyRaw)
+    if (accuracy !== undefined && (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100)) {
+      setError('正确率需为 0–100 的数字')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -146,6 +155,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         analysis: analysis.trim(),
         tags: parseTags(tagsInput),
         source: source.trim() || undefined,
+        accuracy,
         images,
         createdAt: initial?.createdAt ?? now,
         updatedAt: now,
@@ -238,6 +248,29 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
           onChange={(e) => setAnalysis(e.target.value)}
           placeholder="错因、正确思路、易错点…"
         />
+      </div>
+
+      <div className="form-field" style={{ maxWidth: 260 }}>
+        <label className="form-label">自评正确率（可选）</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={accuracyInput}
+            onChange={(e) => {
+              const value = e.target.value
+              if (value === '') { setAccuracyInput(''); return }
+              const num = Number(value)
+              if (Number.isFinite(num) && num >= 0 && num <= 100) setAccuracyInput(value)
+            }}
+            placeholder="0–100"
+          />
+          <span className="small muted" style={{ flex: '0 0 auto' }}>%</span>
+        </div>
+        <span className="form-hint">手动记录自评正确率，与刷题统计相互独立</span>
       </div>
 
       <div className="form-field">

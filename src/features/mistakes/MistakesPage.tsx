@@ -102,6 +102,7 @@ export default function MistakesPage() {
                     </Link>
                     <div className="item-meta">
                       <span className="chip chip-primary">{item.type}</span>
+                      {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
                       {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
                       {item.answer && <span className="chip chip-success">答案 {item.answer}</span>}
                       {item.userAnswer && item.userAnswer !== item.answer && (

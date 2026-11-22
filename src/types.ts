@@ -26,6 +26,8 @@ export interface Mistake {
   correctCount: number
   motherId?: string
   source?: string
+  /** 用户手填的正确率（0–100），与刷题统计相互独立 */
+  accuracy?: number
 }
 
 export interface KnowledgeDoc {
@@ -47,6 +49,8 @@ export interface MotherQuestion {
   keyPoints: string[]
   tags: string[]
   source?: string
+  /** 用户手填的正确率（0–100） */
+  accuracy?: number
   createdAt: number
   updatedAt: number
 }

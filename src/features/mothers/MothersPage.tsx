@@ -99,6 +99,7 @@ export default function MothersPage() {
                         <div className="item-title" style={{ color: 'var(--primary)' }}>{formatQuestionText(item.title).replace(/\n/g, ' ')}</div>
                         <div className="item-meta">
                           <span className="chip chip-primary">{item.type}</span>
+                          {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
                           {item.point && <span className="chip chip-warning">{item.point}</span>}
                           {item.source && <span className="chip">来源：{item.source}</span>}
                           {related.length > 0 && <span className="chip chip-success">关联 {related.length} 道错题</span>}
