@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { getById, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
-import { formatDate } from '../../lib/utils'
+import { formatDate, formatQuestionText } from '../../lib/utils'
 import type { Mistake } from '../../types'
 import MistakeForm from './MistakeForm'
 
@@ -77,11 +77,12 @@ export default function MistakeDetail() {
           <h2 className="card-title">题目</h2>
           <div className="tag-row">
             <span className="chip chip-primary">{item.type}</span>
+            {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
             {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
           </div>
         </div>
         <div className="card-body">
-          <div className="question-text">{item.title}</div>
+          <div className="question-text">{formatQuestionText(item.title)}</div>
 
           {item.images.length > 0 && (
             <div className="image-grid" style={{ marginTop: 16 }}>

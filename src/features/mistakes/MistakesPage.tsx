@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
-import { pluralDays } from '../../lib/utils'
+import { formatQuestionText, pluralDays } from '../../lib/utils'
 import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
@@ -24,7 +24,7 @@ export default function MistakesPage() {
       if (type !== '全部' && item.type !== type) return false
       if (days !== '全部' && item.createdAt < cutoff) return false
       if (keyword.trim()) {
-        const text = `${item.title} ${item.analysis} ${item.answer} ${item.tags.join(' ')}`.toLowerCase()
+        const text = `${item.title} ${item.analysis} ${item.answer} ${item.tags.join(' ')} ${item.source ?? ''}`.toLowerCase()
         if (!text.includes(keyword.trim().toLowerCase())) return false
       }
       return true
@@ -98,10 +98,11 @@ export default function MistakesPage() {
                 <div className="list-item" key={item.id}>
                   <div className="list-item-main">
                     <Link to={`/mistakes/${item.id}`} className="item-title" style={{ display: 'block' }}>
-                      {item.title}
+                      {formatQuestionText(item.title).replace(/\n/g, ' ')}
                     </Link>
                     <div className="item-meta">
                       <span className="chip chip-primary">{item.type}</span>
+                      {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
                       {item.answer && <span className="chip chip-success">答案 {item.answer}</span>}
                       {item.userAnswer && item.userAnswer !== item.answer && (
                         <span className="chip chip-danger">当时选 {item.userAnswer}</span>

@@ -3,7 +3,7 @@ import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
 import { compressImage } from '../../lib/image'
 import { parseQuestionText, recognizeImage } from '../../lib/ocr'
-import { parseTags, uid } from '../../lib/utils'
+import { formatQuestionText, parseTags, uid } from '../../lib/utils'
 import {
   QUESTION_TYPES,
   type Mistake,
@@ -32,6 +32,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const [userAnswer, setUserAnswer] = useState(initial?.userAnswer ?? '')
   const [analysis, setAnalysis] = useState(initial?.analysis ?? '')
   const [tagsInput, setTagsInput] = useState(initial?.tags.join(', ') ?? '')
+  const [source, setSource] = useState(initial?.source ?? '')
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const imagesRef = useRef(images)
   const [motherId, setMotherId] = useState(initial?.motherId ?? '')
@@ -70,11 +71,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
 
       if (hasOptions) {
         // 只覆盖识别出的选项，保留用户已填的其他内容
-        setOptions((prev) => parsed.options.map((option, i) => option.trim() || prev[i] || ''))
+        setOptions((prev) => parsed.options.map((option, i) => formatQuestionText(option) || prev[i] || ''))
       }
       // 有选项时题干只保留题目文字，避免把选项重复塞进题干
       const stem = hasOptions ? parsed.stem : text
-      if (stem) setTitle((prev) => (prev.trim() ? `${prev.trim()}\n${stem}` : stem))
+      if (stem) setTitle((prev) => formatQuestionText(prev.trim() ? `${prev.trim()}\n${stem}` : stem))
       if (parsed.answer) setAnswer((prev) => (prev.trim() ? prev : parsed.answer))
     } catch (err) {
       setOcrError(err instanceof Error ? err.message : '识别失败')
@@ -137,13 +138,14 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
       const now = Date.now()
       const record: Mistake = {
         id: initial?.id ?? uid(),
-        title: title.trim(),
+        title: formatQuestionText(title),
         type,
         options,
         answer: answer.trim().toUpperCase(),
         userAnswer: userAnswer.trim().toUpperCase(),
         analysis: analysis.trim(),
         tags: parseTags(tagsInput),
+        source: source.trim() || undefined,
         images,
         createdAt: initial?.createdAt ?? now,
         updatedAt: now,
@@ -171,9 +173,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
           className="textarea"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="粘贴题目文字，或通过下方图片使用 OCR 识别后校对"
+          onBlur={() => setTitle((prev) => formatQuestionText(prev))}
+          placeholder="粘贴题目文字，或通过下方图片使用 OCR 识别后校对；离开输入框时自动排版对齐"
           style={{ minHeight: 110 }}
         />
+        <span className="form-hint">粘贴或识别后离开输入框，会自动清理多余空格并规整换行</span>
       </div>
 
       <div className="form-row">
@@ -234,6 +238,17 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
           onChange={(e) => setAnalysis(e.target.value)}
           placeholder="错因、正确思路、易错点…"
         />
+      </div>
+
+      <div className="form-field">
+        <label className="form-label">题目来源</label>
+        <input
+          className="input"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          placeholder="如：2024 国考行测真题、某教材第 3 章、某 APP 模考"
+        />
+        <span className="form-hint">记录这道题的出处，方便日后追溯</span>
       </div>
 
       <div className="form-field">

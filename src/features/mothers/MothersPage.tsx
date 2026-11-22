@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
+import { formatQuestionText } from '../../lib/utils'
 import { useCollection } from '../../lib/hooks'
 import { QUESTION_TYPES, type MotherQuestion, type QuestionType } from '../../types'
 import MotherForm from './MotherForm'
@@ -19,7 +20,7 @@ export default function MothersPage() {
     .filter((item) => {
       if (type !== '全部' && item.type !== type) return false
       if (keyword.trim()) {
-        const text = `${item.title} ${item.point} ${item.modelAnswer} ${item.keyPoints.join(' ')} ${item.tags.join(' ')}`.toLowerCase()
+        const text = `${item.title} ${item.point} ${item.modelAnswer} ${item.keyPoints.join(' ')} ${item.tags.join(' ')} ${item.source ?? ''}`.toLowerCase()
         if (!text.includes(keyword.trim().toLowerCase())) return false
       }
       return true
@@ -89,10 +90,11 @@ export default function MothersPage() {
                         <Icon name="chevron" size={16} style={{ transform: isOpen ? 'rotate(90deg)' : undefined }} />
                       </button>
                       <div className="list-item-main" onClick={() => setExpanded(isOpen ? null : item.id)} style={{ cursor: 'pointer' }}>
-                        <div className="item-title">{item.title}</div>
+                        <div className="item-title">{formatQuestionText(item.title).replace(/\n/g, ' ')}</div>
                         <div className="item-meta">
                           <span className="chip chip-primary">{item.type}</span>
                           {item.point && <span className="chip chip-warning">{item.point}</span>}
+                          {item.source && <span className="chip">来源：{item.source}</span>}
                           {related.length > 0 && <span className="chip chip-success">关联 {related.length} 道错题</span>}
                           {item.tags.slice(0, 3).map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
                         </div>
@@ -105,7 +107,13 @@ export default function MothersPage() {
 
                     {isOpen && (
                       <div className="expand-panel">
-                        <div className="form-label">解题思路</div>
+                        {item.source && (
+                          <>
+                            <div className="form-label">题目来源</div>
+                            <div className="analysis-block" style={{ color: 'var(--text)' }}>{item.source}</div>
+                          </>
+                        )}
+                        <div className="form-label" style={{ marginTop: item.source ? 14 : 0 }}>解题思路</div>
                         <div className="analysis-block" style={{ color: 'var(--text)' }}>
                           {item.modelAnswer || '暂无解题思路'}
                         </div>

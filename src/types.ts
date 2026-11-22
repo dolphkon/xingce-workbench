@@ -25,6 +25,7 @@ export interface Mistake {
   reviewCount: number
   correctCount: number
   motherId?: string
+  source?: string
 }
 
 export interface KnowledgeDoc {
@@ -45,6 +46,7 @@ export interface MotherQuestion {
   modelAnswer: string
   keyPoints: string[]
   tags: string[]
+  source?: string
   createdAt: number
   updatedAt: number
 }

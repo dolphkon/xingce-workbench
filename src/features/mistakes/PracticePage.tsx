@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
+import { formatQuestionText } from '../../lib/utils'
 import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
 
 interface PracticeResult {
@@ -238,7 +239,10 @@ export default function PracticePage() {
 
       <div className="card">
         <div className="card-body">
-          <div className="question-text" style={{ fontSize: 15 }}>{current.title}</div>
+          <div className="question-text" style={{ fontSize: 15 }}>{formatQuestionText(current.title)}</div>
+          {current.source && (
+            <div className="small muted" style={{ marginTop: 6 }}>来源：{current.source}</div>
+          )}
 
           {current.images.length > 0 && (
             <div className="image-grid" style={{ marginTop: 16 }}>

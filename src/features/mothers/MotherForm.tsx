@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
-import { parseTags, uid } from '../../lib/utils'
+import { formatQuestionText, parseTags, uid } from '../../lib/utils'
 import { QUESTION_TYPES, type MotherQuestion, type QuestionType } from '../../types'
 
 interface Props {
@@ -17,6 +17,7 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
   const [modelAnswer, setModelAnswer] = useState(initial?.modelAnswer ?? '')
   const [keyPoints, setKeyPoints] = useState(initial?.keyPoints.join('\n') ?? '')
   const [tagsInput, setTagsInput] = useState(initial?.tags.join(', ') ?? '')
+  const [source, setSource] = useState(initial?.source ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,12 +32,13 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
       const now = Date.now()
       const record: MotherQuestion = {
         id: initial?.id ?? uid(),
-        title: title.trim(),
+        title: formatQuestionText(title),
         type,
         point: point.trim(),
         modelAnswer: modelAnswer.trim(),
         keyPoints: keyPoints.split('\n').map((line) => line.trim()).filter(Boolean),
         tags: parseTags(tagsInput),
+        source: source.trim() || undefined,
         createdAt: initial?.createdAt ?? now,
         updatedAt: now,
       }
@@ -58,9 +60,11 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
           className="textarea"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => setTitle((prev) => formatQuestionText(prev))}
           placeholder="描述这类题的通用题干模型，可用「某…」作为占位"
           style={{ minHeight: 100 }}
         />
+        <span className="form-hint">离开输入框时自动清理多余空格并规整换行</span>
       </div>
 
       <div className="form-row">
@@ -97,6 +101,17 @@ export default function MotherForm({ initial, onSaved, onCancel }: Props) {
           style={{ minHeight: 90 }}
         />
         <span className="form-hint">每行一条，保存后会自动拆分为要点列表</span>
+      </div>
+
+      <div className="form-field">
+        <label className="form-label">题目来源</label>
+        <input
+          className="input"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          placeholder="如：2024 国考行测真题、某教材第 3 章"
+        />
+        <span className="form-hint">记录这类母题的出处的通用来源</span>
       </div>
 
       <div className="form-field">
