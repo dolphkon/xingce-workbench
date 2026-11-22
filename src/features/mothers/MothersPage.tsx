@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
 import { formatQuestionText } from '../../lib/utils'
@@ -9,6 +9,7 @@ import MotherForm from './MotherForm'
 
 export default function MothersPage() {
   const { items, loading, error, refresh } = useCollection('mothers')
+  const navigate = useNavigate()
   const mistakes = useCollection('mistakes')
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState<QuestionType | '全部'>('全部')
@@ -89,8 +90,13 @@ export default function MothersPage() {
                       <button className="icon-btn" onClick={() => setExpanded(isOpen ? null : item.id)} title={isOpen ? '收起' : '展开'}>
                         <Icon name="chevron" size={16} style={{ transform: isOpen ? 'rotate(90deg)' : undefined }} />
                       </button>
-                      <div className="list-item-main" onClick={() => setExpanded(isOpen ? null : item.id)} style={{ cursor: 'pointer' }}>
-                        <div className="item-title">{formatQuestionText(item.title).replace(/\n/g, ' ')}</div>
+                      <div
+                        className="list-item-main"
+                        onClick={() => navigate(`/mothers/${item.id}`)}
+                        style={{ cursor: 'pointer' }}
+                        title="点击进入母题详情，可翻看上一题 / 下一题"
+                      >
+                        <div className="item-title" style={{ color: 'var(--primary)' }}>{formatQuestionText(item.title).replace(/\n/g, ' ')}</div>
                         <div className="item-meta">
                           <span className="chip chip-primary">{item.type}</span>
                           {item.point && <span className="chip chip-warning">{item.point}</span>}

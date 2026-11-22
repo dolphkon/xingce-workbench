@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
+import { QuestionNavigator } from '../../components/QuestionNavigator'
 import { getById, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
@@ -15,6 +16,14 @@ export default function MistakeDetail() {
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const mothers = useCollection('mothers')
+  const { items: allMistakes } = useCollection('mistakes')
+  // 与错题库列表保持一致：按录入时间倒序
+  const navItems = [...allMistakes]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((m) => ({
+      id: m.id,
+      label: (formatQuestionText(m.title).replace(/\n/g, ' ').slice(0, 24) || '未命名错题'),
+    }))
 
   const load = useCallback(async () => {
     if (!id) return
@@ -71,6 +80,14 @@ export default function MistakeDetail() {
           </button>
         </div>
       </div>
+
+      <QuestionNavigator
+        items={navItems}
+        currentId={item.id}
+        basePath="/mistakes"
+        compact
+        enabled={!editing && !deleting}
+      />
 
       <div className="card">
         <div className="card-header">
@@ -145,6 +162,14 @@ export default function MistakeDetail() {
           )}
         </div>
       </div>
+
+      <QuestionNavigator
+        items={navItems}
+        currentId={item.id}
+        basePath="/mistakes"
+        enabled={!editing && !deleting}
+        footer
+      />
 
       {editing && (
         <Modal title="编辑错题" onClose={() => setEditing(false)} wide>
