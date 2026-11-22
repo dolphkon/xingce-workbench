@@ -85,12 +85,24 @@ export default function MistakesPage() {
             <EmptyState
               icon="target"
               title={items.length === 0 ? '错题库还是空的' : '没有符合条件的错题'}
-              description={items.length === 0 ? '上传题目截图用 OCR 识别录入，或直接手动填写' : '试试调整搜索词或筛选条件'}
-              action={items.length === 0 ? (
-                <button className="btn btn-primary" onClick={() => setEditing('new')}>
-                  <Icon name="plus" size={15} /> 录入第一道错题
-                </button>
-              ) : undefined}
+              description={items.length === 0
+                ? '上传题目截图用 OCR 识别录入，或直接手动填写'
+                : '试试调整搜索词或筛选条件，也可以直接录入一道新错题'}
+              action={
+                <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {items.length > 0 && (
+                    <button
+                      className="btn"
+                      onClick={() => { setKeyword(''); setType('全部'); setDays('全部') }}
+                    >
+                      清除筛选
+                    </button>
+                  )}
+                  <button className="btn btn-primary" onClick={() => setEditing('new')}>
+                    <Icon name="plus" size={15} /> {items.length === 0 ? '录入第一道错题' : '录入错题'}
+                  </button>
+                </div>
+              }
             />
           ) : (
             <div className="list">
