@@ -2,8 +2,12 @@ import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
+import {
+  ACCURACY_RANGES, isAccuracyRange, isDateRange, matchesAccuracy, matchesDate,
+  type AccuracyRange, type DateRange,
+} from '../../lib/filters'
 import { useCollection } from '../../lib/hooks'
-import { formatQuestionText } from '../../lib/utils'
+import { dateKey, formatQuestionText } from '../../lib/utils'
 import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
 
 interface PracticeResult {
@@ -13,8 +17,6 @@ interface PracticeResult {
   answer: string
   correct: boolean
 }
-
-type DaysOption = '7' | '30' | 'all'
 
 function shuffle<T>(input: T[]): T[] {
   const copy = [...input]
@@ -31,14 +33,20 @@ export default function PracticePage() {
   const [params] = useSearchParams()
   const { items } = useCollection('mistakes')
 
-  const [days, setDays] = useState<DaysOption>(() => {
+  const [days, setDays] = useState<DateRange>(() => {
     const value = params.get('days')
-    return value === '7' || value === '30' || value === 'all' ? value : '7'
+    return isDateRange(value) ? value : '7'
   })
   const [type, setType] = useState<QuestionType | '全部'>(() => {
     const value = params.get('type')
     return QUESTION_TYPES.includes(value as QuestionType) ? (value as QuestionType) : '全部'
   })
+  const [accuracy, setAccuracy] = useState<AccuracyRange>(() => {
+    const value = params.get('accuracy')
+    return isAccuracyRange(value) ? value : 'all'
+  })
+  const [startDate, setStartDate] = useState(() => params.get('start') ?? '')
+  const [endDate, setEndDate] = useState(() => params.get('end') ?? '')
   const [limit, setLimit] = useState('20')
 
   const [started, setStarted] = useState(false)
@@ -52,10 +60,11 @@ export default function PracticePage() {
   const [saving, setSaving] = useState(false)
 
   const eligible = useMemo(() => items.filter((item) => {
-    if (days !== 'all' && item.createdAt < Date.now() - Number(days) * 86_400_000) return false
+    if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
     if (type !== '全部' && item.type !== type) return false
+    if (!matchesAccuracy(item.accuracy, accuracy)) return false
     return true
-  }), [items, days, type])
+  }), [items, days, startDate, endDate, type, accuracy])
 
   const current = pool[index]
   const lastResult = results[results.length - 1]
@@ -133,17 +142,34 @@ export default function PracticePage() {
             <div className="form-field">
               <label className="form-label">录入时间</label>
               <div className="segmented" style={{ alignSelf: 'flex-start' }}>
-                {([['7', '近 7 天'], ['30', '近 30 天'], ['all', '全部时间']] as [DaysOption, string][]).map(([value, label]) => (
+                {([['7', '近 7 天'], ['30', '近 30 天'], ['all', '全部时间'], ['custom', '自定义']] as [DateRange, string][]).map(([value, label]) => (
                   <button key={value} className={days === value ? 'active' : ''} onClick={() => setDays(value)}>{label}</button>
                 ))}
               </div>
             </div>
+            {days === 'custom' && (
+              <div className="form-field">
+                <label className="form-label">日期范围</label>
+                <div className="date-range">
+                  <input type="date" className="input" value={startDate} max={endDate || dateKey(new Date())} onChange={(e) => setStartDate(e.target.value)} aria-label="开始日期" />
+                  <span className="small muted">至</span>
+                  <input type="date" className="input" value={endDate} min={startDate} max={dateKey(new Date())} onChange={(e) => setEndDate(e.target.value)} aria-label="结束日期" />
+                </div>
+              </div>
+            )}
             <div className="form-row">
               <div className="form-field">
                 <label className="form-label">题型</label>
                 <select className="select" value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
                   <option value="全部">全部题型</option>
                   {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">正确率范围</label>
+                <select className="select" value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)}>
+                  <option value="all">全部正确率</option>
+                  {ACCURACY_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
                 </select>
               </div>
               <div className="form-field">
@@ -159,7 +185,7 @@ export default function PracticePage() {
             <div className="divider" />
             <p className="small muted">符合条件的错题：<strong style={{ color: 'var(--primary)' }}>{eligible.length}</strong> 道</p>
             {eligible.length === 0 ? (
-              <p className="notice">当前范围内没有错题，试试放宽时间或题型条件。</p>
+              <p className="notice">当前范围内没有错题，试试放宽时间、题型或正确率条件。</p>
             ) : null}
             <div className="form-actions">
               <button className="btn btn-primary" onClick={start} disabled={eligible.length === 0}>

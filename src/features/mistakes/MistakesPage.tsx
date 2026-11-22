@@ -3,26 +3,28 @@ import { Link } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
-import { formatQuestionText, pluralDays } from '../../lib/utils'
+import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
+import { dateKey, formatQuestionText, pluralDays } from '../../lib/utils'
 import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
-
-type DaysFilter = '全部' | '7' | '30'
 
 export default function MistakesPage() {
   const { items, loading, error, refresh } = useCollection('mistakes')
   const mothers = useCollection('mothers')
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState<QuestionType | '全部'>('全部')
-  const [days, setDays] = useState<DaysFilter>('全部')
+  const [days, setDays] = useState<DateRange>('all')
+  const [accuracy, setAccuracy] = useState<AccuracyRange>('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [editing, setEditing] = useState<Mistake | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Mistake | null>(null)
 
-  const cutoff = days === '全部' ? 0 : Date.now() - Number(days) * 86_400_000
   const filtered = items
     .filter((item) => {
       if (type !== '全部' && item.type !== type) return false
-      if (days !== '全部' && item.createdAt < cutoff) return false
+      if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
+      if (!matchesAccuracy(item.accuracy, accuracy)) return false
       if (keyword.trim()) {
         const text = `${item.title} ${item.analysis} ${item.answer} ${item.tags.join(' ')} ${item.source ?? ''}`.toLowerCase()
         if (!text.includes(keyword.trim().toLowerCase())) return false
@@ -31,6 +33,16 @@ export default function MistakesPage() {
     })
     .sort((a, b) => b.createdAt - a.createdAt)
 
+  const clearFilters = () => {
+    setKeyword('')
+    setType('全部')
+    setDays('all')
+    setAccuracy('all')
+    setStartDate('')
+    setEndDate('')
+  }
+  const hasFilters = Boolean(keyword.trim()) || type !== '全部' || days !== 'all' || accuracy !== 'all' || Boolean(startDate) || Boolean(endDate)
+
   const handleDelete = async () => {
     if (!deleting) return
     await remove('mistakes', deleting.id)
@@ -38,14 +50,21 @@ export default function MistakesPage() {
     refresh()
   }
 
-  const practiceHref = `/mistakes/practice?days=${days === '全部' ? 'all' : days}&type=${encodeURIComponent(type)}`
+  const practiceParams = new URLSearchParams({
+    days,
+    type,
+    accuracy,
+    start: days === 'custom' ? startDate : '',
+    end: days === 'custom' ? endDate : '',
+  })
+  const practiceHref = `/mistakes/practice?${practiceParams.toString()}`
 
   return (
     <>
       <div className="page-header">
         <div>
           <h1 className="page-title">错题库</h1>
-          <p className="page-subtitle">沉淀每一道错题，按时间与题型进行专项突破</p>
+          <p className="page-subtitle">沉淀每一道错题，按时间、题型与正确率进行专项突破</p>
         </div>
         <div className="header-actions">
           <Link className="btn" to={practiceHref}><Icon name="play" size={16} /> 专项刷题</Link>
@@ -66,14 +85,24 @@ export default function MistakesPage() {
           <option value="全部">全部题型</option>
           {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
+        <select className="select" style={{ width: 132 }} value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)} title="按正确率范围筛选（左闭右开，如 30%-50% 含 30% 不含 50%）">
+          <option value="all">全部正确率</option>
+          {ACCURACY_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
+        </select>
         <div className="segmented">
-          {(['全部', '7', '30'] as DaysFilter[]).map((value) => (
-            <button key={value} className={days === value ? 'active' : ''} onClick={() => setDays(value)}>
-              {value === '全部' ? '全部时间' : `近 ${value} 天`}
-            </button>
+          {([['all', '全部时间'], ['7', '近 7 天'], ['30', '近 30 天'], ['custom', '自定义']] as [DateRange, string][]).map(([value, label]) => (
+            <button key={value} className={days === value ? 'active' : ''} onClick={() => setDays(value)}>{label}</button>
           ))}
         </div>
+        {days === 'custom' && (
+          <div className="date-range">
+            <input type="date" className="input" value={startDate} max={endDate || dateKey(new Date())} onChange={(e) => setStartDate(e.target.value)} aria-label="开始日期" />
+            <span className="small muted">至</span>
+            <input type="date" className="input" value={endDate} min={startDate} max={dateKey(new Date())} onChange={(e) => setEndDate(e.target.value)} aria-label="结束日期" />
+          </div>
+        )}
         <span className="spacer" />
+        {hasFilters && <button className="btn btn-sm btn-ghost" onClick={clearFilters}>清除筛选</button>}
         <span className="small muted">共 {filtered.length} 道</span>
       </div>
 
@@ -90,13 +119,8 @@ export default function MistakesPage() {
                 : '试试调整搜索词或筛选条件，也可以直接录入一道新错题'}
               action={
                 <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {items.length > 0 && (
-                    <button
-                      className="btn"
-                      onClick={() => { setKeyword(''); setType('全部'); setDays('全部') }}
-                    >
-                      清除筛选
-                    </button>
+                  {hasFilters && (
+                    <button className="btn" onClick={clearFilters}>清除筛选</button>
                   )}
                   <button className="btn btn-primary" onClick={() => setEditing('new')}>
                     <Icon name="plus" size={15} /> {items.length === 0 ? '录入第一道错题' : '录入错题'}
