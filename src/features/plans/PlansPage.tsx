@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
-import { cachePlan, deletePlan, loadPlans, mirrorPlan, normalizeMode, secondsOf } from '../../lib/plans'
+import { cachePlan, deletePlan, loadPlans, mirrorPlan, normalizeMode, readCachedPlans, secondsOf } from '../../lib/plans'
 import { dateKey, formatClock, formatHours, uid, weekOf } from '../../lib/utils'
 import type { StudyPlan } from '../../types'
 import PlanForm, { MODULE_COLORS } from './PlanForm'
@@ -18,8 +18,8 @@ const VIEW_OPTIONS: { value: ViewMode; label: string }[] = [
 ]
 
 export default function PlansPage() {
-  const [plans, setPlans] = useState<StudyPlan[]>([])
-  const [loading, setLoading] = useState(true)
+  const [plans, setPlans] = useState<StudyPlan[]>(() => readCachedPlans())
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [anchor, setAnchor] = useState(() => new Date())
   const [selected, setSelected] = useState(() => dateKey(new Date()))
@@ -33,7 +33,7 @@ export default function PlansPage() {
   const [now, setNow] = useState(Date.now())
 
   const refresh = async () => {
-    setLoading(true)
+    setPlans(readCachedPlans()) // 本地缓存立即生效
     try {
       const data = await loadPlans()
       setPlans(data)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
-import { getById, remove } from '../../lib/db'
+import { getById, readCachedById, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
 import type { MotherQuestion } from '../../types'
@@ -11,8 +11,8 @@ import MotherForm from './MotherForm'
 export default function MotherDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [item, setItem] = useState<MotherQuestion | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [item, setItem] = useState<MotherQuestion | null>(() => (id ? readCachedById('mothers', id) ?? null : null))
+  const [loading, setLoading] = useState(() => (id ? !readCachedById('mothers', id) : false))
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const { items: allMothers } = useCollection('mothers')
@@ -29,6 +29,11 @@ export default function MotherDetail() {
 
   const load = useCallback(async () => {
     if (!id) return
+    const cached = readCachedById('mothers', id)
+    if (cached) {
+      setItem(cached)
+      setLoading(false)
+    }
     try {
       const data = await getById('mothers', id)
       setItem(data ?? null)

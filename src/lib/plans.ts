@@ -10,7 +10,7 @@ import type { PlanMode, PlanSession, StudyPlan } from '../types'
  */
 const LS_KEY = 'xingce-plans-v1'
 const TOMBSTONE_KEY = 'xingce-plans-deleted-v1'
-const WRITE_TIMEOUT = 1500
+const WRITE_TIMEOUT = 800
 
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -76,6 +76,12 @@ function writeTombstones(ids: string[]) {
   }
 }
 
+/** 同步读取本地计划：首帧渲染不等待数据库 */
+export function readCachedPlans(): StudyPlan[] {
+  const deleted = new Set(readTombstones())
+  return readLocal().filter((plan) => !deleted.has(plan.id))
+}
+
 /** 读取计划：本地缓存 + 数据库合并，任一侧异常都能正常工作 */
 export async function loadPlans(): Promise<StudyPlan[]> {
   const local = readLocal()
@@ -139,14 +145,18 @@ export async function deletePlan(id: string): Promise<void> {
 }
 
 export async function clearPlans(): Promise<void> {
-  const stored = await withTimeout(listAll('plans').catch(() => [] as StudyPlan[]), WRITE_TIMEOUT, [] as StudyPlan[])
-  const ids = Array.from(new Set([...readLocal().map((plan) => plan.id), ...stored.map((plan) => plan.id)]))
+  // 清空立即生效，数据库删除与补扫放到后台
+  const ids = readCachedPlans().map((plan) => plan.id)
   writeTombstones(ids)
   writeLocal([])
-  await withTimeout(
-    Promise.all(ids.map((id) => remove('plans', id))).then(() => true).catch(() => false),
-    WRITE_TIMEOUT * 2,
-    false,
+  void Promise.all(ids.map((id) => remove('plans', id).catch(() => undefined)))
+  void withTimeout(
+    listAll('plans').then((list) => {
+      const extra = list.map((plan) => plan.id).filter((id) => !ids.includes(id))
+      if (extra.length) writeTombstones([...ids, ...extra])
+    }).catch(() => undefined),
+    WRITE_TIMEOUT,
+    undefined,
   )
 }
 

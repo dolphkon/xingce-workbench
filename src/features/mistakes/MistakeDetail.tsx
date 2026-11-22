@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
-import { getById, remove } from '../../lib/db'
+import { getById, readCachedById, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
 import type { Mistake } from '../../types'
@@ -11,8 +11,8 @@ import MistakeForm from './MistakeForm'
 export default function MistakeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [item, setItem] = useState<Mistake | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [item, setItem] = useState<Mistake | null>(() => (id ? readCachedById('mistakes', id) ?? null : null))
+  const [loading, setLoading] = useState(() => (id ? !readCachedById('mistakes', id) : false))
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const mothers = useCollection('mothers')
@@ -28,6 +28,11 @@ export default function MistakeDetail() {
 
   const load = useCallback(async () => {
     if (!id) return
+    const cached = readCachedById('mistakes', id)
+    if (cached) {
+      setItem(cached)
+      setLoading(false)
+    }
     try {
       const data = await getById('mistakes', id)
       setItem(data ?? null)

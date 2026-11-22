@@ -37,12 +37,14 @@ const DB_NAME = 'xingce-workbench'
 const DB_VERSION = 2
 const CACHE_PREFIX = 'xingce-cache-v1-'
 const DELETED_PREFIX = 'xingce-deleted-v1-'
-const DB_TIMEOUT = 1500
+/** 后台数据库读取的最长等待时间；页面渲染不再依赖它 */
+const DB_TIMEOUT = 800
 
 let dbPromise: Promise<IDBPDatabase<WorkbenchDB>> | null = null
 
 function getDB(): Promise<IDBPDatabase<WorkbenchDB>> {
-  if (!dbPromise) {
+  if (dbPromise) return dbPromise
+  try {
     dbPromise = openDB<WorkbenchDB>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
@@ -68,15 +70,87 @@ function getDB(): Promise<IDBPDatabase<WorkbenchDB>> {
       dbPromise = null
       throw err
     })
+    return dbPromise
+  } catch (err) {
+    // 浏览器禁用 IndexedDB 时返回 rejected promise，调用方已有回退逻辑
+    return Promise.reject(err)
   }
-  return dbPromise
 }
 
-/**
- * IndexedDB 在部分浏览器环境可能被阻塞或极慢，导致页面永远停在「加载中」。
- * 所有数据库操作都带超时保护，并以 localStorage 镜像作为回退：
- * 写操作先同步落缓存，读操作在超时后返回缓存数据。
- */
+/* ---------- 内存镜像：同步读写，避免每次操作都 JSON.parse 大对象（图片） ---------- */
+
+interface CacheState<K extends StoreName> {
+  items: EntityMap[K][]
+  deleted: Set<string>
+}
+
+const cacheMap = new Map<StoreName, CacheState<StoreName>>()
+
+function stateOf<K extends StoreName>(store: K): CacheState<K> {
+  const existing = cacheMap.get(store)
+  if (existing) return existing as CacheState<K>
+
+  let items: EntityMap[K][] = []
+  let deleted = new Set<string>()
+  try {
+    const raw = window.localStorage.getItem(`${CACHE_PREFIX}${store}`)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    if (Array.isArray(parsed)) items = parsed as EntityMap[K][]
+    const delRaw = window.localStorage.getItem(`${DELETED_PREFIX}${store}`)
+    const delParsed: unknown = delRaw ? JSON.parse(delRaw) : []
+    if (Array.isArray(delParsed)) {
+      deleted = new Set(delParsed.filter((id): id is string => typeof id === 'string'))
+    }
+  } catch {
+    // 存储不可用时从空集合开始，仍可尝试数据库
+  }
+  const state: CacheState<K> = { items, deleted }
+  cacheMap.set(store, state as CacheState<StoreName>)
+  return state
+}
+
+/** 同步读取集合：页面首帧即可渲染，不等待 IndexedDB */
+export function readCachedAll<K extends StoreName>(store: K): EntityMap[K][] {
+  const state = stateOf(store)
+  return state.items.filter((item) => !state.deleted.has(item.id))
+}
+
+/** 同步读取单条：详情页首帧即可渲染 */
+export function readCachedById<K extends StoreName>(store: K, id: string): EntityMap[K] | undefined {
+  const state = stateOf(store)
+  if (state.deleted.has(id)) return undefined
+  return state.items.find((item) => item.id === id)
+}
+
+function persistCache<K extends StoreName>(store: K, items: EntityMap[K][]): void {
+  const state = stateOf(store)
+  state.items = items
+  try {
+    window.localStorage.setItem(`${CACHE_PREFIX}${store}`, JSON.stringify(items))
+  } catch {
+    // 超出配额时仍保留内存镜像，本次会话内功能正常
+  }
+}
+
+function persistDeleted(store: StoreName, ids: Iterable<string>): void {
+  const state = stateOf(store)
+  state.deleted = new Set(ids)
+  try {
+    window.localStorage.setItem(`${DELETED_PREFIX}${store}`, JSON.stringify(Array.from(state.deleted)))
+  } catch {
+    // 忽略写失败
+  }
+}
+
+// 多标签页之间保持缓存同步
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (!event.key) return
+    const match = /^xingce-(?:cache|deleted)-v1-(mistakes|docs|mothers|plans)$/.exec(event.key)
+    if (match) cacheMap.delete(match[1] as StoreName)
+  })
+}
+
 function withFallback<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
   return new Promise<T>((resolve) => {
     let settled = false
@@ -105,93 +179,65 @@ function withFallback<T>(promise: Promise<T>, ms: number, fallbackValue: T): Pro
   })
 }
 
-function readCache<K extends StoreName>(store: K): EntityMap[K][] {
-  try {
-    const raw = window.localStorage.getItem(`${CACHE_PREFIX}${store}`)
-    const parsed: unknown = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? (parsed as EntityMap[K][]) : []
-  } catch {
-    return []
-  }
+/** 后台镜像写：不阻塞界面，失败静默忽略（本地缓存已经是最新数据） */
+function mirror(work: (db: IDBPDatabase<WorkbenchDB>) => Promise<unknown>): void {
+  void getDB().then(work).catch(() => undefined)
 }
 
-function writeCache<K extends StoreName>(store: K, items: EntityMap[K][]): void {
-  try {
-    window.localStorage.setItem(`${CACHE_PREFIX}${store}`, JSON.stringify(items))
-  } catch {
-    // 浏览器禁用本地存储时忽略，仍可尝试数据库
-  }
-}
-
-function readDeleted(store: StoreName): string[] {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(`${DELETED_PREFIX}${store}`) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-function writeDeleted(store: StoreName, ids: string[]): void {
-  try {
-    window.localStorage.setItem(`${DELETED_PREFIX}${store}`, JSON.stringify(Array.from(new Set(ids))))
-  } catch {
-    // 忽略
-  }
-}
-
+/** 后台同步数据库数据到缓存；渲染不等待该过程 */
 export async function listAll<K extends StoreName>(store: K): Promise<EntityMap[K][]> {
-  const cached = readCache(store)
-  const deleted = new Set(readDeleted(store))
   const remote = await withFallback(
     getDB().then((db) => db.getAll(store) as Promise<EntityMap[K][]>),
     DB_TIMEOUT,
     [] as EntityMap[K][],
   )
   const map = new Map<string, EntityMap[K]>()
-  const merge = (item: EntityMap[K]) => {
-    if (deleted.has(item.id)) return
+  const deleted = stateOf(store).deleted
+  remote.forEach((item) => {
+    if (!deleted.has(item.id)) map.set(item.id, item)
+  })
+  // 重新读取缓存：同步期间的写入不能被后台刷新覆盖
+  readCachedAll(store).forEach((item) => {
     const existing = map.get(item.id)
     if (!existing || (item.updatedAt ?? 0) >= (existing.updatedAt ?? 0)) map.set(item.id, item)
+  })
+  const result = Array.from(map.values()).filter((item) => !stateOf(store).deleted.has(item.id))
+  // 数据库未返回数据时缓存本身就是结果，避免重复序列化大对象（含图片）
+  if (remote.length === 0) {
+    const current = readCachedAll(store)
+    if (current.length === result.length && current.every((item) => map.get(item.id) === item)) return current
   }
-  remote.forEach(merge)
-  cached.forEach(merge)
-  const result = Array.from(map.values())
-  writeCache(store, result)
+  persistCache(store, result)
   return result
 }
 
+/** 后台读取单条；调用方可先用 readCachedById 立即渲染 */
 export async function getById<K extends StoreName>(store: K, id: string): Promise<EntityMap[K] | undefined> {
-  const cached = readCache(store).find((item) => item.id === id)
+  const cached = readCachedById(store, id)
   const remote = await withFallback(
     getDB().then((db) => db.get(store, id) as Promise<EntityMap[K] | undefined>),
     DB_TIMEOUT,
     undefined as EntityMap[K] | undefined,
   )
-  if (readDeleted(store).includes(id)) return undefined
+  if (stateOf(store).deleted.has(id)) return undefined
   if (cached && (!remote || (cached.updatedAt ?? 0) >= (remote.updatedAt ?? 0))) return cached
   return remote
 }
 
+/** 同步写缓存并立即返回；IndexedDB 写入在后台进行 */
 export async function put<K extends StoreName>(store: K, value: EntityMap[K]): Promise<void> {
-  // 立即同步缓存，避免保存按钮在数据库阻塞时无响应
-  writeCache(store, [...readCache(store).filter((item) => item.id !== value.id), value])
-  writeDeleted(store, readDeleted(store).filter((id) => id !== value.id))
-  await withFallback(
-    getDB().then((db) => db.put(store, value as WorkbenchDB[K]['value'])),
-    DB_TIMEOUT,
-    undefined,
-  )
+  const state = stateOf(store)
+  persistCache(store, state.items.filter((item) => item.id !== value.id).concat(value))
+  if (state.deleted.delete(value.id)) persistDeleted(store, state.deleted)
+  mirror((db) => db.put(store, value as WorkbenchDB[K]['value']))
 }
 
+/** 同步移除缓存并立即返回；IndexedDB 删除在后台进行 */
 export async function remove<K extends StoreName>(store: K, id: string): Promise<void> {
-  writeDeleted(store, [...readDeleted(store), id])
-  writeCache(store, readCache(store).filter((item) => item.id !== id))
-  await withFallback(
-    getDB().then((db) => db.delete(store, id)),
-    DB_TIMEOUT,
-    undefined,
-  )
+  const state = stateOf(store)
+  persistDeleted(store, [...state.deleted, id])
+  persistCache(store, state.items.filter((item) => item.id !== id))
+  mirror((db) => db.delete(store, id))
 }
 
 export async function count(store: StoreName): Promise<number> {
@@ -224,16 +270,14 @@ export async function importAll(data: BackupData): Promise<void> {
 export async function clearAll(): Promise<void> {
   const stores: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans']
   stores.forEach((store) => {
-    writeCache(store, [])
-    writeDeleted(store, [])
+    const ids = stateOf(store).items.map((item) => item.id)
+    persistCache(store, [])
+    // 删除标记防止后台数据库中尚未清掉的旧数据被重新合并回来
+    persistDeleted(store, ids)
   })
-  await withFallback(
-    getDB().then(async (db) => {
-      const tx = db.transaction(stores, 'readwrite')
-      await Promise.all(stores.map((store) => tx.objectStore(store).clear()))
-      await tx.done
-    }),
-    DB_TIMEOUT,
-    undefined,
-  )
+  mirror(async (db) => {
+    const tx = db.transaction(stores, 'readwrite')
+    await Promise.all(stores.map((store) => tx.objectStore(store).clear()))
+    await tx.done
+  })
 }

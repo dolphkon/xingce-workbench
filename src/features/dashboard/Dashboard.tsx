@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { ConfirmDialog, Icon } from '../../components/ui'
 import { clearAll, exportAll, importAll } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
-import { clearPlans, loadPlans, savePlans } from '../../lib/plans'
+import { clearPlans, loadPlans, readCachedPlans, savePlans } from '../../lib/plans'
 import { pluralDays } from '../../lib/utils'
 import type { BackupData, StudyPlan } from '../../types'
 
@@ -11,7 +11,7 @@ export default function Dashboard() {
   const mistakes = useCollection('mistakes')
   const docs = useCollection('docs')
   const mothers = useCollection('mothers')
-  const [plans, setPlans] = useState<StudyPlan[]>([])
+  const [plans, setPlans] = useState<StudyPlan[]>(() => readCachedPlans())
   const fileRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon } from '../../components/ui'
-import { getById, put, remove } from '../../lib/db'
+import { getById, put, readCachedById, remove } from '../../lib/db'
 import { renderMarkdown } from '../../lib/markdown'
 import { formatDate, uid } from '../../lib/utils'
 import type { KnowledgeDoc } from '../../types'
@@ -20,19 +20,22 @@ export default function DocEditor() {
   const navigate = useNavigate()
   const isNew = id === 'new'
 
-  const [doc, setDoc] = useState<KnowledgeDoc>(() => ({
-    id: isNew ? uid() : (id ?? uid()),
-    title: '',
-    content: isNew ? TEMPLATE : '',
-    category: '',
-    tags: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }))
+  const [doc, setDoc] = useState<KnowledgeDoc>(() => {
+    const cached = !isNew && id ? readCachedById('docs', id) : undefined
+    return cached ?? {
+      id: isNew ? uid() : (id ?? uid()),
+      title: '',
+      content: isNew ? TEMPLATE : '',
+      category: '',
+      tags: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+  })
   // 新建文档或有内容时已进入编辑态；已有文档默认展示阅读视图
-  const [editing, setEditing] = useState(isNew)
-  const [loaded, setLoaded] = useState(isNew)
-  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [editing, setEditing] = useState(() => isNew || Boolean(id && !readCachedById('docs', id)?.content.trim()))
+  const [loaded, setLoaded] = useState(() => isNew || Boolean(id && readCachedById('docs', id)))
+  const [savedAt, setSavedAt] = useState<number | null>(() => (id ? readCachedById('docs', id)?.updatedAt ?? null : null))
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -42,6 +45,14 @@ export default function DocEditor() {
       return
     }
     let active = true
+    const cached = readCachedById('docs', id)
+    if (cached) {
+      setDoc(cached)
+      setSavedAt(cached.updatedAt)
+      setEditing(!cached.content.trim())
+      setLoaded(true)
+      return () => { active = false }
+    }
     getById('docs', id)
       .then((data) => {
         if (!active) return
