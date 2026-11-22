@@ -17,8 +17,9 @@ export default function MistakeDetail() {
   const [deleting, setDeleting] = useState(false)
   const mothers = useCollection('mothers')
   const { items: allMistakes } = useCollection('mistakes')
-  // 与错题库列表保持一致：按录入时间倒序
-  const navItems = [...allMistakes]
+  // 仅在当前题型内翻页，顺序与题库列表一致（录入时间倒序）
+  const navItems = allMistakes
+    .filter((m) => m.type === item?.type)
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((m) => ({
       id: m.id,
@@ -70,7 +71,10 @@ export default function MistakeDetail() {
           <Link to="/mistakes" className="small" style={{ color: 'var(--primary)', fontWeight: 600 }}>
             ← 返回错题库
           </Link>
-          <h1 className="page-title" style={{ marginTop: 6 }}>错题详情</h1>
+          <h1 className="page-title" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+            错题详情
+            <span className="chip chip-primary">{item.type}</span>
+          </h1>
           <p className="page-subtitle">录入于 {formatDate(item.createdAt)} · 已练习 {item.reviewCount} 次 · 答对 {item.correctCount} 次</p>
         </div>
         <div className="header-actions">
@@ -87,6 +91,7 @@ export default function MistakeDetail() {
         basePath="/mistakes"
         compact
         enabled={!editing && !deleting}
+        scopeLabel={item.type}
       />
 
       <div className="card">
@@ -169,6 +174,7 @@ export default function MistakeDetail() {
         basePath="/mistakes"
         enabled={!editing && !deleting}
         footer
+        scopeLabel={item.type}
       />
 
       {editing && (

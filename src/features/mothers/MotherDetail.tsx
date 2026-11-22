@@ -18,7 +18,9 @@ export default function MotherDetail() {
   const { items: allMothers } = useCollection('mothers')
   const { items: mistakes } = useCollection('mistakes')
 
-  const navItems = [...allMothers]
+  // 仅在当前题型内翻页，顺序与题库列表一致（录入时间倒序）
+  const navItems = allMothers
+    .filter((m) => m.type === item?.type)
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((m) => ({
       id: m.id,
@@ -67,7 +69,10 @@ export default function MotherDetail() {
           <Link to="/mothers" className="small" style={{ color: 'var(--primary)', fontWeight: 600 }}>
             ← 返回母题库
           </Link>
-          <h1 className="page-title" style={{ marginTop: 6 }}>母题详情</h1>
+          <h1 className="page-title" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+            母题详情
+            <span className="chip chip-primary">{item.type}</span>
+          </h1>
           <p className="page-subtitle">录入于 {formatDate(item.createdAt)} · 更新于 {formatDate(item.updatedAt)}</p>
         </div>
         <div className="header-actions">
@@ -84,6 +89,7 @@ export default function MotherDetail() {
         basePath="/mothers"
         compact
         enabled={!editing && !deleting}
+        scopeLabel={item.type}
       />
 
       <div className="card">
@@ -149,6 +155,7 @@ export default function MotherDetail() {
         basePath="/mothers"
         enabled={!editing && !deleting}
         footer
+        scopeLabel={item.type}
       />
 
       {editing && (

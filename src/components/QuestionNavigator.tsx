@@ -20,6 +20,7 @@ export function QuestionNavigator({
   compact = false,
   enabled = true,
   footer = false,
+  scopeLabel,
 }: {
   items: QuestionNavItem[]
   currentId: string
@@ -27,6 +28,7 @@ export function QuestionNavigator({
   compact?: boolean
   enabled?: boolean
   footer?: boolean
+  scopeLabel?: string
 }) {
   const navigate = useNavigate()
   const index = items.findIndex((item) => item.id === currentId)
@@ -63,6 +65,7 @@ export function QuestionNavigator({
       <button className="btn btn-sm" disabled={!hasPrev} onClick={() => go(index - 1)}>
         <Icon name="back" size={14} /> 上一题
       </button>
+      {scopeLabel && <span className="chip chip-primary question-nav-scope">{scopeLabel}</span>}
       <span className="question-nav-count">
         {compact ? `第 ${current} / ${total} 题` : `第 ${current} 题，共 ${total} 题`}
       </span>
