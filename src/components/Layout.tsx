@@ -6,6 +6,7 @@ const navItems = [
   { to: '/mistakes', label: '错题库', icon: 'target', end: false },
   { to: '/knowledge', label: '知识库', icon: 'book', end: false },
   { to: '/mothers', label: '母题库', icon: 'layers', end: false },
+  { to: '/plans', label: '学习计划', icon: 'calendar', end: false },
 ]
 
 export default function Layout() {

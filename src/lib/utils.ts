@@ -1,3 +1,44 @@
+/** 本地日期转 YYYY-MM-DD */
+export function dateKey(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/** YYYY-MM-DD 转本地 Date */
+export function fromDateKey(key: string): Date {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+/** 周日开始的一周七天 */
+export function weekOf(date: Date): Date[] {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  start.setDate(start.getDate() - start.getDay())
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(start)
+    day.setDate(start.getDate() + i)
+    return day
+  })
+}
+
+/** 秒数转小时（如 0.0h / 1.5h） */
+export function formatHours(seconds: number): string {
+  return `${(seconds / 3600).toFixed(1)}h`
+}
+
+/** 秒数转计时显示 mm:ss 或 h:mm:ss */
+export function formatClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+}
+
 export function uid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID()

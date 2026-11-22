@@ -8,6 +8,7 @@ import KnowledgePage from './features/knowledge/KnowledgePage'
 import DocEditor from './features/knowledge/DocEditor'
 import MothersPage from './features/mothers/MothersPage'
 import MotherDetail from './features/mothers/MotherDetail'
+import PlansPage from './features/plans/PlansPage'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/knowledge/:id" element={<DocEditor />} />
         <Route path="/mothers" element={<MothersPage />} />
         <Route path="/mothers/:id" element={<MotherDetail />} />
+        <Route path="/plans" element={<PlansPage />} />
         <Route path="*" element={<Dashboard />} />
       </Route>
     </Routes>

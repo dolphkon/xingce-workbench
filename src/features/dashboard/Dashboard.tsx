@@ -10,6 +10,7 @@ export default function Dashboard() {
   const mistakes = useCollection('mistakes')
   const docs = useCollection('docs')
   const mothers = useCollection('mothers')
+  const plans = useCollection('plans')
   const fileRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
@@ -21,6 +22,7 @@ export default function Dashboard() {
     mistakes.refresh()
     docs.refresh()
     mothers.refresh()
+    plans.refresh()
   }
 
   const handleExport = async () => {
@@ -46,7 +48,7 @@ export default function Dashboard() {
       const parsed = JSON.parse(await file.text()) as BackupData
       await importAll(parsed)
       refreshAll()
-      setNotice(`导入成功：错题 ${parsed.mistakes?.length ?? 0} / 文档 ${parsed.docs?.length ?? 0} / 母题 ${parsed.mothers?.length ?? 0}`)
+      setNotice(`导入成功：错题 ${parsed.mistakes?.length ?? 0} / 文档 ${parsed.docs?.length ?? 0} / 母题 ${parsed.mothers?.length ?? 0} / 计划 ${parsed.plans?.length ?? 0}`)
     } catch (err) {
       setNotice(`导入失败：${err instanceof Error ? err.message : '文件格式不正确'}`)
     }
@@ -65,6 +67,7 @@ export default function Dashboard() {
     { label: '近 7 天新增', value: weekCount, icon: 'bolt', bg: '#fef3c7', color: '#d97706' },
     { label: '知识文档', value: docs.items.length, icon: 'book', bg: '#dcfce7', color: '#16a34a' },
     { label: '母题条目', value: mothers.items.length, icon: 'layers', bg: '#e0f2fe', color: '#0284c7' },
+    { label: '学习计划', value: plans.items.length, icon: 'calendar', bg: '#fef3c7', color: '#d97706' },
   ]
 
   const modules = [
@@ -91,6 +94,14 @@ export default function Dashboard() {
       icon: 'layers',
       bg: '#e0f2fe',
       color: '#0284c7',
+    },
+    {
+      to: '/plans',
+      title: '学习计划',
+      desc: '按言语、判断、资料等模块规划任务，专注与刷题计时统计',
+      icon: 'calendar',
+      bg: '#fef3c7',
+      color: '#d97706',
     },
   ]
 
@@ -210,7 +221,7 @@ export default function Dashboard() {
 
       {confirmClear && (
         <ConfirmDialog
-          message="将永久删除所有错题、知识文档和母题，此操作不可撤销。建议先导出备份。"
+          message="将永久删除所有错题、知识文档、母题和学习计划，此操作不可撤销。建议先导出备份。"
           onCancel={() => setConfirmClear(false)}
           onConfirm={handleClear}
         />
