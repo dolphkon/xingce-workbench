@@ -7,8 +7,15 @@ import PlanForm, { MODULE_COLORS } from './PlanForm'
 import PlanStats from './PlanStats'
 import PlanTimer from './PlanTimer'
 
-type View = 'list' | 'timeline' | 'stats'
-type ModeFilter = '全部' | '学习' | '刷题'
+/** 视图与筛选合并为一个互斥切换，避免「列表」与「全部」重复 */
+type ViewMode = 'all' | 'study' | 'practice' | 'timeline' | 'stats'
+const VIEW_OPTIONS: { value: ViewMode; label: string }[] = [
+  { value: 'all', label: '全部任务' },
+  { value: 'study', label: '专项学习' },
+  { value: 'practice', label: '刷题' },
+  { value: 'timeline', label: '时间轴' },
+  { value: 'stats', label: '统计' },
+]
 
 export default function PlansPage() {
   const [plans, setPlans] = useState<StudyPlan[]>([])
@@ -16,8 +23,7 @@ export default function PlansPage() {
   const [error, setError] = useState<string | null>(null)
   const [anchor, setAnchor] = useState(() => new Date())
   const [selected, setSelected] = useState(() => dateKey(new Date()))
-  const [view, setView] = useState<View>('list')
-  const [modeFilter, setModeFilter] = useState<ModeFilter>('全部')
+  const [view, setView] = useState<ViewMode>('all')
   const [editing, setEditing] = useState<StudyPlan | 'new' | null>(null)
   const [timing, setTiming] = useState<StudyPlan | null>(null)
   const [menuFor, setMenuFor] = useState<StudyPlan | null>(null)
@@ -61,16 +67,20 @@ export default function PlansPage() {
     ? `${anchor.getMonth() + 1}月${days[0].getDate()}日-${days[6].getDate()}日`
     : `${days[0].getMonth() + 1}月${days[0].getDate()}日-${days[6].getMonth() + 1}月${days[6].getDate()}日`
 
-  const dayPlans = plans
-    .filter((plan) => plan.date === selected && (modeFilter === '全部' || normalizeMode(plan.mode) === modeFilter))
+  const allDayPlans = plans.filter((plan) => plan.date === selected)
+  const dayPlans = allDayPlans
+    .filter((plan) => view === 'study' ? normalizeMode(plan.mode) === '学习' : view === 'practice' ? normalizeMode(plan.mode) === '刷题' : true)
     .sort((a, b) => {
       if (a.startTime && b.startTime) return a.startTime.localeCompare(b.startTime)
       if (a.startTime) return -1
       if (b.startTime) return 1
       return b.createdAt - a.createdAt
     })
-  const doneCount = dayPlans.filter((plan) => plan.completed).length
-  const daySeconds = plans.filter((plan) => plan.date === selected).reduce((sum, plan) => sum + secondsOf(plan, now), 0)
+  const doneCount = allDayPlans.filter((plan) => plan.completed).length
+  const daySeconds = allDayPlans.reduce((sum, plan) => sum + secondsOf(plan, now), 0)
+  const dayPractice = allDayPlans.filter((plan) => normalizeMode(plan.mode) === '刷题')
+  const dayQuestions = dayPractice.reduce((sum, plan) => sum + (plan.questionCount ?? 0), 0)
+  const dayCorrect = dayPractice.reduce((sum, plan) => sum + (plan.correctCount ?? 0), 0)
 
   const shiftWeek = (delta: number) => {
     const next = new Date(anchor)
@@ -171,6 +181,10 @@ export default function PlansPage() {
     const mode = normalizeMode(plan.mode)
     const running = Boolean(plan.timerStartedAt)
     const seconds = secondsOf(plan, now)
+    const target = mode === '学习' && plan.targetMinutes ? plan.targetMinutes * 60 : 0
+    const progress = target > 0
+      ? Math.min(100, (seconds / target) * 100)
+      : plan.questionCount ? Math.min(100, ((plan.correctCount ?? 0) / plan.questionCount) * 100) : 0
     return (
       <div className={`plan-item${plan.completed ? ' done' : ''}`} key={plan.id}>
         <button
@@ -188,18 +202,22 @@ export default function PlansPage() {
             <span className="chip" style={{ background: color.bg, color: color.color, borderColor: 'transparent' }}>{plan.module}</span>
             <span className={`chip ${mode === '学习' ? 'chip-primary' : 'chip-warning'}`}>{mode === '学习' ? (plan.source || '专项学习') : '刷题'}</span>
             {plan.startTime && <span className="chip"><Icon name="clock" size={11} /> {plan.startTime}{plan.endTime ? `-${plan.endTime}` : ''}</span>}
-            {mode === '学习' && plan.targetMinutes ? (
-              <span className="plan-progress-chip">
-                <span className="plan-progress-track"><span style={{ width: `${Math.min(100, (seconds / (plan.targetMinutes * 60)) * 100)}%`, background: color.color }} /></span>
-                {Math.round(seconds / 60)}/{plan.targetMinutes} 分
-              </span>
-            ) : null}
             {mode === '刷题' && plan.questionCount ? (
               <span className="chip"><Icon name="target" size={11} /> {plan.correctCount ?? 0}/{plan.questionCount} 题 · {Math.round(((plan.correctCount ?? 0) / plan.questionCount) * 100)}%</span>
             ) : null}
-            {plan.subTasks.length > 0 && <span className="chip"><Icon name="list" size={11} /> {plan.subTasks.filter((task) => task.done).length}/{plan.subTasks.length} 子项</span>}
+            {plan.subTasks.length > 0 && (
+              <span className="chip"><Icon name="list" size={11} /> {plan.subTasks.filter((task) => task.done).length}/{plan.subTasks.length} 子项</span>
+            )}
             {running && <span className="chip chip-success"><Icon name="bolt" size={11} /> 计时中</span>}
-            <span className={`plan-timer-text${running ? ' running' : ''}`}><Icon name="clock" size={11} /> {formatClock(seconds)}</span>
+          </div>
+          <div className="plan-card-progress">
+            <div className="plan-progress-track">
+              <span style={{ width: `${progress}%`, background: color.color }} />
+            </div>
+            <span>
+              {target > 0 ? `${Math.round(seconds / 60)}/${plan.targetMinutes} 分钟` : plan.questionCount ? `${plan.correctCount ?? 0}/${plan.questionCount} 题` : '暂无进度'}
+            </span>
+            <strong className={running ? 'running' : ''}>{formatClock(seconds)}</strong>
           </div>
         </div>
         <button
@@ -216,6 +234,9 @@ export default function PlansPage() {
       </div>
     )
   }
+
+  const viewTitle = view === 'study' ? '专项学习任务' : view === 'practice' ? '刷题任务' : '今日任务'
+  const isList = view === 'all' || view === 'study' || view === 'practice'
 
   return (
     <>
@@ -249,34 +270,48 @@ export default function PlansPage() {
               <button
                 key={key}
                 className={`week-day${key === selected ? ' active' : ''}${isToday ? ' today' : ''}`}
-                onClick={() => { setSelected(key); setView('list') }}
+                onClick={() => { setSelected(key); if (!isList) setView('all') }}
               >
                 <span className="week-day-label">{'日一二三四五六'[day.getDay()]}</span>
                 <span className="week-day-num">{day.getDate()}</span>
-                <span className="week-day-meta">{seconds > 0 ? formatHours(seconds) : done > 0 ? `${done} 项` : '·'}</span>
+                <span className="week-day-meta">
+                  {seconds > 0 ? seconds < 3600 ? `${Math.round(seconds / 60)} 分` : formatHours(seconds) : done > 0 ? `${done} 项` : '·'}
+                </span>
               </button>
             )
           })}
         </div>
       </div>
 
-      <div className="filter-bar">
-        <div className="segmented">
-          {(['list', 'timeline', 'stats'] as View[]).map((item) => (
-            <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>
-              {item === 'list' ? '列表' : item === 'timeline' ? '时间轴' : '统计'}
+      <div className="plan-overview">
+        <div className="overview-tile">
+          <span className="overview-icon" style={{ background: '#e0f2fe', color: '#0284c7' }}><Icon name="clock" size={18} /></span>
+          <div><strong>{formatClock(daySeconds)}</strong><span>当日学习时长</span></div>
+        </div>
+        <div className="overview-tile">
+          <span className="overview-icon" style={{ background: '#dcfce7', color: '#16a34a' }}><Icon name="check" size={18} /></span>
+          <div><strong>{doneCount}/{allDayPlans.length}</strong><span>已完成任务</span></div>
+        </div>
+        <div className="overview-tile">
+          <span className="overview-icon" style={{ background: '#fef3c7', color: '#d97706' }}><Icon name="target" size={18} /></span>
+          <div><strong>{dayQuestions > 0 ? `${Math.round((dayCorrect / dayQuestions) * 100)}%` : '--'}</strong><span>当日刷题正确率</span></div>
+        </div>
+        <div className="overview-tile">
+          <span className="overview-icon" style={{ background: '#eef2ff', color: '#4f46e5' }}><Icon name="list" size={18} /></span>
+          <div><strong>{allDayPlans.filter((plan) => !plan.completed).length}</strong><span>待完成任务</span></div>
+        </div>
+      </div>
+
+      <div className="filter-bar plan-filter-bar">
+        <div className="segmented plan-view-switch">
+          {VIEW_OPTIONS.map((option) => (
+            <button key={option.value} className={view === option.value ? 'active' : ''} onClick={() => setView(option.value)}>
+              {option.label}
             </button>
           ))}
         </div>
-        {view !== 'stats' && (
-          <div className="segmented">
-            {(['全部', '学习', '刷题'] as ModeFilter[]).map((item) => (
-              <button key={item} className={modeFilter === item ? 'active' : ''} onClick={() => setModeFilter(item)}>{item}</button>
-            ))}
-          </div>
-        )}
         <span className="spacer" />
-        <span className="small muted">{selected} · {dayPlans.length} 项 · 完成 {doneCount} · 用时 {formatHours(daySeconds)}</span>
+        <span className="small muted">{selected} · {dayPlans.length} 项</span>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -289,8 +324,8 @@ export default function PlansPage() {
         <div className="card">
           <EmptyState
             icon="calendar"
-            title="这一天还没有计划"
-            description="新建学习任务，开始今天的备考吧"
+            title={`这一天还没有${view === 'study' ? '学习' : view === 'practice' ? '刷题' : ''}计划`}
+            description="新建一个学习任务，开始今天的备考吧"
             action={
               <button className="btn btn-primary" onClick={() => setEditing('new')}>
                 <Icon name="plus" size={15} /> 新建计划
@@ -298,20 +333,24 @@ export default function PlansPage() {
             }
           />
         </div>
-      ) : view === 'list' ? (
-        <div className="card">
-          <div className="card-body tight plan-list">{dayPlans.map(planCard)}</div>
-        </div>
       ) : (
         <div className="card">
-          <div className="card-body timeline">
-            {dayPlans.map((plan) => (
-              <div className="timeline-row" key={plan.id}>
-                <div className="timeline-time">{plan.startTime ?? '全天'}</div>
-                <div className="timeline-content">{planCard(plan)}</div>
-              </div>
-            ))}
+          <div className="card-header">
+            <h2 className="card-title">{view === 'timeline' ? '今日时间轴' : viewTitle}</h2>
+            <span className="small muted">点击任务卡片进入专注计时 · 共 {dayPlans.length} 项</span>
           </div>
+          {view === 'timeline' ? (
+            <div className="card-body timeline">
+              {dayPlans.map((plan) => (
+                <div className="timeline-row" key={plan.id}>
+                  <div className="timeline-time">{plan.startTime ?? '全天'}</div>
+                  <div className="timeline-content">{planCard(plan)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="card-body tight plan-list">{dayPlans.map(planCard)}</div>
+          )}
         </div>
       )}
 
