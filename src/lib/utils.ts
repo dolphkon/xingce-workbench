@@ -39,10 +39,11 @@ export function parseTags(input: string): string[] {
 }
 
 /**
- * 题干自动排版：清理 OCR／复制粘贴产生的多余空格，规整换行与缩进。
+ * 题干自动排版：清理 OCR／复制粘贴产生的多余空格，并把按图片宽度硬切的
+ * 软换行合并为连续文本，由容器按自身宽度自动折行，避免右侧参差留白。
  * - 全角空格、制表符统一为普通空格
  * - 去除汉字之间、汉字与标点之间的多余空格（保留英文／数字内部空格）
- * - 每行去首尾空白，连续空行合并为一个，行首不保留随机缩进
+ * - 单换行若非结构性分行（选项、序号、段落）则接到上一行；空行保留为段落
  */
 export function formatQuestionText(input: string): string {
   if (!input) return ''
@@ -51,7 +52,7 @@ export function formatQuestionText(input: string): string {
     .replace(/[\u3000\t]+/g, ' ')
 
   // 汉字或中文标点（含全角引号、括号），这些字符之间的空格都属于冗余
-  const cjkOrPunct = /([一-龥，。、；：？！）》」』】“”‘’…《「『（【])\s+(?=[一-龥，。、；：？！）》」』】“”‘’…《「『（【])/g
+  const cjkOrPunct = /([一-龥，。、；：？！）》」』】“”‘’…《「『（【()])\s+(?=[一-龥，。、；：？！）》」』】“”‘’…《「『（【()])/g
 
   const cleanedLines = withWideSpaces
     .split('\n')
@@ -63,15 +64,45 @@ export function formatQuestionText(input: string): string {
         if (next === out) break
         out = next
       }
+      // 数字/英文与全角括号之间的空格（如「9 (2019…）」）
+      out = out.replace(/([A-Za-z0-9]) +([（(])/g, '$1$2')
+      out = out.replace(/([）)]) +(?=[一-龥A-Za-z0-9])/g, '$1')
       // 中英文边界：多个空格收敛为一个，单个空格保留（如「分 2」）
       out = out.replace(/([一-龥])[ ]{2,}(?=[A-Za-z0-9])/g, '$1 ')
       out = out.replace(/([A-Za-z0-9])[ ]{2,}(?=[一-龥])/g, '$1 ')
       return out.replace(/[ ]{2,}/g, ' ')
     })
 
-  return cleanedLines
+  // 结构性分行：下一行以选项/序号/段落标记开头时保留换行
+  const isStructuralStart = (line: string) =>
+    /^[A-Da-d][.．、：:）)]/.test(line) ||
+    /^[①②③④⑤⑥⑦⑧⑨⑩]/.test(line) ||
+    /^[（(][0-9一二三四五六七八九十]+[）)]/.test(line) ||
+    /^[一二三四五六七八九十]+[、.]/.test(line) ||
+    /^第[一二三四五六七八九十0-9]+[部分章节条]/.test(line) ||
+    /^[0-9]+[.．、]/.test(line)
+
+  const joinLine = (a: string, b: string) =>
+    /[A-Za-z0-9]$/.test(a) && /^[A-Za-z0-9]/.test(b) ? `${a} ${b}` : a + b
+
+  const merged: string[] = []
+  for (const line of cleanedLines) {
+    if (!line) {
+      // 空行作为段落分隔，最多保留一个
+      if (merged.length > 0 && merged[merged.length - 1] !== '') merged.push('')
+      continue
+    }
+    const prev = merged[merged.length - 1]
+    if (prev && !isStructuralStart(line)) {
+      merged[merged.length - 1] = joinLine(prev, line)
+    } else {
+      merged.push(line)
+    }
+  }
+
+  return merged
     .join('\n')
-    .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '')
     .trim()
 }

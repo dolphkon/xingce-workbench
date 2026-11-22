@@ -21,7 +21,7 @@ interface Props {
 const OPTION_LETTERS = ['A', 'B', 'C', 'D']
 
 export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Props) {
-  const [title, setTitle] = useState(initial?.title ?? '')
+  const [title, setTitle] = useState(() => formatQuestionText(initial?.title ?? ''))
   const [type, setType] = useState<QuestionType>(initial?.type ?? '言语理解')
   const [options, setOptions] = useState<string[]>(() => {
     const base = [...(initial?.options ?? [])]

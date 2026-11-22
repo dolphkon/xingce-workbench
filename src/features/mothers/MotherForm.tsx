@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function MotherForm({ initial, onSaved, onCancel }: Props) {
-  const [title, setTitle] = useState(initial?.title ?? '')
+  const [title, setTitle] = useState(() => formatQuestionText(initial?.title ?? ''))
   const [type, setType] = useState<QuestionType>(initial?.type ?? '判断推理')
   const [point, setPoint] = useState(initial?.point ?? '')
   const [modelAnswer, setModelAnswer] = useState(initial?.modelAnswer ?? '')
