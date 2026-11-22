@@ -1,4 +1,5 @@
 import { listAll, put, remove } from './db'
+import { notifySync } from './syncHook'
 import { dateKey } from './utils'
 import type { PlanMode, PlanSession, StudyPlan } from '../types'
 
@@ -59,7 +60,7 @@ function writeLocal(plans: StudyPlan[]): boolean {
 }
 
 /** 删除标记：防止数据库删除失败后旧计划被重新合并回来 */
-function readTombstones(): string[] {
+export function readTombstones(): string[] {
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(TOMBSTONE_KEY) ?? '[]')
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
@@ -103,7 +104,9 @@ export async function loadPlans(): Promise<StudyPlan[]> {
 export function cachePlan(plan: StudyPlan): boolean {
   const record = normalizePlan(plan)
   writeTombstones(readTombstones().filter((id) => id !== record.id))
-  return writeLocal(readLocal().filter((item) => item.id !== record.id).concat(record))
+  const saved = writeLocal(readLocal().filter((item) => item.id !== record.id).concat(record))
+  notifySync('plans', record.id, record as unknown as Record<string, unknown>, record.updatedAt ?? 0)
+  return saved
 }
 
 /** 异步镜像到 IndexedDB，失败也不影响主流程 */
@@ -141,6 +144,7 @@ export async function savePlans(plans: StudyPlan[]): Promise<void> {
 export async function deletePlan(id: string): Promise<void> {
   writeTombstones([...readTombstones(), id])
   writeLocal(readLocal().filter((plan) => plan.id !== id))
+  notifySync('plans', id, null, Date.now())
   await withTimeout(remove('plans', id).then(() => true).catch(() => false), WRITE_TIMEOUT, false)
 }
 

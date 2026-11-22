@@ -4,6 +4,8 @@ import { ConfirmDialog, Icon } from '../../components/ui'
 import { clearAll, exportAll, importAll } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { clearPlans, loadPlans, readCachedPlans, savePlans } from '../../lib/plans'
+import { SYNC_EVENT } from '../../lib/sync'
+import { useAuth } from '../../lib/auth'
 import { pluralDays } from '../../lib/utils'
 import type { BackupData, StudyPlan } from '../../types'
 
@@ -15,8 +17,15 @@ export default function Dashboard() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const { sync } = useAuth()
 
   useEffect(() => { void loadPlans().then(setPlans) }, [])
+
+  useEffect(() => {
+    const onApplied = () => setPlans(readCachedPlans())
+    window.addEventListener(SYNC_EVENT, onApplied)
+    return () => window.removeEventListener(SYNC_EVENT, onApplied)
+  }, [])
 
   const recent = [...mistakes.items].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5)
   const weekCount = mistakes.items.filter((item) => Date.now() - item.createdAt < 7 * 86_400_000).length
@@ -53,6 +62,7 @@ export default function Dashboard() {
       await importAll(parsed)
       if (Array.isArray(parsed.plans)) await savePlans(parsed.plans)
       refreshAll()
+      void sync(true)
       setNotice(`导入成功：错题 ${parsed.mistakes?.length ?? 0} / 文档 ${parsed.docs?.length ?? 0} / 母题 ${parsed.mothers?.length ?? 0} / 计划 ${parsed.plans?.length ?? 0}`)
     } catch (err) {
       setNotice(`导入失败：${err instanceof Error ? err.message : '文件格式不正确'}`)
@@ -65,6 +75,7 @@ export default function Dashboard() {
     await clearPlans()
     setConfirmClear(false)
     refreshAll()
+    void sync(true)
     setNotice('所有数据已清空')
   }
 

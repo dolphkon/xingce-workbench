@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { cachePlan, deletePlan, loadPlans, mirrorPlan, normalizeMode, readCachedPlans, secondsOf } from '../../lib/plans'
+import { SYNC_EVENT } from '../../lib/sync'
 import { dateKey, formatClock, formatHours, uid, weekOf } from '../../lib/utils'
 import type { StudyPlan } from '../../types'
 import PlanForm, { MODULE_COLORS } from './PlanForm'
@@ -46,6 +47,14 @@ export default function PlansPage() {
   }
 
   useEffect(() => { void refresh() }, [])
+
+  // 云端同步落地后刷新列表（其它设备的改动会在这里体现）
+  useEffect(() => {
+    const onApplied = () => setPlans(readCachedPlans())
+    window.addEventListener(SYNC_EVENT, onApplied)
+    return () => window.removeEventListener(SYNC_EVENT, onApplied)
+  }, [])
+
   const hasRunning = plans.some((plan) => plan.timerStartedAt)
   useEffect(() => {
     if (!hasRunning) return

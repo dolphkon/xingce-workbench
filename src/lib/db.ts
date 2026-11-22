@@ -1,4 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { notifySync } from './syncHook'
 import type { BackupData, KnowledgeDoc, Mistake, MotherQuestion, StudyPlan } from '../types'
 
 interface WorkbenchDB extends DBSchema {
@@ -230,6 +231,7 @@ export async function put<K extends StoreName>(store: K, value: EntityMap[K]): P
   persistCache(store, state.items.filter((item) => item.id !== value.id).concat(value))
   if (state.deleted.delete(value.id)) persistDeleted(store, state.deleted)
   mirror((db) => db.put(store, value as WorkbenchDB[K]['value']))
+  notifySync(store, value.id, value as unknown as Record<string, unknown>, value.updatedAt ?? 0)
 }
 
 /** 同步移除缓存并立即返回；IndexedDB 删除在后台进行 */
@@ -238,6 +240,7 @@ export async function remove<K extends StoreName>(store: K, id: string): Promise
   persistDeleted(store, [...state.deleted, id])
   persistCache(store, state.items.filter((item) => item.id !== id))
   mirror((db) => db.delete(store, id))
+  notifySync(store, id, null, Date.now())
 }
 
 export async function count(store: StoreName): Promise<number> {

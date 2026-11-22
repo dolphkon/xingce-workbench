@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listAll, readCachedAll, type EntityMap, type StoreName } from './db'
+import { SYNC_EVENT } from './sync'
 
 /**
  * 集合读取：首帧直接用本地缓存渲染，IndexedDB 在后台刷新。
@@ -14,6 +15,12 @@ export function useCollection<K extends StoreName>(store: K) {
   const refresh = useCallback(() => {
     setItems(readCachedAll(store)) // 同步生效，不等数据库
     setTick((value) => value + 1)
+  }, [store])
+
+  useEffect(() => {
+    const onApplied = () => setItems(readCachedAll(store))
+    window.addEventListener(SYNC_EVENT, onApplied)
+    return () => window.removeEventListener(SYNC_EVENT, onApplied)
   }, [store])
 
   useEffect(() => {

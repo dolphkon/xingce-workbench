@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "^0.1.4-dev.71e5d1e.202611161655",
     "dompurify": "^3.1.6",
     "idb": "^8.0.0",
     "marked": "^12.0.2",
