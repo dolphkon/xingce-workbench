@@ -11,14 +11,29 @@ import MistakeForm from './MistakeForm'
 export default function MistakeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [item, setItem] = useState<Mistake | null>(() => (id ? readCachedById('mistakes', id) ?? null : null))
+  const [loadedItem, setLoadedItem] = useState<Mistake | null>(() => (id ? readCachedById('mistakes', id) ?? null : null))
+  // 路由切换时先用缓存中的当前题目渲染，避免短暂显示上一题
+  const item = loadedItem?.id === id
+    ? loadedItem
+    : id ? readCachedById('mistakes', id) ?? null : null
   const [loading, setLoading] = useState(() => (id ? !readCachedById('mistakes', id) : false))
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  // 做题模式：默认隐藏答案与解析，作答或点击后才揭示
-  const [revealed, setRevealed] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [typedAnswer, setTypedAnswer] = useState('')
+  // 做题模式：默认隐藏答案与解析，作答或点击后才揭示。
+  // 状态与题目 id 绑定，切换题目时同步回到做题模式，避免闪现上一题答案。
+  const [attempt, setAttempt] = useState<{
+    id: string
+    revealed: boolean
+    selected: string | null
+    typedAnswer: string
+  }>(() => ({ id: id ?? '', revealed: false, selected: null, typedAnswer: '' }))
+  const active = attempt.id === (id ?? '')
+    ? attempt
+    : { id: id ?? '', revealed: false, selected: null, typedAnswer: '' }
+  const setActive = (patch: Partial<typeof active>) => setAttempt({ ...active, ...patch })
+  const revealed = active.revealed
+  const selected = active.selected
+  const typedAnswer = active.typedAnswer
   const mothers = useCollection('mothers')
   const { items: allMistakes } = useCollection('mistakes')
   // 仅在当前题型内翻页，顺序与题库列表一致（录入时间倒序）
@@ -34,12 +49,12 @@ export default function MistakeDetail() {
     if (!id) return
     const cached = readCachedById('mistakes', id)
     if (cached) {
-      setItem(cached)
+      setLoadedItem(cached)
       setLoading(false)
     }
     try {
       const data = await getById('mistakes', id)
-      setItem(data ?? null)
+      setLoadedItem(data ?? null)
     } finally {
       setLoading(false)
     }
@@ -48,13 +63,6 @@ export default function MistakeDetail() {
   useEffect(() => {
     void load()
   }, [load])
-
-  // 切换题目时回到做题模式
-  useEffect(() => {
-    setRevealed(false)
-    setSelected(null)
-    setTypedAnswer('')
-  }, [id])
 
   const handleDelete = async () => {
     if (!id) return
@@ -86,13 +94,10 @@ export default function MistakeDetail() {
   const submitAnswer = (answer: string) => {
     const value = answer.trim()
     if (!value) return
-    setSelected(value.toUpperCase())
-    setRevealed(true)
+    setActive({ selected: value.toUpperCase(), revealed: true })
   }
   const resetAttempt = () => {
-    setRevealed(false)
-    setSelected(null)
-    setTypedAnswer('')
+    setActive({ revealed: false, selected: null, typedAnswer: '' })
   }
 
   return (
@@ -106,7 +111,10 @@ export default function MistakeDetail() {
             错题详情
             <span className="chip chip-primary">{item.type}</span>
           </h1>
-          <p className="page-subtitle">录入于 {formatDate(item.createdAt)} · 已练习 {item.reviewCount} 次 · 答对 {item.correctCount} 次</p>
+          <p className="page-subtitle">
+            录入于 {formatDate(item.createdAt)}
+            {revealed && ` · 已练习 ${item.reviewCount} 次 · 答对 ${item.correctCount} 次`}
+          </p>
         </div>
         <div className="header-actions">
           <button className="btn" onClick={() => setEditing(true)}><Icon name="edit" size={16} /> 编辑</button>
@@ -131,7 +139,7 @@ export default function MistakeDetail() {
           <div className="tag-row">
             <span className={`chip ${revealed ? 'chip-success' : 'chip-primary'}`}>{revealed ? '对答案' : '做题模式'}</span>
             <span className="chip chip-primary">{item.type}</span>
-            {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
+            {revealed && item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
             {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
             {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
           </div>
@@ -179,7 +187,7 @@ export default function MistakeDetail() {
                   value={typedAnswer}
                   disabled={revealed}
                   placeholder="作答后显示正确答案与解析"
-                  onChange={(event) => setTypedAnswer(event.target.value)}
+                  onChange={(event) => setActive({ typedAnswer: event.target.value })}
                   onKeyDown={(event) => { if (event.key === 'Enter') submitAnswer(typedAnswer) }}
                 />
                 <button className="btn btn-primary" disabled={!typedAnswer.trim() || revealed} onClick={() => submitAnswer(typedAnswer)}>
@@ -192,8 +200,10 @@ export default function MistakeDetail() {
           <div className="row" style={{ marginTop: 16, gap: 8, flexWrap: 'wrap' }}>
             {!revealed ? (
               <>
-                <button className="btn" onClick={() => setRevealed(true)}><Icon name="book" size={15} /> 查看解析</button>
-                <span className="small muted">先作答再核对，效果更好；查看解析会直接显示答案</span>
+                <button className="btn btn-primary" onClick={() => setActive({ revealed: true })}>
+                  <Icon name="book" size={15} /> 查看答案
+                </button>
+                <span className="small muted">先作答再核对，效果更好；查看答案会同时展开答案、解析与正确率</span>
               </>
             ) : (
               <>
@@ -213,7 +223,7 @@ export default function MistakeDetail() {
       <div className="card">
         <div className="card-header">
           <h2 className="card-title">复盘信息</h2>
-          {!revealed && <span className="small muted">作答或查看解析后显示</span>}
+          {!revealed && <span className="small muted">作答或查看答案后显示</span>}
         </div>
         {revealed ? (
           <div className="card-body">
@@ -233,13 +243,24 @@ export default function MistakeDetail() {
               </div>
             </div>
             <div className="divider" />
+            <div className="form-row">
+              <div>
+                <div className="form-label">正确率</div>
+                <div className="chip chip-success">{item.accuracy != null ? `${item.accuracy}%` : '未设置'}</div>
+              </div>
+              <div>
+                <div className="form-label">练习记录</div>
+                <div className="small">已练习 {item.reviewCount} 次 · 答对 {item.correctCount} 次</div>
+              </div>
+            </div>
+            <div className="divider" />
             <div className="form-label">解析 / 复盘笔记</div>
             <div className="analysis-block">{item.analysis || '暂无解析，可在编辑中补充'}</div>
           </div>
         ) : (
           <div className="card-body">
             <div className="small muted" style={{ padding: '10px 0' }}>
-              为保持做题体验，正确答案与解析已隐藏。完成作答或点击上方「查看解析」即可展开。
+              为保持做题体验，答案、解析与正确率已隐藏。完成作答或点击上方「查看答案」即可展开。
             </div>
           </div>
         )}
