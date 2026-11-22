@@ -59,16 +59,35 @@ export interface MotherQuestion {
 export const STUDY_MODULES = ['言语', '判断', '资料', '图推', '数量', '时政', '常识'] as const
 export type StudyModule = (typeof STUDY_MODULES)[number]
 
-export const PLAN_MODES = ['专注', '刷题'] as const
-export type PlanMode = (typeof PLAN_MODES)[number]
+export const PLAN_MODES = ['学习', '刷题'] as const
+/** 兼容旧数据中「专注」模式 */
+export type PlanMode = (typeof PLAN_MODES)[number] | '专注'
 
 export const PLAN_PRIORITIES = ['重要且紧急', '重要不紧急', '紧急不重要', '不紧急不重要'] as const
 export type PlanPriority = (typeof PLAN_PRIORITIES)[number]
 
 export interface PlanSubTask {
   id: string
+  /** 学习：章节/知识点名称；刷题：题型 */
   type: string
+  /** 学习：预计分钟；刷题：题量 */
   count: number
+  /** 刷题：做对题数 */
+  correct?: number
+  /** 该子任务单独累计秒数 */
+  elapsedSeconds?: number
+  done?: boolean
+}
+
+/** 一次计时/补录记录，用于按天统计 */
+export interface PlanSession {
+  id: string
+  startedAt?: number
+  endedAt?: number
+  seconds: number
+  /** 手动补录的时长 */
+  manual?: boolean
+  subTaskId?: string
 }
 
 export interface StudyPlan {
@@ -85,6 +104,18 @@ export interface StudyPlan {
   completed: boolean
   elapsedSeconds: number
   timerStartedAt?: number
+  /** 专项学习：课程/资料来源（网课平台、教材、自学等） */
+  source?: string
+  /** 专项学习：预计投入分钟 */
+  targetMinutes?: number
+  /** 刷题：总题量 */
+  questionCount?: number
+  /** 刷题：做对题数 */
+  correctCount?: number
+  /** 计时历史（用于按天统计） */
+  sessions?: PlanSession[]
+  /** 当前正在专注的子任务 */
+  activeSubTaskId?: string
   createdAt: number
   updatedAt: number
 }

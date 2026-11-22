@@ -1,19 +1,22 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Icon } from '../../components/ui'
 import { clearAll, exportAll, importAll } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
+import { clearPlans, loadPlans, savePlans } from '../../lib/plans'
 import { pluralDays } from '../../lib/utils'
-import type { BackupData } from '../../types'
+import type { BackupData, StudyPlan } from '../../types'
 
 export default function Dashboard() {
   const mistakes = useCollection('mistakes')
   const docs = useCollection('docs')
   const mothers = useCollection('mothers')
-  const plans = useCollection('plans')
+  const [plans, setPlans] = useState<StudyPlan[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+
+  useEffect(() => { void loadPlans().then(setPlans) }, [])
 
   const recent = [...mistakes.items].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5)
   const weekCount = mistakes.items.filter((item) => Date.now() - item.createdAt < 7 * 86_400_000).length
@@ -22,12 +25,13 @@ export default function Dashboard() {
     mistakes.refresh()
     docs.refresh()
     mothers.refresh()
-    plans.refresh()
+    void loadPlans().then(setPlans)
   }
 
   const handleExport = async () => {
     try {
       const data = await exportAll()
+      data.plans = await loadPlans()
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -47,6 +51,7 @@ export default function Dashboard() {
     try {
       const parsed = JSON.parse(await file.text()) as BackupData
       await importAll(parsed)
+      if (Array.isArray(parsed.plans)) await savePlans(parsed.plans)
       refreshAll()
       setNotice(`导入成功：错题 ${parsed.mistakes?.length ?? 0} / 文档 ${parsed.docs?.length ?? 0} / 母题 ${parsed.mothers?.length ?? 0} / 计划 ${parsed.plans?.length ?? 0}`)
     } catch (err) {
@@ -57,6 +62,7 @@ export default function Dashboard() {
 
   const handleClear = async () => {
     await clearAll()
+    await clearPlans()
     setConfirmClear(false)
     refreshAll()
     setNotice('所有数据已清空')
@@ -67,7 +73,7 @@ export default function Dashboard() {
     { label: '近 7 天新增', value: weekCount, icon: 'bolt', bg: '#fef3c7', color: '#d97706' },
     { label: '知识文档', value: docs.items.length, icon: 'book', bg: '#dcfce7', color: '#16a34a' },
     { label: '母题条目', value: mothers.items.length, icon: 'layers', bg: '#e0f2fe', color: '#0284c7' },
-    { label: '学习计划', value: plans.items.length, icon: 'calendar', bg: '#fef3c7', color: '#d97706' },
+    { label: '学习计划', value: plans.length, icon: 'calendar', bg: '#fef3c7', color: '#d97706' },
   ]
 
   const modules = [
