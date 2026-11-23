@@ -1,9 +1,21 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { put, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
-import { createFolder, deleteFolder, renameFolder } from '../../lib/folders'
+import {
+  ALL_DOCS_ID,
+  UNCATEGORIZED_ID,
+  buildFolderTree,
+  createFolder,
+  deleteFolder,
+  descendantFolderIds,
+  folderPath,
+  migrateLegacyFolderData,
+  normalizeParentId,
+  renameFolder,
+  type TreeFolder,
+} from '../../lib/folders'
 import { formatDate, uid } from '../../lib/utils'
 import { docFileKind, formatBytes, loadDocFile } from '../../lib/docFile'
 import type { KnowledgeDoc, KnowledgeFolder } from '../../types'
@@ -16,117 +28,145 @@ function excerpt(content: string): string {
     .slice(0, 110)
 }
 
-const UNCATEGORIZED = '未分类'
-
-/**
- * 目录树 = 独立文件夹 store 的文件夹 + 文档中出现但无对应文件夹记录的历史目录（兼容旧数据）+ 未分类（当有文档无 category 时）。
- * folders store 的文件夹按创建顺序，兼容项追加在后。
- */
-function useFolderTree(docs: KnowledgeDoc[], folders: KnowledgeFolder[]) {
-  return useMemo(() => {
-    const counts = new Map<string, number>()
-    let hasUncategorized = false
-    docs.forEach((doc) => {
-      const key = doc.category?.trim() || UNCATEGORIZED
-      if (key === UNCATEGORIZED) hasUncategorized = true
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    })
-    const ordered: string[] = []
-    folders.forEach((f) => { if (f.name) ordered.push(f.name) })
-    // 文档中出现的目录若没有对应文件夹记录，补进来（旧数据兼容）
-    counts.forEach((_, name) => {
-      if (name !== UNCATEGORIZED && !ordered.includes(name)) ordered.push(name)
-    })
-    if (hasUncategorized) ordered.push(UNCATEGORIZED)
-    // 已删除的文件夹若仍有文档，counts 里保留；这里只显示实际有内容或已注册的目录
-    const list = ordered.filter((name) => folders.some((f) => f.name === name) || (counts.get(name) ?? 0) > 0)
-    return { folders: list, counts, total: docs.length }
-  }, [docs, folders])
-}
-
 export default function KnowledgePage() {
-  const { items, loading, error, refresh } = useCollection('docs')
+  const { items: docs, loading, error, refresh } = useCollection('docs')
   const { items: folders, refresh: refreshFolders } = useCollection('folders')
   const navigate = useNavigate()
   const [keyword, setKeyword] = useState('')
-  const [folder, setFolder] = useState<string>('全部')
-  const [deleting, setDeleting] = useState<KnowledgeDoc | null>(null)
-  const [renaming, setRenaming] = useState<KnowledgeDoc | null>(null)
+  const [selected, setSelected] = useState<string>(ALL_DOCS_ID)
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>())
+  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDoc | null>(null)
+  const [renamingDoc, setRenamingDoc] = useState<KnowledgeDoc | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [moveTarget, setMoveTarget] = useState<string>(UNCATEGORIZED_ID)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [showUpload, setShowUpload] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
-  // 文件夹管理弹窗状态
-  const [showNewFolder, setShowNewFolder] = useState(false)
+  const [folderDialog, setFolderDialog] = useState<{ mode: 'create' | 'rename'; folder?: KnowledgeFolder; parentId?: string | null } | null>(null)
   const [folderNameInput, setFolderNameInput] = useState('')
   const [folderError, setFolderError] = useState<string | null>(null)
-  const [folderRenaming, setFolderRenaming] = useState<KnowledgeFolder | null>(null)
   const [folderDeleting, setFolderDeleting] = useState<KnowledgeFolder | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const { folders: treeFolders, counts, total } = useFolderTree(items, folders)
+  const initExpanded = useRef(false)
+  const migrating = useRef(false)
 
-  const filtered = items
+  const tree = useMemo(() => buildFolderTree(folders), [folders])
+  const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders])
+
+  // 首次加载默认展开全部目录，方便看到层级结构
+  useEffect(() => {
+    if (initExpanded.current || folders.length === 0) return
+    initExpanded.current = true
+    setExpanded(new Set(folders.map((f) => f.id)))
+  }, [folders])
+
+  // 旧数据只有 category 文件夹名：自动补建文件夹并回填 folderId（幂等）
+  useEffect(() => {
+    if (migrating.current || loading) return
+    if (!docs.some((doc) => !doc.folderId && doc.category?.trim())) return
+    migrating.current = true
+    void migrateLegacyFolderData(docs, folders)
+      .then((count) => { if (count > 0) { refresh(); refreshFolders() } })
+      .finally(() => { migrating.current = false })
+  }, [docs, folders, loading, refresh, refreshFolders])
+
+  const { subtreeCounts, uncategorizedCount } = useMemo(() => {
+    const direct = new Map<string, number>()
+    let unc = 0
+    docs.forEach((doc) => {
+      if (doc.folderId && folderById.has(doc.folderId)) {
+        direct.set(doc.folderId, (direct.get(doc.folderId) ?? 0) + 1)
+      } else {
+        unc += 1
+      }
+    })
+    const subtree = new Map<string, number>()
+    folders.forEach((folder) => {
+      const ids = descendantFolderIds(folder.id, folders)
+      subtree.set(folder.id, ids.reduce((sum, id) => sum + (direct.get(id) ?? 0), 0))
+    })
+    return { subtreeCounts: subtree, uncategorizedCount: unc }
+  }, [docs, folders, folderById])
+
+  const isFolderSelected = selected !== ALL_DOCS_ID && selected !== UNCATEGORIZED_ID && folderById.has(selected)
+
+  const filtered = docs
     .filter((doc) => {
-      if (folder !== '全部' && (doc.category?.trim() || UNCATEGORIZED) !== folder) return false
+      if (selected === UNCATEGORIZED_ID && doc.folderId && folderById.has(doc.folderId)) return false
+      if (isFolderSelected && doc.folderId !== selected) return false
       if (keyword.trim()) {
-        const text = `${doc.title} ${doc.category} ${doc.content} ${doc.fileName ?? ''} ${doc.tags.join(' ')}`.toLowerCase()
+        const text = `${doc.title} ${folderPath(doc.folderId, folders)} ${doc.content} ${doc.fileName ?? ''} ${doc.tags.join(' ')}`.toLowerCase()
         if (!text.includes(keyword.trim().toLowerCase())) return false
       }
       return true
     })
     .sort((a, b) => b.updatedAt - a.updatedAt)
 
-  /** 将某文件夹名下的文档迁移到目标目录（UNCATEGORIZED 表示空 category） */
-  const migrateDocs = async (from: string, to: string) => {
-    const affected = items.filter((d) => (d.category?.trim() || UNCATEGORIZED) === from)
-    const target = to === UNCATEGORIZED ? '' : to
-    await Promise.all(affected.map((d) => put('docs', { ...d, category: target, updatedAt: Date.now() })))
+  const currentLabel = selected === ALL_DOCS_ID
+    ? '全部文档'
+    : selected === UNCATEGORIZED_ID
+      ? '未分类'
+      : folderPath(selected, folders)
+
+  const toggleFolder = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
-  const handleDelete = async () => {
-    if (!deleting) return
-    await remove('docs', deleting.id)
-    setDeleting(null)
-    refresh()
+  const openCreateFolder = (parentId?: string | null) => {
+    setFolderDialog({ mode: 'create', parentId: normalizeParentId(parentId) })
+    setFolderNameInput('')
+    setFolderError(null)
   }
 
-  const handleCreateFolder = async () => {
+  const openRenameFolder = (folder: KnowledgeFolder) => {
+    setFolderDialog({ mode: 'rename', folder })
+    setFolderNameInput(folder.name)
+    setFolderError(null)
+  }
+
+  const openNewNote = (folderId?: string) => {
+    const target = folderId ?? (isFolderSelected ? selected : '')
+    const param = target && folderById.has(target) ? `?folder=${encodeURIComponent(target)}` : ''
+    navigate(`/knowledge/new${param}`)
+  }
+
+  const handleFolderSubmit = async () => {
+    if (!folderDialog) return
     setFolderError(null)
     try {
-      const created = await createFolder(folderNameInput)
-      setShowNewFolder(false)
+      if (folderDialog.mode === 'create') {
+        const created = await createFolder(folderNameInput, folderDialog.parentId)
+        if (created.parentId) setExpanded((prev) => new Set([...prev, created.parentId!]))
+        setSelected(created.id)
+      } else if (folderDialog.folder) {
+        const updated = await renameFolder(folderDialog.folder.id, folderNameInput)
+        const affected = docs.filter((doc) => doc.folderId === updated.id)
+        await Promise.all(affected.map((doc) => put('docs', { ...doc, category: updated.name, updatedAt: Date.now() })))
+        refresh()
+      }
+      setFolderDialog(null)
       setFolderNameInput('')
       refreshFolders()
-      setFolder(created.name)
     } catch (err) {
-      setFolderError(err instanceof Error ? err.message : '创建失败')
-    }
-  }
-
-  const handleRenameFolder = async () => {
-    if (!folderRenaming) return
-    setFolderError(null)
-    try {
-      const oldName = folderRenaming.name
-      const updated = await renameFolder(folderRenaming.id, folderNameInput)
-      if (oldName !== updated.name) await migrateDocs(oldName, updated.name)
-      if (folder === oldName) setFolder(updated.name)
-      setFolderRenaming(null)
-      setFolderNameInput('')
-      refreshFolders()
-      refresh()
-    } catch (err) {
-      setFolderError(err instanceof Error ? err.message : '重命名失败')
+      setFolderError(err instanceof Error ? err.message : '操作失败')
     }
   }
 
   const handleDeleteFolder = async () => {
     if (!folderDeleting) return
-    const name = folderDeleting.name
-    await deleteFolder(folderDeleting.id)
-    await migrateDocs(name, UNCATEGORIZED)
-    if (folder === name) setFolder('全部')
+    const ids = descendantFolderIds(folderDeleting.id, folders)
+    const idSet = new Set(ids)
+    await Promise.all(ids.map((id) => deleteFolder(id)))
+    const affected = docs.filter((doc) => doc.folderId && idSet.has(doc.folderId))
+    await Promise.all(affected.map((doc) => put('docs', { ...doc, folderId: undefined, category: '', updatedAt: Date.now() })))
+    if (idSet.has(selected)) setSelected(ALL_DOCS_ID)
+    setExpanded((prev) => new Set([...prev].filter((id) => !idSet.has(id))))
     setFolderDeleting(null)
     refreshFolders()
     refresh()
@@ -137,20 +177,27 @@ export default function KnowledgePage() {
     setUploading(true)
     setUploadError(null)
     try {
-      // 目标文件夹：优先新输入的名称；若不存在则自动创建为独立文件夹
-      let target = newFolderName.trim() || (folder === '全部' || folder === UNCATEGORIZED ? '' : folder)
-      if (target && !folders.some((f) => f.name === target)) {
-        await createFolder(target)
+      let targetId: string | undefined = isFolderSelected ? selected : undefined
+      let targetName = isFolderSelected ? folderById.get(selected)?.name ?? '' : ''
+      // 输入新名称时，在当前目录下新建子文件夹并上传进去
+      const typed = newFolderName.trim()
+      if (typed) {
+        const parent = targetId ?? null
+        const existing = folders.find((f) => f.name === typed && normalizeParentId(f.parentId) === parent)
+        const created = existing ?? await createFolder(typed, parent)
+        targetId = created.id
+        targetName = created.name
+        if (created.parentId) setExpanded((prev) => new Set([...prev, created.parentId!]))
         refreshFolders()
       }
-      const list = Array.from(files)
-      const loaded = await Promise.all(list.map((f) => loadDocFile(f)))
+      const loaded = await Promise.all(Array.from(files).map((file) => loadDocFile(file)))
       const now = Date.now()
-      const docs: KnowledgeDoc[] = loaded.map((item, i) => ({
+      const createdDocs: KnowledgeDoc[] = loaded.map((item, i) => ({
         id: uid(),
         title: item.title,
         content: item.content,
-        category: target,
+        folderId: targetId,
+        category: targetName,
         tags: [],
         createdAt: now + i,
         updatedAt: now + i,
@@ -159,7 +206,8 @@ export default function KnowledgePage() {
         fileType: item.fileType,
         fileData: item.fileData,
       }))
-      await Promise.all(docs.map((d) => put('docs', d)))
+      await Promise.all(createdDocs.map((doc) => put('docs', doc)))
+      if (targetId) setSelected(targetId)
       refresh()
       setShowUpload(false)
       setNewFolderName('')
@@ -171,17 +219,60 @@ export default function KnowledgePage() {
     }
   }
 
-  const handleRename = async () => {
-    if (!renaming || !renameValue.trim()) return
-    await put('docs', { ...renaming, title: renameValue.trim(), updatedAt: Date.now() })
-    setRenaming(null)
+  const handleRenameDoc = async () => {
+    if (!renamingDoc || !renameValue.trim()) return
+    const target = moveTarget === UNCATEGORIZED_ID ? undefined : moveTarget
+    const folder = target ? folderById.get(target) : undefined
+    await put('docs', {
+      ...renamingDoc,
+      title: renameValue.trim(),
+      folderId: target,
+      category: folder?.name ?? '',
+      updatedAt: Date.now(),
+    })
+    setRenamingDoc(null)
     refresh()
   }
 
-  const moveDoc = async (doc: KnowledgeDoc, target: string) => {
-    await put('docs', { ...doc, category: target === UNCATEGORIZED ? '' : target, updatedAt: Date.now() })
+  const handleDeleteDoc = async () => {
+    if (!deletingDoc) return
+    await remove('docs', deletingDoc.id)
+    setDeletingDoc(null)
     refresh()
   }
+
+  const renderFolder = (folder: TreeFolder, depth: number): ReactNode => {
+    const count = subtreeCounts.get(folder.id) ?? 0
+    const active = selected === folder.id
+    const isOpen = expanded.has(folder.id)
+    return (
+      <div key={folder.id} className="kb-tree-branch">
+        <div className={`kb-folder-row${active ? ' active' : ''}`} style={{ paddingLeft: 2 + depth * 13 }}>
+          {folder.children.length > 0 ? (
+            <button className={`kb-tree-caret${isOpen ? ' open' : ''}`} onClick={() => toggleFolder(folder.id)} title={isOpen ? '收起' : '展开'}>
+              <Icon name="chevron" size={13} />
+            </button>
+          ) : (
+            <span className="kb-tree-caret placeholder" />
+          )}
+          <button className="kb-folder" onClick={() => setSelected(folder.id)} title={folderPath(folder.id, folders)}>
+            <Icon name="folder" size={15} /> <span>{folder.name}</span><span className="kb-count">{count}</span>
+          </button>
+          <span className="kb-folder-ops">
+            <button title={`在「${folder.name}」中新建笔记`} onClick={() => openNewNote(folder.id)}><Icon name="file" size={13} /></button>
+            <button title={`在「${folder.name}」中新建子文件夹`} onClick={() => openCreateFolder(folder.id)}><Icon name="plus" size={13} /></button>
+            <button title="重命名文件夹" onClick={() => openRenameFolder(folder)}><Icon name="edit" size={13} /></button>
+            <button title="删除文件夹" onClick={() => setFolderDeleting(folder)}><Icon name="trash" size={13} /></button>
+          </span>
+        </div>
+        {isOpen && folder.children.map((child) => renderFolder(child, depth + 1))}
+      </div>
+    )
+  }
+
+  const parentLabel = folderDialog?.mode === 'rename'
+    ? (folderDialog.folder?.parentId ? folderPath(folderDialog.folder.parentId, folders) : '根目录')
+    : (folderDialog?.parentId ? folderPath(folderDialog.parentId, folders) : '根目录')
 
   return (
     <>
@@ -191,9 +282,9 @@ export default function KnowledgePage() {
           <p className="page-subtitle">按文件夹整理资料，上传 PDF/图片在线阅读，或用 Markdown 沉淀笔记</p>
         </div>
         <div className="header-actions">
-          <button className="btn" onClick={() => { setFolderError(null); setFolderNameInput(''); setShowNewFolder(true) }}><Icon name="plus" size={16} /> 新建文件夹</button>
-          <button className="btn" onClick={() => setShowUpload(true)}><Icon name="upload" size={16} /> 上传文档</button>
-          <button className="btn btn-primary" onClick={() => navigate('/knowledge/new')}><Icon name="plus" size={16} /> 新建笔记</button>
+          <button className="btn" onClick={() => openCreateFolder(isFolderSelected ? selected : null)}><Icon name="plus" size={16} /> 新建文件夹</button>
+          <button className="btn" onClick={() => { setUploadError(null); setShowUpload(true) }}><Icon name="upload" size={16} /> 上传文档</button>
+          <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={16} /> 新建笔记</button>
         </div>
       </div>
 
@@ -203,29 +294,24 @@ export default function KnowledgePage() {
       <div className="kb-layout">
         <aside className="kb-sidebar">
           <div className="kb-side-title">
-            <Icon name="folder" size={15} /> 文件夹
-            <button className="kb-folder-add" title="新建文件夹" onClick={() => { setFolderError(null); setFolderNameInput(''); setShowNewFolder(true) }}><Icon name="plus" size={14} /></button>
+            <Icon name="folder" size={15} /> 文件管理
+            <button className="kb-folder-add" title="新建根目录文件夹" onClick={() => openCreateFolder(null)}><Icon name="plus" size={14} /></button>
           </div>
-          <button className={`kb-folder${folder === '全部' ? ' active' : ''}`} onClick={() => setFolder('全部')}>
-            <Icon name="book" size={15} /> <span>全部文档</span><span className="kb-count">{total}</span>
+          <button className={`kb-folder${selected === ALL_DOCS_ID ? ' active' : ''}`} onClick={() => setSelected(ALL_DOCS_ID)}>
+            <Icon name="book" size={15} /> <span>全部文档</span><span className="kb-count">{docs.length}</span>
           </button>
-          {treeFolders.map((name) => {
-            const rec = folders.find((f) => f.name === name)
-            return (
-              <div key={name} className={`kb-folder-row${folder === name ? ' active' : ''}`}>
-                <button className="kb-folder" onClick={() => setFolder(name)}>
-                  <Icon name="folder" size={15} /> <span>{name}</span><span className="kb-count">{counts.get(name) ?? 0}</span>
-                </button>
-                {rec && (
-                  <span className="kb-folder-ops">
-                    <button title="重命名文件夹" onClick={() => { setFolderError(null); setFolderNameInput(name); setFolderRenaming(rec) }}><Icon name="edit" size={13} /></button>
-                    <button title="删除文件夹" onClick={() => setFolderDeleting(rec)}><Icon name="trash" size={13} /></button>
-                  </span>
-                )}
-              </div>
-            )
-          })}
-          <div className="kb-hint">可新建、重命名或删除文件夹；删除后其中文档移入未分类</div>
+          <div className={`kb-folder-row${selected === UNCATEGORIZED_ID ? ' active' : ''}`}>
+            <span className="kb-tree-caret placeholder" />
+            <button className="kb-folder" onClick={() => setSelected(UNCATEGORIZED_ID)}>
+              <Icon name="folder" size={15} /> <span>未分类</span><span className="kb-count">{uncategorizedCount}</span>
+            </button>
+            <span className="kb-folder-ops">
+              <button title="在未分类中新建笔记" onClick={() => openNewNote()}><Icon name="file" size={13} /></button>
+              <button title="新建根目录文件夹" onClick={() => openCreateFolder(null)}><Icon name="plus" size={13} /></button>
+            </span>
+          </div>
+          {tree.map((folder) => renderFolder(folder, 0))}
+          <div className="kb-hint">在文件夹上点击 + 建子文件夹、点击文档图标新建笔记；删除文件夹时其中文档会移入未分类。</div>
         </aside>
 
         <div className="kb-main">
@@ -235,7 +321,7 @@ export default function KnowledgePage() {
               <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题、内容、文件名、标签…" />
             </div>
             <span className="spacer" />
-            <span className="small muted">{folder === '全部' ? '全部文档' : folder} · {filtered.length} 篇</span>
+            <span className="small muted">{currentLabel} · {filtered.length} 篇</span>
           </div>
 
           <div className="card">
@@ -245,12 +331,12 @@ export default function KnowledgePage() {
               ) : filtered.length === 0 ? (
                 <EmptyState
                   icon="folder"
-                  title={items.length === 0 ? '知识库还是空的' : '这个文件夹还没有文档'}
-                  description={items.length === 0 ? '上传 PDF/图片资料，或新建一篇 Markdown 笔记' : '上传文档到当前文件夹，或在文档详情中移动到这里'}
+                  title={docs.length === 0 ? '知识库还是空的' : '这个文件夹还没有文档'}
+                  description={docs.length === 0 ? '上传 PDF/图片资料，或新建一篇 Markdown 笔记' : '可上传文档到这里，或在文档详情中移动到当前文件夹'}
                   action={
                     <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                       <button className="btn" onClick={() => setShowUpload(true)}><Icon name="upload" size={15} /> 上传文档</button>
-                      <button className="btn btn-primary" onClick={() => navigate('/knowledge/new')}><Icon name="plus" size={15} /> 新建笔记</button>
+                      <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={15} /> 新建笔记</button>
                     </div>
                   }
                 />
@@ -263,15 +349,15 @@ export default function KnowledgePage() {
                         <span className={`kb-file-icon kb-file-${fk}`}>
                           <Icon name={fk === 'pdf' ? 'filetext' : fk === 'image' ? 'image' : 'file'} size={19} />
                         </span>
-                        <div className="list-item-main" onClick={() => navigate(`/knowledge/${doc.id}`)} style={{ cursor: 'pointer' }}>
+                        <div className="list-item-main" onClick={() => navigate(`/knowledge/${doc.id}?read=1`)} style={{ cursor: 'pointer' }}>
                           <div className="item-title">{doc.title || doc.fileName || '未命名文档'}</div>
                           {doc.kind === 'file' ? (
-                            <div className="item-excerpt">{doc.fileName} · {formatBytes(doc.fileData)} · 点击在线阅读</div>
+                            <div className="item-excerpt">{doc.fileName} · {formatBytes(doc.fileData)} · 点击全屏阅读</div>
                           ) : (
                             <div className="item-excerpt">{excerpt(doc.content) || '暂无内容'}</div>
                           )}
                           <div className="item-meta">
-                            {doc.category && <span className="chip chip-primary"><Icon name="folder" size={11} /> {doc.category}</span>}
+                            <span className="chip chip-primary"><Icon name="folder" size={11} /> {folderPath(doc.folderId, folders)}</span>
                             {doc.tencentUrl && <span className="chip chip-success">腾讯文档</span>}
                             {doc.kind === 'file' && <span className="chip chip-warning">{fk.toUpperCase()}</span>}
                             {doc.tags.slice(0, 3).map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
@@ -282,12 +368,16 @@ export default function KnowledgePage() {
                           {doc.tencentUrl && (
                             <a className="icon-btn" title="打开腾讯文档" href={doc.tencentUrl} target="_blank" rel="noreferrer"><Icon name="link" size={16} /></a>
                           )}
-                          <button className="icon-btn" title="在线阅读" onClick={() => navigate(`/knowledge/${doc.id}`)}><Icon name="eye" size={16} /></button>
+                          <button className="icon-btn" title="全屏阅读" onClick={() => navigate(`/knowledge/${doc.id}?read=1`)}><Icon name="eye" size={16} /></button>
                           {doc.fileData && (
                             <a className="icon-btn" title="下载" href={doc.fileData} download={doc.fileName || doc.title}><Icon name="download" size={16} /></a>
                           )}
-                          <button className="icon-btn" title="重命名" onClick={() => { setRenaming(doc); setRenameValue(doc.title) }}><Icon name="edit" size={16} /></button>
-                          <button className="icon-btn danger" title="删除" onClick={() => setDeleting(doc)}><Icon name="trash" size={16} /></button>
+                          <button className="icon-btn" title="重命名 / 移动" onClick={() => {
+                            setRenamingDoc(doc)
+                            setRenameValue(doc.title)
+                            setMoveTarget(doc.folderId && folderById.has(doc.folderId) ? doc.folderId : UNCATEGORIZED_ID)
+                          }}><Icon name="edit" size={16} /></button>
+                          <button className="icon-btn danger" title="删除" onClick={() => setDeletingDoc(doc)}><Icon name="trash" size={16} /></button>
                         </div>
                       </div>
                     )
@@ -303,12 +393,11 @@ export default function KnowledgePage() {
         <Modal title="上传文档到知识库" onClose={() => setShowUpload(false)}
           footer={<button className="btn" onClick={() => setShowUpload(false)}>取消</button>}>
           <p className="small muted" style={{ marginTop: 0 }}>
-            当前目录：<strong>{folder === '全部' ? '未分类' : folder}</strong>。支持 PDF、Word、图片、TXT、Markdown 等；文本类可直接编辑，其余可在线阅读与下载。
+            当前目录：<strong>{currentLabel}</strong>。支持 PDF、Word、图片、TXT、Markdown 等；文本类可直接编辑，其余可在线阅读与下载。
           </p>
           <div className="form-field">
-            <label className="form-label">目标文件夹（可输入新名称自动创建）</label>
-            <input className="input" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder={folder === '全部' || folder === UNCATEGORIZED ? '留空表示未分类' : folder} />
+            <label className="form-label">新子文件夹（可选，输入后自动创建并把文件上传进去）</label>
+            <input className="input" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="留空则上传到当前目录" />
           </div>
           <label className="upload-zone">
             <Icon name="upload" size={24} />
@@ -319,56 +408,58 @@ export default function KnowledgePage() {
               onChange={(e) => void handleUpload(e.target.files)} />
           </label>
           {newFolderName.trim() && (
-            <p className="small muted" style={{ marginBottom: 0 }}>将上传到文件夹「{newFolderName.trim()}」</p>
+            <p className="small muted" style={{ marginBottom: 0 }}>将上传到「{currentLabel} / {newFolderName.trim()}」</p>
           )}
         </Modal>
       )}
 
-      {(showNewFolder || folderRenaming) && (
-        <Modal title={folderRenaming ? '重命名文件夹' : '新建文件夹'} onClose={() => { setShowNewFolder(false); setFolderRenaming(null); setFolderError(null) }}
+      {folderDialog && (
+        <Modal title={folderDialog.mode === 'rename' ? '重命名文件夹' : '新建文件夹'} onClose={() => setFolderDialog(null)}
           footer={<>
-            <button className="btn" onClick={() => { setShowNewFolder(false); setFolderRenaming(null); setFolderError(null) }}>取消</button>
-            <button className="btn btn-primary" onClick={() => void (folderRenaming ? handleRenameFolder() : handleCreateFolder())}>{folderRenaming ? '保存' : '创建'}</button>
+            <button className="btn" onClick={() => setFolderDialog(null)}>取消</button>
+            <button className="btn btn-primary" onClick={() => void handleFolderSubmit()}>{folderDialog.mode === 'rename' ? '保存' : '创建'}</button>
           </>}>
           <div className="form-field" style={{ marginBottom: 0 }}>
             <label className="form-label">文件夹名称</label>
             <input className="input" value={folderNameInput} onChange={(e) => { setFolderNameInput(e.target.value); setFolderError(null) }} autoFocus
-              onKeyDown={(e) => { if (e.key === 'Enter') void (folderRenaming ? handleRenameFolder() : handleCreateFolder()) }} />
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleFolderSubmit() }} />
           </div>
+          <p className="small muted" style={{ margin: '8px 0 0' }}>
+            {folderDialog.mode === 'rename' ? '所在位置：' : '创建位置：'}<strong>{parentLabel}</strong>
+          </p>
           {folderError && <p className="error-text" style={{ marginBottom: 0 }}>{folderError}</p>}
-          {folderRenaming && <p className="small muted" style={{ marginBottom: 0 }}>重命名后，原文件夹内的文档会自动转移到新名称下。</p>}
+          {folderDialog.mode === 'rename' && <p className="small muted" style={{ marginBottom: 0 }}>重命名后，该文件夹内文档的目录显示会自动更新。</p>}
         </Modal>
       )}
 
-      {renaming && (
-        <Modal title="重命名文档" onClose={() => setRenaming(null)}
+      {renamingDoc && (
+        <Modal title="重命名 / 移动文档" onClose={() => setRenamingDoc(null)}
           footer={<>
-            <button className="btn" onClick={() => setRenaming(null)}>取消</button>
-            <button className="btn btn-primary" onClick={() => void handleRename()}>保存</button>
+            <button className="btn" onClick={() => setRenamingDoc(null)}>取消</button>
+            <button className="btn btn-primary" onClick={() => void handleRenameDoc()}>保存</button>
           </>}>
           <input className="input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
           <div className="form-field" style={{ marginTop: 14 }}>
             <label className="form-label">移动到文件夹</label>
-            <select className="select" value={renaming.category || UNCATEGORIZED}
-              onChange={(e) => { void moveDoc(renaming, e.target.value); setRenaming(null) }}>
-              <option value={UNCATEGORIZED}>{UNCATEGORIZED}</option>
-              {folders.map((f) => <option key={f.id} value={f.name}>{f.name}</option>)}
+            <select className="select" value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}>
+              <option value={UNCATEGORIZED_ID}>未分类</option>
+              {folders.map((folder) => <option key={folder.id} value={folder.id}>{folderPath(folder.id, folders)}</option>)}
             </select>
           </div>
         </Modal>
       )}
 
-      {deleting && (
+      {deletingDoc && (
         <ConfirmDialog
-          message={`确定删除文档「${deleting.title || deleting.fileName || '未命名'}」吗？此操作不可撤销。`}
-          onCancel={() => setDeleting(null)}
-          onConfirm={() => void handleDelete()}
+          message={`确定删除文档「${deletingDoc.title || deletingDoc.fileName || '未命名'}」吗？此操作不可撤销。`}
+          onCancel={() => setDeletingDoc(null)}
+          onConfirm={() => void handleDeleteDoc()}
         />
       )}
 
       {folderDeleting && (
         <ConfirmDialog
-          message={`确定删除文件夹「${folderDeleting.name}」吗？其中的 ${counts.get(folderDeleting.name) ?? 0} 篇文档会移入「未分类」，不会被删除。`}
+          message={`确定删除文件夹「${folderDeleting.name}」及其所有子文件夹吗？其中 ${subtreeCounts.get(folderDeleting.id) ?? 0} 篇文档会移入「未分类」，不会被删除。`}
           onCancel={() => setFolderDeleting(null)}
           onConfirm={() => void handleDeleteFolder()}
         />

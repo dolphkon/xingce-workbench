@@ -83,10 +83,12 @@ export interface Mistake {
   point?: string
 }
 
-/** 知识库文件夹（独立于文档，支持空文件夹；category 以文件夹名为单位） */
+/** 知识库文件夹（独立于文档，支持空文件夹与无限层级子文件夹） */
 export interface KnowledgeFolder {
   id: string
   name: string
+  /** 父文件夹 id；空值表示根目录 */
+  parentId?: string | null
   createdAt: number
   updatedAt: number
 }
@@ -95,7 +97,10 @@ export interface KnowledgeDoc {
   id: string
   title: string
   content: string
+  /** 兼容旧数据：所属文件夹名称（现以 folderId 为准） */
   category: string
+  /** 所属文件夹 id；空值表示未分类 */
+  folderId?: string
   tags: string[]
   createdAt: number
   updatedAt: number

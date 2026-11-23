@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
-import { getById, put, readCachedById, remove } from '../../lib/db'
+import { getById, put, readCachedAll, readCachedById, remove } from '../../lib/db'
+import { useCollection } from '../../lib/hooks'
+import { folderPath } from '../../lib/folders'
 import { renderMarkdown } from '../../lib/markdown'
 import { formatDate, uid } from '../../lib/utils'
 import { docFileKind, formatBytes } from '../../lib/docFile'
@@ -35,15 +37,22 @@ const TOOLS: Tool[] = [
 export default function DocEditor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isNew = id === 'new'
+  const readMode = searchParams.get('read') === '1' && !isNew
+  const targetFolderId = searchParams.get('folder') ?? ''
+  const { items: folders } = useCollection('folders')
 
   const [doc, setDoc] = useState<KnowledgeDoc>(() => {
     const cached = !isNew && id ? readCachedById('docs', id) : undefined
-    return cached ?? {
+    if (cached) return cached
+    const folder = readCachedAll('folders').find((f) => f.id === targetFolderId)
+    return {
       id: isNew ? uid() : (id ?? uid()),
       title: '',
       content: isNew ? TEMPLATE : '',
-      category: '',
+      folderId: folder?.id,
+      category: folder?.name ?? '',
       tags: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -60,7 +69,9 @@ export default function DocEditor() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [tab, setTab] = useState<'edit' | 'preview'>('edit')
-  const [fullView, setFullView] = useState(false)
+  // 从列表点击文档进入时 read=1：首帧即全屏阅读，退出后返回列表
+  const [fullView, setFullView] = useState(() => readMode)
+  const [leaveOnClose, setLeaveOnClose] = useState(() => readMode)
   const [showTencent, setShowTencent] = useState(false)
   const [tencentInput, setTencentInput] = useState('')
   const [tencentError, setTencentError] = useState<string | null>(null)
@@ -115,7 +126,11 @@ export default function DocEditor() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && fullView) { setFullView(false); return }
+      if (event.key === 'Escape' && fullView) {
+        if (leaveOnClose) navigate('/knowledge')
+        else setFullView(false)
+        return
+      }
       if (editing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void saveNow(true)
@@ -123,7 +138,7 @@ export default function DocEditor() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [editing, saveNow, fullView])
+  }, [editing, saveNow, fullView, leaveOnClose, navigate])
 
   // 全屏阅读时锁定页面滚动
   useEffect(() => {
@@ -237,17 +252,26 @@ export default function DocEditor() {
             <div className="form-row">
               <div className="form-field" style={{ marginBottom: 0 }}>
                 <label className="form-label">所属文件夹</label>
-                <input className="input" value={doc.category} onChange={(e) => update({ category: e.target.value })} placeholder="如：政治理论" />
+                <select className="select" value={doc.folderId && folders.some((f) => f.id === doc.folderId) ? doc.folderId : ''}
+                  onChange={(e) => {
+                    const folder = folders.find((f) => f.id === e.target.value)
+                    update({ folderId: folder?.id, category: folder?.name ?? '' })
+                  }}>
+                  <option value="">未分类</option>
+                  {folders.map((folder) => <option key={folder.id} value={folder.id}>{folderPath(folder.id, folders)}</option>)}
+                </select>
               </div>
               <div className="form-field" style={{ marginBottom: 0 }}>
                 <label className="form-label">标签</label>
                 <input className="input" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="逗号分隔" />
               </div>
+              <div className="form-field" style={{ marginBottom: 0, alignSelf: 'end' }}>
+                <button className="btn" onClick={() => void saveNow()} disabled={saving}><Icon name="save" size={15} /> 保存信息</button>
+              </div>
             </div>
             {isFileDoc && (
               <p className="small muted" style={{ margin: '10px 0 0' }}>
                 文件：{doc.fileName} · {formatBytes(doc.fileData)} · {fileKind.toUpperCase()}
-                <br />修改文件夹或标签后会自动保存。
               </p>
             )}
           </div>
@@ -363,20 +387,35 @@ export default function DocEditor() {
         </Modal>
       )}
 
-      {fullView && isFileDoc && (
+      {fullView && (
         <div className="kb-fullscreen" role="dialog" aria-modal="true" aria-label="全屏阅读">
           <div className="kb-fullscreen-bar">
             <div className="kb-fullscreen-title"><Icon name="filetext" size={17} /> {doc.title || doc.fileName || '文档'}</div>
             <div className="row" style={{ gap: 8 }}>
-              <a className="kb-fullscreen-btn" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={18} /></a>
-              <button className="kb-fullscreen-btn" onClick={() => setFullView(false)} title="退出全屏（Esc）"><Icon name="x" size={20} /></button>
+              {!isFileDoc && (
+                <button className="kb-fullscreen-btn kb-fullscreen-text" onClick={() => {
+                  setLeaveOnClose(false)
+                  setFullView(false)
+                  setEditing(true)
+                  setTab('edit')
+                }} title="编辑文档"><Icon name="edit" size={16} /> 编辑</button>
+              )}
+              {doc.fileData && (
+                <a className="kb-fullscreen-btn" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={18} /></a>
+              )}
+              <button className="kb-fullscreen-btn" onClick={() => {
+                if (leaveOnClose) navigate('/knowledge')
+                else setFullView(false)
+              }} title="退出全屏（Esc）"><Icon name="x" size={20} /></button>
             </div>
           </div>
           <div className="kb-fullscreen-body">
-            {fileKind === 'pdf' ? (
-              <iframe src={doc.fileData} title={doc.fileName} className="kb-fullscreen-frame" />
+            {!isFileDoc ? (
+              <div className="kb-fullscreen-doc md-preview" dangerouslySetInnerHTML={{ __html: html }} />
+            ) : fileKind === 'pdf' ? (
+              <iframe src={doc.fileData ?? ''} title={doc.fileName} className="kb-fullscreen-frame" />
             ) : fileKind === 'image' ? (
-              <img src={doc.fileData} alt={doc.title} className="kb-fullscreen-img" />
+              <img src={doc.fileData ?? ''} alt={doc.title} className="kb-fullscreen-img" />
             ) : (
               <div className="empty-state" style={{ color: '#fff' }}>
                 <h3>此格式暂不支持在线预览</h3>
