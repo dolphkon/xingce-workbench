@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import {
   clearGitHubConfig, ensureBranch, ensurePrivateRepo, fetchAuthenticatedUser, githubPullAll, githubPushAll,
-  githubSyncNow, GITHUB_DEFAULTS, isGitHubConfigured, readGitHubConfig, testGitHubConfig,
+  githubSyncNow, GITHUB_DEFAULTS, isGitHubConfigured, probeWriteAccess, readGitHubConfig, testGitHubConfig,
   writeGitHubConfig, type GitHubConfig, type SyncResult,
 } from './github'
 
@@ -106,6 +106,9 @@ async function saveConfig(next: GitHubConfig, mode: 'merge' | 'push' = 'merge'):
   if (!check.ok) return check
   const branch = await ensureBranch(next)
   if (!branch.ok) return branch
+  // 用真实写入验证写权限，避免 permissions 字段误报；不通过则不保存配置
+  const probe = await probeWriteAccess(next)
+  if (!probe.ok) return probe
   writeGitHubConfig(next)
   set({ config: next })
   const result = mode === 'push' ? await githubPushAll(next) : await githubSyncNow(next)

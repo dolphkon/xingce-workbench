@@ -113,9 +113,11 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
           <br />
           2. 确认 <b>Resource owner</b> 是你的账号、<b>Repository access</b> 选 <b>All repositories</b>；
           <br />
-          3. 点 <b>Generate token</b>，复制生成的 <code>github_pat_...</code>，粘贴到上方输入框。
+          3. 确认下方 <b>Repository permissions</b> 里 <b>Contents</b> 为 <b>Read and write</b>（只读会无法保存数据）；
           <br />
-          已生成过令牌的话，直接粘贴即可，无需重复创建。
+          4. 点 <b>Generate token</b>，复制生成的 <code>github_pat_...</code>，粘贴到上方输入框。
+          <br />
+          已生成过令牌的话，直接粘贴即可，无需重复创建。若提示「没有写入权限」，大多是这步的 Contents 选成了 Read-only，或 Repository access 没包含本仓库——按上面第 2、3 步改好后重新生成令牌。
         </div>
       )}
 

@@ -280,7 +280,12 @@ async function writeSnapshotFile(config: GitHubConfig, snapshot: Snapshot, curre
   return { ok: true, message: '' }
 }
 
-/** 校验配置：确认仓库存在、为私有、且令牌具备 Contents 写权限 */
+/**
+ * 校验配置：确认仓库存在且为私有。
+ * 注意：不再读取 /repos 返回的 permissions.contents 做静态判断——
+ * Fine-grained token 下该字段经常不能反映真实权限（尤其仓库是令牌创建后才新建的），
+ * 会导致"有写权限却被误判为只读"。写权限改用 probeWriteAccess 做真实写入探测。
+ */
 export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: boolean; message: string; isPrivate?: boolean }> {
   const result = await api(config, `/repos/${config.owner}/${config.repo}`)
   if (!result.ok) {
@@ -289,17 +294,31 @@ export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: bool
     }
     return { ok: false, message: friendlyError(result.status, result.data) }
   }
-  const repo = result.data as { private?: boolean; permissions?: { contents?: string } }
+  const repo = result.data as { private?: boolean }
   const isPrivate = Boolean(repo.private)
   // 强制私有：公开仓库中的错题与个人数据任何人可读，直接拒绝
   if (!isPrivate) {
     return { ok: false, message: `仓库 ${config.owner}/${config.repo} 是公开仓库，数据会被任何人读取。请改用私有仓库`, isPrivate }
   }
-  const perms = repo.permissions
-  if (perms && perms.contents !== 'write' && perms.contents !== 'admin') {
-    return { ok: false, message: '令牌缺少 Contents 写入权限，请重新生成令牌并确认 Contents 为 Read and write', isPrivate }
-  }
   return { ok: true, message: '连接成功（私有仓库，数据不会公开）', isPrivate }
+}
+
+/**
+ * 真实写入探测：实际对一个数据文件做一次 PUT，只有真正写不进去才判定无写权限。
+ * 比静态读 permissions.contents 可靠。探测内容即当前快照（或空快照），幂等无害。
+ */
+export async function probeWriteAccess(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
+  const fetched = await readSnapshotFile(config)
+  if (!fetched.ok || !fetched.ref) return { ok: false, message: fetched.message }
+  const snapshot: Snapshot = fetched.ref.content ?? { version: 1, exportedAt: 0, stores: {}, deleted: {} }
+  const written = await writeSnapshotFile(config, snapshot, fetched.ref.sha || null)
+  if (!written.ok) {
+    return {
+      ok: false,
+      message: '令牌没有写入权限：请在令牌页面确认 Repository access 包含本仓库（选 All repositories 最省事），且 Repository permissions → Contents 为 Read and write，改好后重新生成令牌再粘贴',
+    }
+  }
+  return { ok: true, message: '' }
 }
 
 /** 确保数据分支存在：不存在则从默认分支创建；对全空仓库直接在 data 分支建首个提交 */
