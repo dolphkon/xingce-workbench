@@ -7,8 +7,9 @@ import {
   type AccuracyRange, type DateRange,
 } from '../../lib/filters'
 import { useCollection } from '../../lib/hooks'
+import { readCategories } from '../../lib/categories'
 import { dateKey, formatQuestionText } from '../../lib/utils'
-import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
+import type { Mistake, QuestionType } from '../../types'
 
 interface PracticeResult {
   id: string
@@ -32,15 +33,13 @@ const normalize = (value: string) => value.trim().toUpperCase().replace(/\s+/g, 
 export default function PracticePage() {
   const [params] = useSearchParams()
   const { items } = useCollection('mistakes')
+  const [categories] = useState(readCategories)
 
   const [days, setDays] = useState<DateRange>(() => {
     const value = params.get('days')
     return isDateRange(value) ? value : '7'
   })
-  const [type, setType] = useState<QuestionType | '全部'>(() => {
-    const value = params.get('type')
-    return QUESTION_TYPES.includes(value as QuestionType) ? (value as QuestionType) : '全部'
-  })
+  const [type, setType] = useState<QuestionType | '全部'>(() => params.get('type') || '全部')
   const [accuracy, setAccuracy] = useState<AccuracyRange>(() => {
     const value = params.get('accuracy')
     return isAccuracyRange(value) ? value : 'all'
@@ -159,10 +158,10 @@ export default function PracticePage() {
             )}
             <div className="form-row">
               <div className="form-field">
-                <label className="form-label">题型</label>
+                <label className="form-label">考试模块</label>
                 <select className="select" value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
-                  <option value="全部">全部题型</option>
-                  {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                  <option value="全部">全部模块</option>
+                  {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
                 </select>
               </div>
               <div className="form-field">

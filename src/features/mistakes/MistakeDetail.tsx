@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
 import { getById, readCachedById, remove } from '../../lib/db'
+import { relatedMothers } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
 import type { Mistake } from '../../types'
@@ -83,7 +84,7 @@ export default function MistakeDetail() {
     )
   }
 
-  const mother = item.motherId ? mothers.items.find((m) => m.id === item.motherId) : undefined
+  const relatedMothersList = relatedMothers(item, mothers.items)
   const visibleOptions = item.options
     .map((text, index) => ({ text, letter: String.fromCharCode(65 + index) }))
     .filter((option) => option.text.trim())
@@ -139,6 +140,8 @@ export default function MistakeDetail() {
           <div className="tag-row">
             <span className={`chip ${revealed ? 'chip-success' : 'chip-primary'}`}>{revealed ? '对答案' : '做题模式'}</span>
             <span className="chip chip-primary">{item.type}</span>
+            {item.subType && <span className="chip">{item.subType}</span>}
+            {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
             {revealed && item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
             {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
             {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
@@ -267,18 +270,27 @@ export default function MistakeDetail() {
       </div>
 
       <div className="card">
-        <div className="card-header"><h2 className="card-title">关联母题</h2></div>
+        <div className="card-header">
+          <h2 className="card-title">关联母题</h2>
+          {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
+        </div>
         <div className="card-body">
-          {mother ? (
-            <Link to="/mothers" className="row" style={{ justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{mother.title}</div>
-                <div className="small muted" style={{ marginTop: 4 }}>考点：{mother.point || '未填写'} · {mother.type}</div>
-              </div>
-              <Icon name="chevron" size={16} />
-            </Link>
+          {relatedMothersList.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {relatedMothersList.map((m) => (
+                <Link key={m.id} to={`/mothers/${m.id}`} className="row" style={{ justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{formatQuestionText(m.title).split('\n')[0].slice(0, 40)}</div>
+                    <div className="small muted" style={{ marginTop: 4 }}>考点：{m.point || '未填写'} · {m.type}{m.subType ? ` · ${m.subType}` : ''}</div>
+                  </div>
+                  <Icon name="chevron" size={16} />
+                </Link>
+              ))}
+            </div>
           ) : (
-            <p className="muted small" style={{ margin: 0 }}>尚未关联母题，可在编辑中选择。</p>
+            <p className="muted small" style={{ margin: 0 }}>
+              {item.point ? `暂无考点为「${item.point}」的母题，可在母题库中按此考点创建。` : '尚未设置考点，在编辑中选择考点即可自动关联母题。'}
+            </p>
           )}
         </div>
       </div>

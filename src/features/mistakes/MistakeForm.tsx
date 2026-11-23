@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
+import { readCategories } from '../../lib/categories'
 import { compressImage, fileToDataUrl } from '../../lib/image'
 import { parseQuestionText, recognizeImage, warmupOcr } from '../../lib/ocr'
 import { formatQuestionText, parseTags, uid } from '../../lib/utils'
-import {
-  QUESTION_TYPES,
-  type Mistake,
-  type MotherQuestion,
-  type QuestionType,
-} from '../../types'
+import type { Mistake, MotherQuestion, QuestionType } from '../../types'
+import CategoryFields from '../categories/CategoryFields'
+import CategoryManager from '../categories/CategoryManager'
 
 interface Props {
   initial?: Mistake
@@ -22,7 +20,12 @@ const OPTION_LETTERS = ['A', 'B', 'C', 'D']
 
 export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Props) {
   const [title, setTitle] = useState(() => formatQuestionText(initial?.title ?? ''))
+  const [categories, setCategories] = useState(readCategories)
+  const [managing, setManaging] = useState(false)
   const [type, setType] = useState<QuestionType>(initial?.type ?? '言语理解')
+  const [categoryId, setCategoryId] = useState<string | undefined>(initial?.categoryId)
+  const [subType, setSubType] = useState(initial?.subType ?? '')
+  const [point, setPoint] = useState(initial?.point ?? '')
   const [options, setOptions] = useState<string[]>(() => {
     const base = [...(initial?.options ?? [])]
     while (base.length < 4) base.push('')
@@ -184,6 +187,9 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         reviewCount: initial?.reviewCount ?? 0,
         correctCount: initial?.correctCount ?? 0,
         motherId: motherId || undefined,
+        categoryId,
+        subType: subType.trim() || undefined,
+        point: point.trim() || undefined,
       }
       await put('mistakes', record)
       onSaved()
@@ -211,22 +217,30 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         <span className="form-hint">粘贴或识别后离开输入框，会自动清理多余空格并规整换行</span>
       </div>
 
-      <div className="form-row">
-        <div className="form-field">
-          <label className="form-label">题型</label>
-          <select className="select" value={type} onChange={(e) => setType(e.target.value as QuestionType)}>
-            {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </div>
-        <div className="form-field">
-          <label className="form-label">关联母题（可选）</label>
-          <select className="select" value={motherId} onChange={(e) => setMotherId(e.target.value)}>
-            <option value="">不关联</option>
-            {mothers.map((item) => (
-              <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
-            ))}
-          </select>
-        </div>
+      <CategoryFields
+        categories={categories}
+        type={type}
+        categoryId={categoryId}
+        subType={subType}
+        point={point}
+        onManage={() => setManaging(true)}
+        onChange={(patch) => {
+          setType(patch.type)
+          setCategoryId(patch.categoryId)
+          setSubType(patch.subType)
+          setPoint(patch.point)
+        }}
+      />
+
+      <div className="form-field">
+        <label className="form-label">关联母题（可选）</label>
+        <select className="select" value={motherId} onChange={(e) => setMotherId(e.target.value)}>
+          <option value="">{point.trim() ? `自动按考点「${point.trim()}」关联（可不选）` : '按考点自动关联，或手动选择'}</option>
+          {mothers.map((item) => (
+            <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
+          ))}
+        </select>
+        <span className="form-hint">未手动选择时，系统会自动关联考点相同的母题</span>
       </div>
 
       <div className="form-field">
@@ -377,6 +391,8 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
           <Icon name="save" size={16} /> {saving ? '保存中…' : initial ? '保存修改' : '录入错题'}
         </button>
       </div>
+
+      {managing && <CategoryManager onClose={() => { setManaging(false); setCategories(readCategories()) }} />}
     </>
   )
 }

@@ -1,13 +1,60 @@
-export const QUESTION_TYPES = [
-  '言语理解',
-  '数量关系',
-  '判断推理',
-  '资料分析',
-  '常识判断',
-  '其他',
-] as const
+/**
+ * 公考模块分类体系：模块（如言语理解）→ 题型（如片段阅读）→ 考点（如主旨概括）。
+ * 模块支持自定义增删，题型/考点随模块维护；错题与母题通过「考点」自动关联。
+ */
+export interface QuestionCategory {
+  id: string
+  name: string
+  types: string[]
+  points: string[]
+  createdAt: number
+  updatedAt: number
+}
 
-export type QuestionType = (typeof QUESTION_TYPES)[number]
+export interface SeedCategory {
+  name: string
+  types: string[]
+  points: string[]
+}
+
+/** 首次使用时预置的公考模块（可自由增删/修改） */
+export const DEFAULT_CATEGORIES: SeedCategory[] = [
+  {
+    name: '言语理解',
+    types: ['片段阅读', '逻辑填空', '语句表达', '篇章阅读'],
+    points: ['主旨概括', '意图判断', '细节理解', '标题选择', '语句排序', '词语辨析', '语句填空'],
+  },
+  {
+    name: '数量关系',
+    types: ['数学运算', '数字推理'],
+    points: ['工程问题', '行程问题', '排列组合', '概率问题', '几何问题', '利润问题', '容斥问题'],
+  },
+  {
+    name: '判断推理',
+    types: ['图形推理', '定义判断', '类比推理', '逻辑判断'],
+    points: ['削弱论证', '加强论证', '翻译推理', '真假推理', '图形规律', '空间重构', '集合关系'],
+  },
+  {
+    name: '资料分析',
+    types: ['文字材料', '表格材料', '图形材料', '综合材料'],
+    points: ['增长率', '增长量', '比重', '平均数', '倍数', '混合增长', '隔年增长'],
+  },
+  {
+    name: '常识判断',
+    types: ['政治', '法律', '经济', '人文', '科技', '地理'],
+    points: ['宪法', '民法典', '科技常识', '党史', '宏观经济', '文学常识'],
+  },
+  {
+    name: '其他',
+    types: ['申论', '面试'],
+    points: ['归纳概括', '综合分析', '提出对策', '文章写作'],
+  },
+]
+
+/** 兼容旧代码：默认模块名列表。实际选项由 categories store 动态提供。 */
+export const QUESTION_TYPES: readonly string[] = DEFAULT_CATEGORIES.map((item) => item.name)
+/** 兼容旧类型：现在允许自定义模块名，故为字符串 */
+export type QuestionType = string
 
 export interface Mistake {
   id: string
@@ -28,6 +75,12 @@ export interface Mistake {
   source?: string
   /** 用户手填的正确率（0–100），与刷题统计相互独立 */
   accuracy?: number
+  /** 所属模块 id（对应 QuestionCategory.id） */
+  categoryId?: string
+  /** 题型（模块下的 types 之一） */
+  subType?: string
+  /** 考点（模块下的 points 之一），错题与母题据此关联 */
+  point?: string
 }
 
 export interface KnowledgeDoc {
@@ -38,6 +91,14 @@ export interface KnowledgeDoc {
   tags: string[]
   createdAt: number
   updatedAt: number
+  /** 文档类型：markdown 文本 / 上传文件（PDF、图片等） */
+  kind?: 'md' | 'file'
+  /** 上传文件的原始文件名 */
+  fileName?: string
+  /** 上传文件 MIME 类型 */
+  fileType?: string
+  /** 上传文件内容（DataURL），用于在线预览与下载 */
+  fileData?: string
 }
 
 export interface MotherQuestion {
@@ -53,6 +114,14 @@ export interface MotherQuestion {
   accuracy?: number
   createdAt: number
   updatedAt: number
+  /** 所属模块 id */
+  categoryId?: string
+  /** 题型 */
+  subType?: string
+  /** 题目图片（OCR 识别后保存） */
+  images?: string[]
+  /** 选项（OCR 识别时填充，母题可选用） */
+  options?: string[]
 }
 
 /* ---------- 学习计划 ---------- */
@@ -127,4 +196,5 @@ export interface BackupData {
   docs: KnowledgeDoc[]
   mothers: MotherQuestion[]
   plans?: StudyPlan[]
+  categories?: QuestionCategory[]
 }

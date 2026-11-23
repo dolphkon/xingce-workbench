@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
+import { readCategories } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
 import { dateKey, formatQuestionText, pluralDays } from '../../lib/utils'
-import { QUESTION_TYPES, type Mistake, type QuestionType } from '../../types'
+import type { Mistake, QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
 export default function MistakesPage() {
@@ -13,6 +14,8 @@ export default function MistakesPage() {
   const mothers = useCollection('mothers')
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState<QuestionType | '全部'>('全部')
+  const [categories] = useState(readCategories)
+  const [point, setPoint] = useState('全部')
   const [days, setDays] = useState<DateRange>('all')
   const [accuracy, setAccuracy] = useState<AccuracyRange>('all')
   const [startDate, setStartDate] = useState('')
@@ -23,6 +26,7 @@ export default function MistakesPage() {
   const filtered = items
     .filter((item) => {
       if (type !== '全部' && item.type !== type) return false
+      if (point !== '全部' && item.point !== point) return false
       if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
       if (!matchesAccuracy(item.accuracy, accuracy)) return false
       if (keyword.trim()) {
@@ -36,12 +40,13 @@ export default function MistakesPage() {
   const clearFilters = () => {
     setKeyword('')
     setType('全部')
+    setPoint('全部')
     setDays('all')
     setAccuracy('all')
     setStartDate('')
     setEndDate('')
   }
-  const hasFilters = Boolean(keyword.trim()) || type !== '全部' || days !== 'all' || accuracy !== 'all' || Boolean(startDate) || Boolean(endDate)
+  const hasFilters = Boolean(keyword.trim()) || type !== '全部' || point !== '全部' || days !== 'all' || accuracy !== 'all' || Boolean(startDate) || Boolean(endDate)
 
   const handleDelete = async () => {
     if (!deleting) return
@@ -81,9 +86,16 @@ export default function MistakesPage() {
           <Icon name="search" size={15} />
           <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索题干、解析、标签…" />
         </div>
-        <select className="select" style={{ width: 140 }} value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
-          <option value="全部">全部题型</option>
-          {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+        <select className="select" style={{ width: 140 }} value={type} onChange={(e) => { setType(e.target.value as QuestionType | '全部'); setPoint('全部') }}>
+          <option value="全部">全部模块</option>
+          {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+        </select>
+        <select className="select" style={{ width: 140 }} value={point} onChange={(e) => setPoint(e.target.value)} title="按考点筛选">
+          <option value="全部">全部考点</option>
+          {Array.from(new Set([
+            ...(type === '全部' ? categories.flatMap((c) => c.points) : (categories.find((c) => c.name === type)?.points ?? [])),
+            ...items.map((i) => i.point ?? '').filter(Boolean),
+          ])).map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
         <select className="select" style={{ width: 132 }} value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)} title="按正确率范围筛选（左闭右开，如 30%-50% 含 30% 不含 50%）">
           <option value="all">全部正确率</option>
@@ -138,6 +150,8 @@ export default function MistakesPage() {
                     </Link>
                     <div className="item-meta">
                       <span className="chip chip-primary">{item.type}</span>
+                      {item.subType && <span className="chip">{item.subType}</span>}
+                      {item.point && <span className="chip chip-warning">{item.point}</span>}
                       {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
                       {item.source && <span className="chip chip-warning">来源：{item.source}</span>}
                       {item.answer && <span className="chip chip-success">答案 {item.answer}</span>}

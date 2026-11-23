@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
+import { relatedMistakes, readCategories } from '../../lib/categories'
 import { formatQuestionText } from '../../lib/utils'
 import { useCollection } from '../../lib/hooks'
-import { QUESTION_TYPES, type MotherQuestion, type QuestionType } from '../../types'
+import type { MotherQuestion, QuestionType } from '../../types'
 import MotherForm from './MotherForm'
 
 export default function MothersPage() {
@@ -13,6 +14,7 @@ export default function MothersPage() {
   const mistakes = useCollection('mistakes')
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState<QuestionType | '全部'>('全部')
+  const [categories] = useState(readCategories)
   const [editing, setEditing] = useState<MotherQuestion | 'new' | null>(null)
   const [deleting, setDeleting] = useState<MotherQuestion | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -57,8 +59,8 @@ export default function MothersPage() {
           <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索题干、考点、解法…" />
         </div>
         <select className="select" style={{ width: 140 }} value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
-          <option value="全部">全部题型</option>
-          {QUESTION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+          <option value="全部">全部模块</option>
+          {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
         </select>
         <span className="spacer" />
         <span className="small muted">共 {filtered.length} 个母题</span>
@@ -82,7 +84,7 @@ export default function MothersPage() {
           ) : (
             <div className="list">
               {filtered.map((item) => {
-                const related = mistakes.items.filter((m) => m.motherId === item.id)
+                const related = relatedMistakes(item, mistakes.items)
                 const isOpen = expanded === item.id
                 return (
                   <div key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -99,8 +101,10 @@ export default function MothersPage() {
                         <div className="item-title" style={{ color: 'var(--primary)' }}>{formatQuestionText(item.title).replace(/\n/g, ' ')}</div>
                         <div className="item-meta">
                           <span className="chip chip-primary">{item.type}</span>
+                          {item.subType && <span className="chip">{item.subType}</span>}
                           {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
-                          {item.point && <span className="chip chip-warning">{item.point}</span>}
+                          {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
+                          {(item.images?.length ?? 0) > 0 && <span className="chip"><Icon name="image" size={11} /> {item.images!.length}</span>}
                           {item.source && <span className="chip">来源：{item.source}</span>}
                           {related.length > 0 && <span className="chip chip-success">关联 {related.length} 道错题</span>}
                           {item.tags.slice(0, 3).map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
@@ -143,7 +147,7 @@ export default function MothersPage() {
                           </div>
                         ) : (
                           <p className="small light" style={{ margin: 0 }}>
-                            暂无关联错题，可在错题编辑页选择此母题。
+                            暂无关联错题。在错题中选择考点「{item.point || '…'}」即可自动关联。
                           </p>
                         )}
                       </div>
@@ -160,6 +164,7 @@ export default function MothersPage() {
         <Modal title={editing === 'new' ? '录入母题' : '编辑母题'} onClose={() => setEditing(null)} wide>
           <MotherForm
             initial={editing === 'new' ? undefined : editing}
+            mistakePoints={mistakes.items.map((m) => m.point ?? '')}
             onSaved={() => { setEditing(null); refresh() }}
             onCancel={() => setEditing(null)}
           />

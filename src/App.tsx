@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Route, Routes } from 'react-router-dom'
+import { ensureCategories } from './lib/categories'
 import Layout from './components/Layout'
 import Dashboard from './features/dashboard/Dashboard'
 import MistakesPage from './features/mistakes/MistakesPage'
@@ -11,6 +13,9 @@ import MotherDetail from './features/mothers/MotherDetail'
 import PlansPage from './features/plans/PlansPage'
 
 export default function App() {
+  useEffect(() => {
+    void ensureCategories()
+  }, [])
   return (
     <Routes>
       <Route element={<Layout />}>

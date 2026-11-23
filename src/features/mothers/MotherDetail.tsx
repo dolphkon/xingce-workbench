@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
 import { getById, readCachedById, remove } from '../../lib/db'
+import { relatedMistakes } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
 import type { MotherQuestion } from '../../types'
@@ -65,7 +66,7 @@ export default function MotherDetail() {
     )
   }
 
-  const related = mistakes.filter((m) => m.motherId === item.id)
+  const related = relatedMistakes(item, mistakes)
 
   return (
     <>
@@ -102,6 +103,7 @@ export default function MotherDetail() {
           <h2 className="card-title">母题题干</h2>
           <div className="tag-row">
             <span className="chip chip-primary">{item.type}</span>
+            {item.subType && <span className="chip">{item.subType}</span>}
             {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}
             {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
             {item.source && <span className="chip">来源：{item.source}</span>}
@@ -109,6 +111,15 @@ export default function MotherDetail() {
         </div>
         <div className="card-body">
           <div className="question-text">{formatQuestionText(item.title)}</div>
+          {(item.images?.length ?? 0) > 0 && (
+            <div className="image-grid" style={{ marginTop: 16 }}>
+              {item.images!.map((image, index) => (
+                <a href={image} target="_blank" rel="noreferrer" key={`${image.slice(0, 40)}-${index}`}>
+                  <img src={image} alt={`母题图片 ${index + 1}`} style={{ width: '100%', height: 160, objectFit: 'cover', border: '1px solid var(--border)', borderRadius: 8 }} />
+                </a>
+              ))}
+            </div>
+          )}
           {item.tags.length > 0 && (
             <div className="tag-row" style={{ marginTop: 14 }}>
               {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
@@ -150,7 +161,7 @@ export default function MotherDetail() {
               ))}
             </div>
           ) : (
-            <p className="muted small" style={{ margin: 0 }}>暂无关联错题，可在错题编辑页选择此母题。</p>
+            <p className="muted small" style={{ margin: 0 }}>暂无关联错题。在错题中选择考点「{item.point || '…'}」即可自动关联。</p>
           )}
         </div>
       </div>
@@ -168,6 +179,7 @@ export default function MotherDetail() {
         <Modal title="编辑母题" onClose={() => setEditing(false)} wide>
           <MotherForm
             initial={item}
+            mistakePoints={mistakes.map((m) => m.point ?? '')}
             onSaved={() => { setEditing(false); void load() }}
             onCancel={() => setEditing(false)}
           />

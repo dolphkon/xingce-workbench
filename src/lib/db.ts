@@ -1,6 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import { notifySync } from './syncHook'
-import type { BackupData, KnowledgeDoc, Mistake, MotherQuestion, StudyPlan } from '../types'
+import type { BackupData, KnowledgeDoc, Mistake, MotherQuestion, QuestionCategory, StudyPlan } from '../types'
 
 interface WorkbenchDB extends DBSchema {
   mistakes: {
@@ -23,19 +23,25 @@ interface WorkbenchDB extends DBSchema {
     value: StudyPlan
     indexes: { 'by-date': string; 'by-module': string }
   }
+  categories: {
+    key: string
+    value: QuestionCategory
+    indexes: { 'by-updated': number }
+  }
 }
 
-export type StoreName = 'mistakes' | 'docs' | 'mothers' | 'plans'
+export type StoreName = 'mistakes' | 'docs' | 'mothers' | 'plans' | 'categories'
 
 export type EntityMap = {
   mistakes: Mistake
   docs: KnowledgeDoc
   mothers: MotherQuestion
   plans: StudyPlan
+  categories: QuestionCategory
 }
 
 const DB_NAME = 'xingce-workbench'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const CACHE_PREFIX = 'xingce-cache-v1-'
 const DELETED_PREFIX = 'xingce-deleted-v1-'
 /** 后台数据库读取的最长等待时间；页面渲染不再依赖它 */
@@ -65,6 +71,10 @@ function getDB(): Promise<IDBPDatabase<WorkbenchDB>> {
           const plans = db.createObjectStore('plans', { keyPath: 'id' })
           plans.createIndex('by-date', 'date')
           plans.createIndex('by-module', 'module')
+        }
+        if (oldVersion < 3) {
+          const categories = db.createObjectStore('categories', { keyPath: 'id' })
+          categories.createIndex('by-updated', 'updatedAt')
         }
       },
     }).catch((err) => {
@@ -147,7 +157,7 @@ function persistDeleted(store: StoreName, ids: Iterable<string>): void {
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (!event.key) return
-    const match = /^xingce-(?:cache|deleted)-v1-(mistakes|docs|mothers|plans)$/.exec(event.key)
+    const match = /^xingce-(?:cache|deleted)-v1-(mistakes|docs|mothers|plans|categories)$/.exec(event.key)
     if (match) cacheMap.delete(match[1] as StoreName)
   })
 }
@@ -248,13 +258,14 @@ export async function count(store: StoreName): Promise<number> {
 }
 
 export async function exportAll(): Promise<BackupData> {
-  const [mistakes, docs, mothers, plans] = await Promise.all([
+  const [mistakes, docs, mothers, plans, categories] = await Promise.all([
     listAll('mistakes'),
     listAll('docs'),
     listAll('mothers'),
     listAll('plans'),
+    listAll('categories'),
   ])
-  return { version: 2, exportedAt: Date.now(), mistakes, docs, mothers, plans }
+  return { version: 2, exportedAt: Date.now(), mistakes, docs, mothers, plans, categories }
 }
 
 export async function importAll(data: BackupData): Promise<void> {
@@ -262,16 +273,18 @@ export async function importAll(data: BackupData): Promise<void> {
     throw new Error('备份文件格式不正确')
   }
   const plans = Array.isArray(data.plans) ? data.plans : []
+  const categories = Array.isArray(data.categories) ? data.categories : []
   await Promise.all([
     ...data.mistakes.map((item) => put('mistakes', item)),
     ...data.docs.map((item) => put('docs', item)),
     ...data.mothers.map((item) => put('mothers', item)),
     ...plans.map((item) => put('plans', item)),
+    ...categories.map((item) => put('categories', item)),
   ])
 }
 
 export async function clearAll(): Promise<void> {
-  const stores: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans']
+  const stores: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans', 'categories']
   stores.forEach((store) => {
     const ids = stateOf(store).items.map((item) => item.id)
     persistCache(store, [])
