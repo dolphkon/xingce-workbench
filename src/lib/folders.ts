@@ -107,8 +107,22 @@ export function buildFolderTree(folders: KnowledgeFolder[]): TreeFolder[] {
   byId.forEach((node) => {
     const parentId = normalizeParentId(node.parentId)
     const parent = parentId && parentId !== node.id ? byId.get(parentId) : undefined
-    if (parent) parent.children.push(node)
-    else roots.push(node)
+    // 损坏数据可能形成 A→B→A 的环：向上探测，发现环则降级为根目录
+    let cursor = parent
+    const seen = new Set<string>([node.id])
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id)
+      const next = normalizeParentId(cursor.parentId)
+      cursor = next && next !== cursor.id ? byId.get(next) : undefined
+    }
+    if (cursor) {
+      node.parentId = null
+      roots.push(node)
+    } else if (parent) {
+      parent.children.push(node)
+    } else {
+      roots.push(node)
+    }
   })
   const sortTree = (nodes: TreeFolder[]) => {
     nodes.sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name))
