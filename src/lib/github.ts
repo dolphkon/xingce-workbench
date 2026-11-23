@@ -82,7 +82,7 @@ export async function ensurePrivateRepo(token: string, owner: string, repo: stri
       name: repo,
       private: true,
       description: '行测工作台私有数据仓库（请勿删除）',
-      auto_init: false,
+      auto_init: true,
     }),
   })
   if (!created.ok) {
@@ -321,7 +321,12 @@ export async function probeWriteAccess(config: GitHubConfig): Promise<{ ok: bool
   return { ok: true, message: '' }
 }
 
-/** 确保数据分支存在：不存在则从默认分支创建；对全空仓库直接在 data 分支建首个提交 */
+/**
+ * 确保数据分支存在：不存在则从默认分支创建。
+ * 空仓库（无任何提交）不在此处用 Git Data API 建分支——GitHub 对空仓库调用
+ * create tree/commit 会返回 409 "Git Repository is empty"。直接放行，
+ * 后续 writeSnapshotFile 用 Contents API 写文件时会自动创建 data 分支和首个提交。
+ */
 export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
   const exists = await api(config, `/repos/${config.owner}/${config.repo}/branches/${encodeURIComponent(config.branch)}`)
   if (exists.ok) return { ok: true, message: '' }
@@ -330,26 +335,8 @@ export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean;
   const defaultBranch = (repoInfo.data as { default_branch?: string })?.default_branch || 'main'
   const head = await api(config, `/repos/${config.owner}/${config.repo}/git/ref/heads/${encodeURIComponent(defaultBranch)}`)
 
-  // 全新空仓库：默认分支 ref 也不存在。直接在 data 分支创建一个初始化提交，
-  // 后续 writeSnapshotFile 会在此分支上创建/更新数据文件。
-  if (head.status === 404) {
-    const tree = await api(config, '/git/trees', {
-      method: 'POST',
-      body: JSON.stringify({ tree: [] }),
-    })
-    if (!tree.ok) return { ok: false, message: friendlyError(tree.status, tree.data) }
-    const commit = await api(config, '/git/commits', {
-      method: 'POST',
-      body: JSON.stringify({ message: 'chore: init data branch', tree: (tree.data as { sha?: string })?.sha }),
-    })
-    if (!commit.ok) return { ok: false, message: friendlyError(commit.status, commit.data) }
-    const ref = await api(config, '/git/refs', {
-      method: 'POST',
-      body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: (commit.data as { sha?: string })?.sha }),
-    })
-    if (!ref.ok) return { ok: false, message: friendlyError(ref.status, ref.data) }
-    return { ok: true, message: '' }
-  }
+  // 全新空仓库：默认分支 ref 不存在。放行，交给后续 Contents API 写入自动建分支。
+  if (head.status === 404) return { ok: true, message: '' }
 
   if (!head.ok) return { ok: false, message: friendlyError(head.status, head.data) }
   const sha = (head.data as { object?: { sha?: string } })?.object?.sha
