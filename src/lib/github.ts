@@ -202,7 +202,8 @@ interface ContentRef {
 async function readSnapshotFile(config: GitHubConfig): Promise<{ ok: boolean; message: string; ref: ContentRef | null }> {
   const encodedPath = config.path.split('/').map(encodeURIComponent).join('/')
   const result = await api(config, `/repos/${config.owner}/${config.repo}/contents/${encodedPath}?ref=${encodeURIComponent(config.branch)}`)
-  if (result.status === 404) {
+  // 404 = 文件不存在；409 = 空仓库（Git Repository is empty）。都视为"云端暂无数据"
+  if (result.status === 404 || result.status === 409) {
     return { ok: true, message: '', ref: { sha: '', blobSha: null, content: null } }
   }
   if (!result.ok) {
@@ -322,30 +323,73 @@ export async function probeWriteAccess(config: GitHubConfig): Promise<{ ok: bool
 }
 
 /**
- * 确保数据分支存在：不存在则从默认分支创建。
- * 空仓库（无任何提交）不在此处用 Git Data API 建分支——GitHub 对空仓库调用
- * create tree/commit 会返回 409 "Git Repository is empty"。直接放行，
- * 后续 writeSnapshotFile 用 Contents API 写文件时会自动创建 data 分支和首个提交。
+ * 确保数据分支存在：不存在则从默认分支创建；对空仓库用 Git Data API 建首个提交。
  */
 export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
-  const exists = await api(config, `/repos/${config.owner}/${config.repo}/branches/${encodeURIComponent(config.branch)}`)
+  const repoPath = `/repos/${config.owner}/${config.repo}`
+  const exists = await api(config, `${repoPath}/branches/${encodeURIComponent(config.branch)}`)
   if (exists.ok) return { ok: true, message: '' }
-  const repoInfo = await api(config, `/repos/${config.owner}/${config.repo}`)
+  const repoInfo = await api(config, repoPath)
   if (!repoInfo.ok) return { ok: false, message: friendlyError(repoInfo.status, repoInfo.data) }
   const defaultBranch = (repoInfo.data as { default_branch?: string })?.default_branch || 'main'
-  const head = await api(config, `/repos/${config.owner}/${config.repo}/git/ref/heads/${encodeURIComponent(defaultBranch)}`)
+  const head = await api(config, `${repoPath}/git/ref/heads/${encodeURIComponent(defaultBranch)}`)
 
-  // 全新空仓库：默认分支 ref 不存在。放行，交给后续 Contents API 写入自动建分支。
-  if (head.status === 404) return { ok: true, message: '' }
+  // 空仓库：默认分支 ref 不存在（可能返回 404，也可能返回 409 "Git Repository is empty"）。
+  // 必须先用 Git Data API 在 data 分支建立首个提交，否则后续 Contents API 无分支可写。
+  if (!head.ok) return initEmptyRepoBranch(config)
 
-  if (!head.ok) return { ok: false, message: friendlyError(head.status, head.data) }
   const sha = (head.data as { object?: { sha?: string } })?.object?.sha
-  if (!sha) return { ok: false, message: '无法读取默认分支版本' }
-  const created = await api(config, `/repos/${config.owner}/${config.repo}/git/refs`, {
+  if (!sha) return initEmptyRepoBranch(config)
+  const created = await api(config, `${repoPath}/git/refs`, {
     method: 'POST',
     body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha }),
   })
   if (!created.ok) return { ok: false, message: friendlyError(created.status, created.data) }
+  return { ok: true, message: '' }
+}
+
+/**
+ * 空仓库初始化：用 Git Data API（完整仓库路径）创建 blob → tree → commit → ref，
+ * 在 data 分支建立带初始快照文件的首个提交。之后 Contents API 即可在此分支读写。
+ * 注意：GitHub 对空仓库调用 Contents API 会因无分支基础而失败，必须走 Git Data API。
+ */
+async function initEmptyRepoBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
+  const repoPath = `/repos/${config.owner}/${config.repo}`
+  const emptySnapshot: Snapshot = { version: 1, exportedAt: 0, stores: {}, deleted: {} }
+
+  // 1. 创建数据文件的 blob
+  const blob = await api(config, `${repoPath}/git/blobs`, {
+    method: 'POST',
+    body: JSON.stringify({ content: toBase64(JSON.stringify(emptySnapshot)), encoding: 'base64' }),
+  })
+  if (!blob.ok) return { ok: false, message: friendlyError(blob.status, blob.data) }
+  const blobSha = (blob.data as { sha?: string })?.sha
+  if (!blobSha) return { ok: false, message: '创建初始数据文件失败' }
+
+  // 2. 创建 tree（tree 内 path 是文件路径，用原始 config.path，不做 URL 编码）
+  const tree = await api(config, `${repoPath}/git/trees`, {
+    method: 'POST',
+    body: JSON.stringify({ tree: [{ path: config.path, mode: '100644', type: 'blob', sha: blobSha }] }),
+  })
+  if (!tree.ok) return { ok: false, message: friendlyError(tree.status, tree.data) }
+  const treeSha = (tree.data as { sha?: string })?.sha
+  if (!treeSha) return { ok: false, message: '创建初始目录树失败' }
+
+  // 3. 创建无父节点的根提交
+  const commit = await api(config, `${repoPath}/git/commits`, {
+    method: 'POST',
+    body: JSON.stringify({ message: 'chore: init data branch', tree: treeSha }),
+  })
+  if (!commit.ok) return { ok: false, message: friendlyError(commit.status, commit.data) }
+  const commitSha = (commit.data as { sha?: string })?.sha
+  if (!commitSha) return { ok: false, message: '创建初始提交失败' }
+
+  // 4. 把 data 分支指向该提交
+  const ref = await api(config, `${repoPath}/git/refs`, {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: commitSha }),
+  })
+  if (!ref.ok) return { ok: false, message: friendlyError(ref.status, ref.data) }
   return { ok: true, message: '' }
 }
 
