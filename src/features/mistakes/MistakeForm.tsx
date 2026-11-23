@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Icon } from '../../components/ui'
 import { put } from '../../lib/db'
-import { compressImage } from '../../lib/image'
-import { parseQuestionText, recognizeImage } from '../../lib/ocr'
+import { compressImage, fileToDataUrl } from '../../lib/image'
+import { parseQuestionText, recognizeImage, warmupOcr } from '../../lib/ocr'
 import { formatQuestionText, parseTags, uid } from '../../lib/utils'
 import {
   QUESTION_TYPES,
@@ -38,23 +38,40 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   )
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const imagesRef = useRef(images)
+  // 原始清晰图缓存：OCR 用原图（压缩会破坏圆圈标记），存储用压缩图
+  const ocrSourcesRef = useRef<Record<number, string>>({})
   const [motherId, setMotherId] = useState(initial?.motherId ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [ocrBusy, setOcrBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
+  const [ocrStage, setOcrStage] = useState('')
   const [ocrError, setOcrError] = useState<string | null>(null)
 
-  // 压缩图片并入列（最多 8 张），返回实际加入的项
-  const appendImages = useCallback(async (files: File[]): Promise<string[]> => {
-    const compressed = await Promise.all(files.map((file) => compressImage(file)))
-    const added: string[] = []
+  // 进入录入页即预热 OCR 引擎与语言包：用户粘贴图片时通常已就绪，消除首次长等待
+  useEffect(() => {
+    void warmupOcr().catch(() => undefined)
+  }, [])
+
+  // 压缩图片并入列（最多 8 张），返回实际加入的项：{ stored: 压缩存储图, ocr: 原始清晰图 }
+  const appendImages = useCallback(async (files: File[]): Promise<Array<{ stored: string; ocr: string }>> => {
+    const room = 8 - imagesRef.current.length
+    const picked = files.slice(0, Math.max(0, room))
+    const [compressed, originals] = await Promise.all([
+      Promise.all(picked.map((file) => compressImage(file))),
+      Promise.all(picked.map((file) => fileToDataUrl(file).catch(() => ''))),
+    ])
+    const added = compressed.map((stored, i) => ({ stored, ocr: originals[i] || stored }))
     setImages((prev) => {
-      const room = 8 - prev.length
+      const start = prev.length
       const next = [...prev, ...compressed].slice(0, 8)
-      added.push(...compressed.slice(0, Math.max(0, room)))
       imagesRef.current = next
+      // 记录每张新增图片对应的原始清晰图索引
+      added.forEach((_, i) => {
+        const idx = start + i
+        if (idx < 8) ocrSourcesRef.current[idx] = added[i].ocr
+      })
       return next
     })
     setOcrError(null)
@@ -65,9 +82,13 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const runOcr = useCallback(async (dataUrl: string) => {
     setOcrBusy(true)
     setOcrProgress(0)
+    setOcrStage('正在优化图片…')
     setOcrError(null)
     try {
-      const text = await recognizeImage(dataUrl, setOcrProgress)
+      const text = await recognizeImage(dataUrl, (progress, stage) => {
+        setOcrProgress(progress)
+        if (stage) setOcrStage(stage)
+      })
       if (!text) throw new Error('未识别出文字，请换用更清晰的图片')
       const parsed = parseQuestionText(text)
       const hasOptions = parsed.options.some((option) => option.trim())
@@ -104,7 +125,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
             return
           }
           for (const image of added) {
-            await runOcr(image)
+            await runOcr(image.ocr)
           }
         } catch (err) {
           setOcrError(err instanceof Error ? err.message : '图片处理失败')
@@ -127,7 +148,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   }
 
   const handleOcr = (index: number) => {
-    void runOcr(images[index])
+    void runOcr(ocrSourcesRef.current[index] || images[index])
   }
 
   const handleSubmit = async () => {
@@ -317,7 +338,18 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
                     type="button"
                     className="icon-btn danger"
                     style={{ background: 'rgba(255,255,255,.92)' }}
-                    onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
+                    onClick={() => {
+                      setImages((prev) => prev.filter((_, i) => i !== index))
+                      // 重建原始图缓存索引，避免删除后错位
+                      const nextSources: Record<number, string> = {}
+                      let to = 0
+                      for (let i = 0; i < 8; i++) {
+                        if (i === index) continue
+                        if (ocrSourcesRef.current[i] != null) nextSources[to] = ocrSourcesRef.current[i]
+                        to++
+                      }
+                      ocrSourcesRef.current = nextSources
+                    }}
                     aria-label="删除图片"
                   >
                     <Icon name="trash" size={13} />
@@ -330,7 +362,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         {ocrBusy && (
           <div className="ocr-status" style={{ marginTop: 10, marginBottom: 0 }}>
             <Icon name="sparkle" size={15} />
-            <span>本地识别中 {ocrProgress}%</span>
+            <span>{ocrStage || '本地识别中'} {ocrProgress}%</span>
             <div className="progress-track"><div className="progress-fill" style={{ width: `${ocrProgress}%` }} /></div>
           </div>
         )}

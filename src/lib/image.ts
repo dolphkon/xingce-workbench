@@ -1,5 +1,22 @@
+/**
+ * 读取图片原始内容为 DataURL（不压缩、不重绘），专供 OCR 使用。
+ * 关键：JPEG 压缩会把圆圈选项标记（ⒶⒷⒸⒹ）压成乱码，直接用原图可显著提升识别正确率。
+ */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('请选择图片文件'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.onload = () => resolve(reader.result as string)
+    reader.readAsDataURL(file)
+  })
+}
+
 /** 压缩图片为 DataURL，控制本地存储体积，同时保证 OCR 可读性 */
-export function compressImage(file: File, maxSize = 1800, quality = 0.82): Promise<string> {
+export function compressImage(file: File, maxSize = 2400, quality = 0.92): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith('image/')) {
       reject(new Error('请选择图片文件'))
