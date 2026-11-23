@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useGitHubSync } from '../lib/useGitHubSync'
-import type { GitHubConfig } from '../lib/github'
+import { GITHUB_DEFAULTS, repoCreateUrl, tokenCreateUrl, type GitHubConfig } from '../lib/github'
 import { Icon, Modal } from './ui'
 
 const navItems = [
@@ -15,39 +15,48 @@ const navItems = [
 
 function defaultConfig(): GitHubConfig {
   return {
-    owner: 'dolphkon',
-    repo: 'xingce-workbench',
-    branch: 'data',
-    path: 'workbench-snapshot.json',
+    owner: '',
+    repo: GITHUB_DEFAULTS.repo,
+    branch: GITHUB_DEFAULTS.branch,
+    path: GITHUB_DEFAULTS.path,
     token: '',
   }
 }
 
-function GithubConfigModal({ initial, onClose, onSave }: {
+function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
   initial: GitHubConfig
   onClose: () => void
   onSave: (config: GitHubConfig, mode: 'merge' | 'push') => Promise<{ ok: boolean; message: string }>
+  onConnect: (token: string, mode: 'merge' | 'push') => Promise<{ ok: boolean; message: string }>
 }) {
-  const [form, setForm] = useState<GitHubConfig>(initial)
+  const [token, setToken] = useState(initial.token)
   const [mode, setMode] = useState<'merge' | 'push'>('merge')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [showToken, setShowToken] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
+  const [form, setForm] = useState<GitHubConfig>({
+    owner: initial.owner || '',
+    repo: initial.repo || GITHUB_DEFAULTS.repo,
+    branch: initial.branch || GITHUB_DEFAULTS.branch,
+    path: initial.path || GITHUB_DEFAULTS.path,
+    token: '',
+  })
 
   const update = (key: keyof GitHubConfig, value: string) => setForm((prev) => ({ ...prev, [key]: value }))
 
   const submit = async () => {
-    if (!form.owner.trim() || !form.repo.trim() || !form.token.trim()) {
-      setError('请填写仓库所有者、仓库名和访问令牌')
+    const clean = token.trim()
+    if (!clean) {
+      setError('请先粘贴访问令牌（第 2 步生成的 github_pat_...）')
       return
     }
     setBusy(true)
     setError('')
     try {
-      const result = await onSave(
-        { ...form, owner: form.owner.trim(), repo: form.repo.trim(), branch: form.branch.trim() || 'main', path: form.path.trim() || 'data/workbench-snapshot.json', token: form.token.trim() },
-        mode,
-      )
+      const result = advanced
+        ? await onSave({ ...form, token: clean }, mode)
+        : await onConnect(clean, mode)
       if (result.ok) onClose()
       else setError(result.message)
     } finally {
@@ -70,42 +79,42 @@ function GithubConfigModal({ initial, onClose, onSave }: {
       }
     >
       <p className="small muted" style={{ marginTop: 0 }}>
-        数据会以 JSON 快照保存在你的 GitHub 仓库中，手机与电脑连接同一仓库即可看到同一份数据。
+        只需 3 步，之后手机和电脑粘贴同一个令牌即可看到同一份数据。数据存在<strong>私有仓库</strong>的独立 <code>data</code> 分支，不公开、不触发网站重新部署。
       </p>
-      <div className="form-row">
-        <div className="form-field">
-          <label className="form-label">仓库所有者</label>
-          <input className="input" value={form.owner} onChange={(e) => update('owner', e.target.value)} placeholder="dolphkon" />
-        </div>
-        <div className="form-field">
-          <label className="form-label">仓库名</label>
-          <input className="input" value={form.repo} onChange={(e) => update('repo', e.target.value)} placeholder="xingce-workbench" />
-        </div>
+
+      <div className="connect-step">
+        <div className="connect-step-head"><span className="connect-step-no">1</span><strong>创建私有数据仓库</strong></div>
+        <p className="small muted">点开后仓库名与「Private」已自动填好，点底部绿色 <b>Create repository</b> 即可（已有仓库可跳过）。</p>
+        <a className="btn btn-sm" href={repoCreateUrl()} target="_blank" rel="noopener noreferrer">
+          <Icon name="github" size={14} /> 打开 GitHub 创建私有仓库
+        </a>
+        <p className="small muted" style={{ marginBottom: 0 }}>仓库名：<code>{GITHUB_DEFAULTS.repo}</code></p>
       </div>
-      <div className="form-row">
-        <div className="form-field">
-          <label className="form-label">分支</label>
-          <input className="input" value={form.branch} onChange={(e) => update('branch', e.target.value)} placeholder="data" />
-        </div>
-        <div className="form-field">
-          <label className="form-label">数据文件路径</label>
-          <input className="input" value={form.path} onChange={(e) => update('path', e.target.value)} placeholder="workbench-snapshot.json" />
-        </div>
+
+      <div className="connect-step">
+        <div className="connect-step-head"><span className="connect-step-no">2</span><strong>创建访问令牌</strong></div>
+        <p className="small muted">点开后名称、有效期、权限都已预填（仅 Contents 读写）。确认 <b>Repository access</b> 选中刚建的仓库，点 <b>Generate token</b> 后复制。</p>
+        <a className="btn btn-sm" href={tokenCreateUrl()} target="_blank" rel="noopener noreferrer">
+          <Icon name="github" size={14} /> 打开 GitHub 创建令牌
+        </a>
       </div>
-      <div className="form-field">
-        <label className="form-label">访问令牌（Fine-grained PAT）</label>
+
+      <div className="connect-step">
+        <div className="connect-step-head"><span className="connect-step-no">3</span><strong>粘贴令牌并连接</strong></div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
             className="input"
             type={showToken ? 'text' : 'password'}
-            value={form.token}
-            onChange={(e) => update('token', e.target.value)}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
             placeholder="github_pat_..."
             style={{ flex: 1 }}
           />
           <button className="btn btn-sm" onClick={() => setShowToken((v) => !v)}>{showToken ? '隐藏' : '显示'}</button>
         </div>
+        <p className="small muted" style={{ marginBottom: 0 }}>用户名、仓库、分支会自动识别，无需填写。</p>
       </div>
+
       <div className="form-field">
         <label className="form-label">首次连接的数据处理</label>
         <div className="segmented">
@@ -113,10 +122,35 @@ function GithubConfigModal({ initial, onClose, onSave }: {
           <button className={mode === 'push' ? 'active' : ''} onClick={() => setMode('push')}>用本机数据覆盖云端</button>
         </div>
       </div>
+
+      <button className="link-btn" onClick={() => setAdvanced((v) => !v)}>{advanced ? '收起高级设置' : '高级设置（自定义仓库/分支）'}</button>
+      {advanced && (
+        <div style={{ marginTop: 8 }}>
+          <div className="form-row">
+            <div className="form-field">
+              <label className="form-label">仓库所有者</label>
+              <input className="input" value={form.owner} onChange={(e) => update('owner', e.target.value)} placeholder="自动识别，可留空" />
+            </div>
+            <div className="form-field">
+              <label className="form-label">仓库名</label>
+              <input className="input" value={form.repo} onChange={(e) => update('repo', e.target.value)} placeholder={GITHUB_DEFAULTS.repo} />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-field">
+              <label className="form-label">分支</label>
+              <input className="input" value={form.branch} onChange={(e) => update('branch', e.target.value)} placeholder={GITHUB_DEFAULTS.branch} />
+            </div>
+            <div className="form-field">
+              <label className="form-label">数据文件路径</label>
+              <input className="input" value={form.path} onChange={(e) => update('path', e.target.value)} placeholder={GITHUB_DEFAULTS.path} />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="notice" style={{ fontSize: 12, lineHeight: 1.7 }}>
-        <strong>如何获取令牌：</strong>在 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens 创建，
-        仅勾选该仓库的 <code>Contents: read and write</code> 权限即可。令牌只保存在本机浏览器，不会写入代码；请勿在公用设备上使用。
-        <br /><strong>建议用私有仓库</strong>存放数据（公开仓库里的数据任何人都能读取）。数据写入独立的 <code>data</code> 分支，不会触发网站重新部署；分支不存在会自动创建。
+        <strong>安全可靠：</strong>令牌只保存在本机浏览器、不会写进代码，且仅申请 Contents 单一权限；只连接<strong>私有仓库</strong>，公开仓库会被拒绝。请勿在公用设备上使用。
       </div>
       {error && <p className="form-error">{error}</p>}
     </Modal>
@@ -239,13 +273,14 @@ function TopbarSync() {
 }
 
 function GlobalGithubConfigModal() {
-  const { config, configOpen, closeConfig, saveConfig } = useGitHubSync()
+  const { config, configOpen, closeConfig, saveConfig, connect } = useGitHubSync()
   if (!configOpen) return null
   return (
     <GithubConfigModal
       initial={config ?? defaultConfig()}
       onClose={closeConfig}
       onSave={saveConfig}
+      onConnect={connect}
     />
   )
 }

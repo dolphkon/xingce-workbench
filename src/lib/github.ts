@@ -14,7 +14,9 @@ import type { StoreName } from './db'
  */
 
 const CONFIG_KEY = 'xingce-github-config-v1'
-const DEFAULT_PATH = 'data/workbench-snapshot.json'
+const DEFAULT_REPO = 'xingce-workbench-data'
+const DEFAULT_BRANCH = 'data'
+const DEFAULT_PATH = 'workbench-snapshot.json'
 const API_BASE = 'https://api.github.com'
 
 export interface GitHubConfig {
@@ -23,6 +25,58 @@ export interface GitHubConfig {
   branch: string
   path: string
   token: string
+}
+
+/** 连接所需的默认仓库约定：独立私有仓库 + 独立 data 分支 */
+export const GITHUB_DEFAULTS = {
+  repo: DEFAULT_REPO,
+  branch: DEFAULT_BRANCH,
+  path: DEFAULT_PATH,
+}
+
+/**
+ * GitHub 官方支持用 URL 参数预填创建表单，把"获取令牌/建仓库"压缩为一次点击。
+ * 令牌只申请 Contents: write（写即含读），最短必要权限；仓库访问仍需用户在页面勾选数据仓库。
+ */
+export function tokenCreateUrl(): string {
+  const params = new URLSearchParams({
+    name: '行测工作台-数据同步',
+    description: '仅用于行测工作台跨设备同步（Contents 读写）',
+    expires_in: '90',
+    contents: 'write',
+  })
+  return `https://github.com/settings/personal-access-tokens/new?${params.toString()}`
+}
+
+/** 预填私有数据仓库的创建链接，用户点开后点一次 Create repository 即可 */
+export function repoCreateUrl(): string {
+  const params = new URLSearchParams({
+    name: DEFAULT_REPO,
+    description: '行测工作台私有数据仓库（请勿删除）',
+    visibility: 'private',
+  })
+  return `https://github.com/new?${params.toString()}`
+}
+
+/** 用令牌识别当前登录用户，免去手动填写 owner */
+export async function fetchAuthenticatedUser(token: string): Promise<{ ok: boolean; login: string; message: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/user`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
+    if (!response.ok) {
+      return { ok: false, login: '', message: response.status === 401 ? '令牌无效，请重新生成并粘贴' : friendlyError(response.status, await response.json().catch(() => null)) }
+    }
+    const data = await response.json() as { login?: string }
+    if (!data.login) return { ok: false, login: '', message: '无法识别令牌所属用户' }
+    return { ok: true, login: data.login, message: '' }
+  } catch {
+    return { ok: false, login: '', message: '网络异常，无法验证令牌' }
+  }
 }
 
 export function readGitHubConfig(): GitHubConfig | null {
@@ -34,7 +88,7 @@ export function readGitHubConfig(): GitHubConfig | null {
     return {
       owner: parsed.owner,
       repo: parsed.repo,
-      branch: parsed.branch || 'main',
+      branch: parsed.branch || DEFAULT_BRANCH,
       path: parsed.path || DEFAULT_PATH,
       token: parsed.token,
     }
@@ -190,16 +244,26 @@ async function writeSnapshotFile(config: GitHubConfig, snapshot: Snapshot, curre
   return { ok: true, message: '' }
 }
 
-/** 校验配置：读取仓库信息，确认可访问 */
+/** 校验配置：确认仓库存在、为私有、且令牌具备 Contents 写权限 */
 export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: boolean; message: string; isPrivate?: boolean }> {
   const result = await api(config, `/repos/${config.owner}/${config.repo}`)
-  if (!result.ok) return { ok: false, message: friendlyError(result.status, result.data) }
-  const isPrivate = Boolean((result.data as { private?: boolean })?.private)
-  const perms = (result.data as { permissions?: { contents?: string } })?.permissions
-  if (perms && perms.contents !== 'write' && perms.contents !== 'admin') {
-    return { ok: false, message: '令牌缺少 Contents 写入权限，请重新生成 Fine-grained token 并勾选 Contents: read and write' }
+  if (!result.ok) {
+    if (result.status === 404) {
+      return { ok: false, message: `未找到私有仓库 ${config.owner}/${config.repo}，请先用上方「创建数据仓库」按钮创建（要选 Private）` }
+    }
+    return { ok: false, message: friendlyError(result.status, result.data) }
   }
-  return { ok: true, message: isPrivate ? '连接成功（私有仓库，数据不会公开）' : '连接成功', isPrivate }
+  const repo = result.data as { private?: boolean; permissions?: { contents?: string } }
+  const isPrivate = Boolean(repo.private)
+  // 强制私有：公开仓库中的错题与个人数据任何人可读，直接拒绝
+  if (!isPrivate) {
+    return { ok: false, message: `仓库 ${config.owner}/${config.repo} 是公开仓库，数据会被任何人读取。请改用私有仓库（用上方「创建数据仓库」按钮）`, isPrivate }
+  }
+  const perms = repo.permissions
+  if (perms && perms.contents !== 'write' && perms.contents !== 'admin') {
+    return { ok: false, message: '令牌缺少 Contents 写入权限，请用上方按钮重新生成令牌并确认 Contents 为 Read and write', isPrivate }
+  }
+  return { ok: true, message: '连接成功（私有仓库，数据不会公开）', isPrivate }
 }
 
 /** 确保数据分支存在：不存在则从默认分支创建，避免数据写入触发 Pages 重新构建 */

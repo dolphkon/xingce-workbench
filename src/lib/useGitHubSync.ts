@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import {
-  clearGitHubConfig, ensureBranch, githubPullAll, githubPushAll, githubSyncNow,
-  isGitHubConfigured, readGitHubConfig, testGitHubConfig, writeGitHubConfig,
-  type GitHubConfig, type SyncResult,
+  clearGitHubConfig, ensureBranch, fetchAuthenticatedUser, githubPullAll, githubPushAll,
+  githubSyncNow, GITHUB_DEFAULTS, isGitHubConfigured, readGitHubConfig, testGitHubConfig,
+  writeGitHubConfig, type GitHubConfig, type SyncResult,
 } from './github'
 
 /**
@@ -75,10 +75,27 @@ export interface GithubSyncApi {
   openConfig: () => void
   closeConfig: () => void
   saveConfig: (config: GitHubConfig, mode?: 'merge' | 'push') => Promise<{ ok: boolean; message: string }>
+  /** 一键连接：仅需令牌，自动识别用户名并套用私有仓库 / data 分支约定 */
+  connect: (token: string, mode?: 'merge' | 'push') => Promise<{ ok: boolean; message: string }>
   sync: (manual?: boolean) => Promise<void>
   pushAll: () => Promise<void>
   pullAll: () => Promise<void>
   disconnect: () => void
+}
+
+async function connect(token: string, mode: 'merge' | 'push' = 'merge'): Promise<{ ok: boolean; message: string }> {
+  const clean = token.trim()
+  if (!clean) return { ok: false, message: '请先粘贴访问令牌' }
+  const user = await fetchAuthenticatedUser(clean)
+  if (!user.ok) return { ok: false, message: user.message }
+  const next: GitHubConfig = {
+    owner: user.login,
+    repo: GITHUB_DEFAULTS.repo,
+    branch: GITHUB_DEFAULTS.branch,
+    path: GITHUB_DEFAULTS.path,
+    token: clean,
+  }
+  return saveConfig(next, mode)
 }
 
 async function saveConfig(next: GitHubConfig, mode: 'merge' | 'push' = 'merge'): Promise<{ ok: boolean; message: string }> {
@@ -133,6 +150,7 @@ const api: GithubSyncApi = {
   openConfig: () => set({ configOpen: true }),
   closeConfig: () => set({ configOpen: false }),
   saveConfig,
+  connect,
   sync: runSync,
   pushAll,
   pullAll,
