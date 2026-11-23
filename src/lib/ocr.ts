@@ -24,9 +24,10 @@ async function getWorker(): Promise<Worker> {
             else if (status === 'recognizing text') progressHandler(55 + Math.round(p * 0.45), '正在识别文字…')
           },
         })
-        // 显式 PSM 3（AUTO）：实测对题目截图（含圆圈选项）正确率最高，
-        // 且必须与 Node 端验证配置一致。类型 import 不破坏按需加载。
-        await worker.setParameters({ tessedit_pageseg_mode: '3' as PSM })
+        // 默认 PSM 4：实测对带圆圈选项 ⒶⒷⒸⒹ 的排版题更稳。
+        // recognizeImage 会按图片实际识别效果在 4/3 之间自适应切换选优。
+        // 类型 import 不破坏按需加载。
+        await worker.setParameters({ tessedit_pageseg_mode: '4' as PSM })
         return worker
       })
       .catch((err) => {
@@ -61,13 +62,42 @@ export async function recognizeImage(
   try {
     onProgress?.(2, '准备图片…')
     const worker = await getWorker()
+
+    // 不同截图的圆圈选项 ⒶⒷⒸⒹ 在不同 PSM 下识别差异极大：
+    // 有的图 PSM4 能识别成 "(A)(B)(c)(D)" 而 PSM3 会把圆圈丢掉、选项连成一团；
+    // 有的图恰好相反。固定单一 PSM 必然在某些图上把选项塞进题干（出现 OONRONe 等乱码）。
+    // 这里用 PSM4 先识别；若拆不出至少 2 个选项，再回退 PSM3 对比，按"拆出选项数 + 题干是否含乱码"选优。
     onProgress?.(55, '正在识别文字…')
-    const result = await worker.recognize(dataUrl)
+    await worker.setParameters({ tessedit_pageseg_mode: '4' as PSM })
+    const primary = postprocessOcrText((await worker.recognize(dataUrl)).data.text)
+
+    let best = primary
+    if (parseQuestionText(primary).options.filter((o) => o.trim()).length < 2) {
+      // 首选模式没拆出选项：回退 PSM3 再识别一次，选更完整的结果
+      onProgress?.(80, '正在优化识别结果…')
+      progressHandler = undefined // 第二次识别不重复刷进度，避免进度条倒退
+      await worker.setParameters({ tessedit_pageseg_mode: '3' as PSM })
+      const fallback = postprocessOcrText((await worker.recognize(dataUrl)).data.text)
+      if (scoreOcrResult(fallback) > scoreOcrResult(primary)) best = fallback
+    }
+
     onProgress?.(100, '识别完成')
-    return postprocessOcrText(result.data.text)
+    return best
   } finally {
     progressHandler = undefined
   }
+}
+
+/**
+ * OCR 结果质量评分：选项拆得越完整、题干越干净分越高。
+ * 用于在多种 PSM 结果间自动选优。
+ */
+function scoreOcrResult(text: string): number {
+  const parsed = parseQuestionText(text)
+  const filled = parsed.options.filter((o) => o.trim()).length
+  // 题干里残留 (A)(B) 圆圈乱码、OONRONe 之类说明选项没拆出来，重罚
+  const garbage = /OONRONe|[（(]\s*[A-Da-d]\s*[）)]|AAA|[《〈]/.test(parsed.stem) ? 20 : 0
+  return filled * 10 - garbage
 }
 
 /**
