@@ -32,12 +32,12 @@ export default function MistakesPage() {
     return order
   }, [items, categories])
 
-  // 当前模块失效（空库/被删空）时回退到第一个有题模块
-  const activeType: QuestionType | '全部' = moduleTabs.includes(type)
+  // 默认选中「全部」；仅当所选模块被删空时才回退到「全部」
+  const activeType: QuestionType | '全部' = type === '全部' || moduleTabs.includes(type)
     ? type
-    : (moduleTabs[0] as QuestionType | undefined) ?? '全部'
+    : '全部'
 
-  const switchModule = (name: QuestionType) => {
+  const switchModule = (name: QuestionType | '全部') => {
     setType(name)
     setSubType('全部')
   }
@@ -102,6 +102,9 @@ export default function MistakesPage() {
 
       {moduleTabs.length > 0 && (
         <div className="module-tabs" role="tablist" aria-label="按考试模块筛选">
+          <button className={`module-tab${activeType === '全部' ? ' active' : ''}`} role="tab" aria-selected={activeType === '全部'} onClick={() => switchModule('全部')}>
+            全部
+          </button>
           {moduleTabs.map((name) => (
             <button key={name} className={`module-tab${activeType === name ? ' active' : ''}`} role="tab" aria-selected={activeType === name} onClick={() => switchModule(name as QuestionType)}>
               {name}
