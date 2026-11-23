@@ -219,12 +219,11 @@ a { color: inherit; text-decoration: none; }
 .tag-input input { flex: 1; min-width: 100px; border: none; outline: none; background: transparent; padding: 3px 4px; }
 
 /* ---------- Filters ---------- */
-.module-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; padding-bottom: 2px; }
-.module-tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted); font-size: 13px; font-weight: 600; transition: all .15s; box-shadow: var(--shadow-sm); }
-.module-tab:hover { border-color: var(--primary); color: var(--primary); }
-.module-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: var(--shadow-sm); }
-.module-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--surface-muted); color: var(--text-muted); font-size: 11px; font-weight: 700; }
-.module-tab.active .module-tab-count { background: rgba(255, 255, 255, .22); color: #fff; }
+.module-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 26px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.module-tab { position: relative; padding: 10px 2px 12px; border: none; background: transparent; color: var(--text-muted); font-size: 14px; font-weight: 600; transition: color .15s; }
+.module-tab:hover { color: var(--primary); }
+.module-tab.active { color: var(--primary); }
+.module-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary); border-radius: 2px 2px 0 0; }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
 .search-box { position: relative; flex: 1; min-width: 220px; max-width: 340px; }
 .search-box svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-light); }

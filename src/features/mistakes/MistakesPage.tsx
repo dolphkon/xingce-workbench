@@ -23,26 +23,28 @@ export default function MistakesPage() {
   const [editing, setEditing] = useState<Mistake | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Mistake | null>(null)
 
-  // 错题库实际包含的模块及各自题数（一眼可见覆盖范围），按配置顺序排列
+  // 仅展示错题库中实际有题的模块（按配置顺序），作为导航 tab
   const moduleTabs = useMemo(() => {
-    const counts = new Map<string, number>()
-    items.forEach((i) => counts.set(i.type, (counts.get(i.type) ?? 0) + 1))
+    const present = new Set(items.map((i) => i.type))
     const order: string[] = []
-    categories.forEach((c) => { if (counts.has(c.name)) order.push(c.name) })
-    counts.forEach((_, name) => { if (!order.includes(name)) order.push(name) })
-    // 当前选中的模块即使暂时 0 题也保留，避免切换后 tab 消失
-    if (type !== '全部' && !order.includes(type)) order.push(type)
-    return order.map((name) => ({ name, count: counts.get(name) ?? 0 }))
-  }, [items, categories, type])
+    categories.forEach((c) => { if (present.has(c.name)) order.push(c.name) })
+    present.forEach((name) => { if (!order.includes(name)) order.push(name) })
+    return order
+  }, [items, categories])
 
-  const switchModule = (name: QuestionType | '全部') => {
+  // 当前模块失效（空库/被删空）时回退到第一个有题模块
+  const activeType: QuestionType | '全部' = moduleTabs.includes(type)
+    ? type
+    : (moduleTabs[0] as QuestionType | undefined) ?? '全部'
+
+  const switchModule = (name: QuestionType) => {
     setType(name)
     setSubType('全部')
   }
 
   const filtered = items
     .filter((item) => {
-      if (type !== '全部' && item.type !== type) return false
+      if (activeType !== '全部' && item.type !== activeType) return false
       if (subType !== '全部' && item.subType !== subType) return false
       if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
       if (!matchesAccuracy(item.accuracy, accuracy)) return false
@@ -56,14 +58,13 @@ export default function MistakesPage() {
 
   const clearFilters = () => {
     setKeyword('')
-    setType('全部')
     setSubType('全部')
     setDays('all')
     setAccuracy('all')
     setStartDate('')
     setEndDate('')
   }
-  const hasFilters = Boolean(keyword.trim()) || type !== '全部' || subType !== '全部' || days !== 'all' || accuracy !== 'all' || Boolean(startDate) || Boolean(endDate)
+  const hasFilters = Boolean(keyword.trim()) || subType !== '全部' || days !== 'all' || accuracy !== 'all' || Boolean(startDate) || Boolean(endDate)
 
   const handleDelete = async () => {
     if (!deleting) return
@@ -74,7 +75,7 @@ export default function MistakesPage() {
 
   const practiceParams = new URLSearchParams({
     days,
-    type,
+    type: activeType,
     subType,
     accuracy,
     start: days === 'custom' ? startDate : '',
@@ -99,16 +100,15 @@ export default function MistakesPage() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="module-tabs" role="tablist" aria-label="按考试模块筛选">
-        <button className={`module-tab${type === '全部' ? ' active' : ''}`} role="tab" aria-selected={type === '全部'} onClick={() => switchModule('全部')}>
-          全部 <span className="module-tab-count">{items.length}</span>
-        </button>
-        {moduleTabs.map((tab) => (
-          <button key={tab.name} className={`module-tab${type === tab.name ? ' active' : ''}`} role="tab" aria-selected={type === tab.name} onClick={() => switchModule(tab.name as QuestionType)}>
-            {tab.name} <span className="module-tab-count">{tab.count}</span>
-          </button>
-        ))}
-      </div>
+      {moduleTabs.length > 0 && (
+        <div className="module-tabs" role="tablist" aria-label="按考试模块筛选">
+          {moduleTabs.map((name) => (
+            <button key={name} className={`module-tab${activeType === name ? ' active' : ''}`} role="tab" aria-selected={activeType === name} onClick={() => switchModule(name as QuestionType)}>
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="filter-bar">
         <div className="search-box">
@@ -118,8 +118,8 @@ export default function MistakesPage() {
         <select className="select" style={{ width: 140 }} value={subType} onChange={(e) => setSubType(e.target.value)} title="按题型筛选">
           <option value="全部">全部题型</option>
           {Array.from(new Set([
-            ...(type === '全部' ? categories.flatMap((c) => c.types) : (categories.find((c) => c.name === type)?.types ?? [])),
-            ...items.filter((i) => type === '全部' || i.type === type).map((i) => i.subType ?? '').filter(Boolean),
+            ...(activeType === '全部' ? categories.flatMap((c) => c.types) : (categories.find((c) => c.name === activeType)?.types ?? [])),
+            ...items.filter((i) => activeType === '全部' || i.type === activeType).map((i) => i.subType ?? '').filter(Boolean),
           ])).map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
         <select className="select" style={{ width: 132 }} value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)} title="按正确率范围筛选（左闭右开，如 30%-50% 含 30% 不含 50%）">
