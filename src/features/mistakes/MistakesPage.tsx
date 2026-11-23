@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { remove } from '../../lib/db'
@@ -22,6 +22,23 @@ export default function MistakesPage() {
   const [endDate, setEndDate] = useState('')
   const [editing, setEditing] = useState<Mistake | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Mistake | null>(null)
+
+  // 错题库实际包含的模块及各自题数（一眼可见覆盖范围），按配置顺序排列
+  const moduleTabs = useMemo(() => {
+    const counts = new Map<string, number>()
+    items.forEach((i) => counts.set(i.type, (counts.get(i.type) ?? 0) + 1))
+    const order: string[] = []
+    categories.forEach((c) => { if (counts.has(c.name)) order.push(c.name) })
+    counts.forEach((_, name) => { if (!order.includes(name)) order.push(name) })
+    // 当前选中的模块即使暂时 0 题也保留，避免切换后 tab 消失
+    if (type !== '全部' && !order.includes(type)) order.push(type)
+    return order.map((name) => ({ name, count: counts.get(name) ?? 0 }))
+  }, [items, categories, type])
+
+  const switchModule = (name: QuestionType | '全部') => {
+    setType(name)
+    setSubType('全部')
+  }
 
   const filtered = items
     .filter((item) => {
@@ -82,15 +99,22 @@ export default function MistakesPage() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      <div className="module-tabs" role="tablist" aria-label="按考试模块筛选">
+        <button className={`module-tab${type === '全部' ? ' active' : ''}`} role="tab" aria-selected={type === '全部'} onClick={() => switchModule('全部')}>
+          全部 <span className="module-tab-count">{items.length}</span>
+        </button>
+        {moduleTabs.map((tab) => (
+          <button key={tab.name} className={`module-tab${type === tab.name ? ' active' : ''}`} role="tab" aria-selected={type === tab.name} onClick={() => switchModule(tab.name as QuestionType)}>
+            {tab.name} <span className="module-tab-count">{tab.count}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="filter-bar">
         <div className="search-box">
           <Icon name="search" size={15} />
           <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索题干、解析、标签…" />
         </div>
-        <select className="select" style={{ width: 140 }} value={type} onChange={(e) => { setType(e.target.value as QuestionType | '全部'); setSubType('全部') }}>
-          <option value="全部">全部模块</option>
-          {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
-        </select>
         <select className="select" style={{ width: 140 }} value={subType} onChange={(e) => setSubType(e.target.value)} title="按题型筛选">
           <option value="全部">全部题型</option>
           {Array.from(new Set([
