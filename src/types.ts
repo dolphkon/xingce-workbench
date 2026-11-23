@@ -83,6 +83,14 @@ export interface Mistake {
   point?: string
 }
 
+/** 知识库文件夹（独立于文档，支持空文件夹；category 以文件夹名为单位） */
+export interface KnowledgeFolder {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface KnowledgeDoc {
   id: string
   title: string
@@ -99,6 +107,8 @@ export interface KnowledgeDoc {
   fileType?: string
   /** 上传文件内容（DataURL），用于在线预览与下载 */
   fileData?: string
+  /** 绑定的腾讯文档在线编辑链接 */
+  tencentUrl?: string
 }
 
 export interface MotherQuestion {
@@ -197,4 +207,5 @@ export interface BackupData {
   mothers: MotherQuestion[]
   plans?: StudyPlan[]
   categories?: QuestionCategory[]
+  folders?: KnowledgeFolder[]
 }

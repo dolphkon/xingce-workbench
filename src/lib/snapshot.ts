@@ -7,7 +7,7 @@ import {
 } from './plans'
 import type { BackupData, StudyPlan } from '../types'
 
-export const STORES: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans', 'categories']
+export const STORES: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans', 'categories', 'folders']
 
 /** 同步事件：数据层应用了远端数据后通知界面刷新 */
 export const SYNC_EVENT = 'xingce-sync-applied'
@@ -36,6 +36,7 @@ export async function collectLocal(): Promise<Map<StoreName, Map<string, LocalEn
     mothers: { items: readCachedAll('mothers'), deleted: readDeleted('mothers') },
     plans: { items: plans, deleted: new Set(plansDeleted) },
     categories: { items: readCachedAll('categories'), deleted: readDeleted('categories') },
+    folders: { items: readCachedAll('folders'), deleted: readDeleted('folders') },
   }
   STORES.forEach((store) => {
     const map = new Map<string, LocalEntry>()
@@ -153,6 +154,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
     mothers: await listAll('mothers'),
     plans: await loadPlans(),
     categories: await listAll('categories'),
+    folders: await listAll('folders'),
   }
   const stores: Record<string, Record<string, LocalEntry>> = {}
   STORES.forEach((store) => {

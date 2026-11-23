@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ConfirmDialog, Icon } from '../../components/ui'
+import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { getById, put, readCachedById, remove } from '../../lib/db'
 import { renderMarkdown } from '../../lib/markdown'
 import { formatDate, uid } from '../../lib/utils'
@@ -60,6 +60,11 @@ export default function DocEditor() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [tab, setTab] = useState<'edit' | 'preview'>('edit')
+  const [fullView, setFullView] = useState(false)
+  const [showTencent, setShowTencent] = useState(false)
+  const [tencentInput, setTencentInput] = useState('')
+  const [tencentError, setTencentError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
   const [tagsInput, setTagsInput] = useState(() => (id ? readCachedById('docs', id)?.tags.join(', ') ?? '' : ''))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -110,6 +115,7 @@ export default function DocEditor() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && fullView) { setFullView(false); return }
       if (editing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void saveNow(true)
@@ -117,7 +123,41 @@ export default function DocEditor() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [editing, saveNow])
+  }, [editing, saveNow, fullView])
+
+  // 全屏阅读时锁定页面滚动
+  useEffect(() => {
+    if (!fullView) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [fullView])
+
+  const copyForTencent = async () => {
+    const text = doc.kind === 'file' ? (doc.title || doc.fileName || '') : `${doc.title}\n\n${doc.content}`
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1800)
+  }
+
+  const saveTencentUrl = async () => {
+    setTencentError(null)
+    const value = tencentInput.trim()
+    if (!value) { await put('docs', { ...doc, tencentUrl: undefined, updatedAt: Date.now() }); update({ tencentUrl: undefined }); setShowTencent(false); return }
+    if (!/^https?:\/\//i.test(value)) { setTencentError('请输入以 http:// 或 https:// 开头的链接'); return }
+    await put('docs', { ...doc, tencentUrl: value, updatedAt: Date.now() })
+    update({ tencentUrl: value })
+    setShowTencent(false)
+  }
 
   const update = (patch: Partial<KnowledgeDoc>) => setDoc((prev) => ({ ...prev, ...patch }))
 
@@ -172,6 +212,15 @@ export default function DocEditor() {
           {!isFileDoc && !editing && (
             <button className="btn" onClick={() => { setEditing(true); setTab('edit') }}><Icon name="edit" size={16} /> 编辑</button>
           )}
+          {isFileDoc && (
+            <button className="btn" onClick={() => setFullView(true)}><Icon name="expand" size={16} /> 全屏阅读</button>
+          )}
+          {doc.tencentUrl && (
+            <a className="btn" href={doc.tencentUrl} target="_blank" rel="noreferrer" title="打开腾讯文档"><Icon name="link" size={16} /> 打开腾讯文档</a>
+          )}
+          <button className="btn" onClick={() => { setTencentInput(doc.tencentUrl ?? ''); setTencentError(null); setCopied(false); setShowTencent(true) }} title="用腾讯文档在线编辑">
+            <Icon name="settings" size={16} /> {doc.tencentUrl ? '修改腾讯文档' : '绑定腾讯文档'}
+          </button>
           {doc.fileData && (
             <a className="btn" href={doc.fileData} download={doc.fileName || doc.title}><Icon name="download" size={16} /> 下载</a>
           )}
@@ -210,7 +259,10 @@ export default function DocEditor() {
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">在线阅读</h2>
-            <span className="small muted">{doc.fileName} · {formatBytes(doc.fileData)}</span>
+            <div className="row" style={{ gap: 12 }}>
+              <span className="small muted">{doc.fileName} · {formatBytes(doc.fileData)}</span>
+              <button className="btn btn-sm btn-ghost" onClick={() => setFullView(true)}><Icon name="expand" size={14} /> 全屏</button>
+            </div>
           </div>
           <div className="card-body">
             {fileKind === 'pdf' ? (
@@ -282,6 +334,57 @@ export default function DocEditor() {
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => void handleDelete()}
         />
+      )}
+
+      {showTencent && (
+        <Modal title="腾讯文档在线编辑" onClose={() => setShowTencent(false)}
+          footer={<>
+            <button className="btn" onClick={() => setShowTencent(false)}>取消</button>
+            <button className="btn btn-primary" onClick={() => void saveTencentUrl()}>保存</button>
+          </>}>
+          <p className="small muted" style={{ marginTop: 0, lineHeight: 1.7 }}>
+            本站为纯前端工作台，无法在你未登录时静默创建腾讯文档。请按下面步骤操作，之后即可一键打开在线编辑：
+          </p>
+          <ol className="small muted" style={{ lineHeight: 1.9, paddingLeft: 20, margin: '8px 0 14px' }}>
+            <li>点击下方「打开腾讯文档」，登录并新建文档</li>
+            <li>点击「复制本文内容」，粘贴到刚建的腾讯文档中</li>
+            <li>在腾讯文档里点「分享 → 复制链接」，把链接粘贴到下方并保存</li>
+          </ol>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            <a className="btn" href="https://docs.qq.com/" target="_blank" rel="noreferrer"><Icon name="link" size={15} /> 打开腾讯文档</a>
+            <button className="btn" onClick={() => void copyForTencent()}><Icon name="copy" size={15} /> {copied ? '已复制' : '复制本文内容'}</button>
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label className="form-label">腾讯文档链接（留空则解除绑定）</label>
+            <input className="input" value={tencentInput} onChange={(e) => { setTencentInput(e.target.value); setTencentError(null) }}
+              placeholder="https://docs.qq.com/doc/..." />
+          </div>
+          {tencentError && <p className="error-text" style={{ marginBottom: 0 }}>{tencentError}</p>}
+        </Modal>
+      )}
+
+      {fullView && isFileDoc && (
+        <div className="kb-fullscreen" role="dialog" aria-modal="true" aria-label="全屏阅读">
+          <div className="kb-fullscreen-bar">
+            <div className="kb-fullscreen-title"><Icon name="filetext" size={17} /> {doc.title || doc.fileName || '文档'}</div>
+            <div className="row" style={{ gap: 8 }}>
+              <a className="kb-fullscreen-btn" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={18} /></a>
+              <button className="kb-fullscreen-btn" onClick={() => setFullView(false)} title="退出全屏（Esc）"><Icon name="x" size={20} /></button>
+            </div>
+          </div>
+          <div className="kb-fullscreen-body">
+            {fileKind === 'pdf' ? (
+              <iframe src={doc.fileData} title={doc.fileName} className="kb-fullscreen-frame" />
+            ) : fileKind === 'image' ? (
+              <img src={doc.fileData} alt={doc.title} className="kb-fullscreen-img" />
+            ) : (
+              <div className="empty-state" style={{ color: '#fff' }}>
+                <h3>此格式暂不支持在线预览</h3>
+                <p>请点击右上角下载后用本地软件打开</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   )
