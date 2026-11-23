@@ -40,6 +40,7 @@ export default function PracticePage() {
     return isDateRange(value) ? value : '7'
   })
   const [type, setType] = useState<QuestionType | '全部'>(() => params.get('type') || '全部')
+  const [subType, setSubType] = useState(() => params.get('subType') || '全部')
   const [accuracy, setAccuracy] = useState<AccuracyRange>(() => {
     const value = params.get('accuracy')
     return isAccuracyRange(value) ? value : 'all'
@@ -61,9 +62,10 @@ export default function PracticePage() {
   const eligible = useMemo(() => items.filter((item) => {
     if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
     if (type !== '全部' && item.type !== type) return false
+    if (subType !== '全部' && item.subType !== subType) return false
     if (!matchesAccuracy(item.accuracy, accuracy)) return false
     return true
-  }), [items, days, startDate, endDate, type, accuracy])
+  }), [items, days, startDate, endDate, type, subType, accuracy])
 
   const current = pool[index]
   const lastResult = results[results.length - 1]
@@ -159,9 +161,19 @@ export default function PracticePage() {
             <div className="form-row">
               <div className="form-field">
                 <label className="form-label">考试模块</label>
-                <select className="select" value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
+                <select className="select" value={type} onChange={(e) => { setType(e.target.value as QuestionType | '全部'); setSubType('全部') }}>
                   <option value="全部">全部模块</option>
                   {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">题型</label>
+                <select className="select" value={subType} onChange={(e) => setSubType(e.target.value)}>
+                  <option value="全部">全部题型</option>
+                  {Array.from(new Set([
+                    ...(type === '全部' ? categories.flatMap((c) => c.types) : (categories.find((c) => c.name === type)?.types ?? [])),
+                    ...items.filter((i) => type === '全部' || i.type === type).map((i) => i.subType ?? '').filter(Boolean),
+                  ])).map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div className="form-field">
