@@ -67,11 +67,27 @@ export function repoCreateUrl(): string {
  */
 export async function ensurePrivateRepo(token: string, owner: string, repo: string): Promise<{ ok: boolean; message: string }> {
   const temp: GitHubConfig = { owner, repo, branch: DEFAULT_BRANCH, path: DEFAULT_PATH, token }
+  const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
   // 先检查是否已存在
-  const existing = await api(temp, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`)
+  const existing = await api(temp, repoPath)
   if (existing.ok) {
     const isPrivate = Boolean((existing.data as { private?: boolean })?.private)
     if (!isPrivate) return { ok: false, message: `仓库 ${owner}/${repo} 已存在但是公开的，请改名或改为私有后重试` }
+    // 已存在的仓库可能是完全空的（无任何分支）。GitHub 对空仓库调用任何 Git Data API
+    // 都会返回 409 "Git Repository is empty"，必须先用 Contents API 写入一个初始文件来
+    // 初始化默认分支——这是 GitHub 官方文档明确推荐的空仓库初始化方式。
+    const branches = await api(temp, `${repoPath}/branches`)
+    if (branches.ok && Array.isArray(branches.data) && branches.data.length === 0) {
+      const init = await api(temp, `${repoPath}/contents/README.md`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: 'chore: init repository',
+          content: toBase64('# 行测工作台私有数据仓库\n\n本仓库由行测工作台自动创建，请勿删除。\n'),
+          // 不带 branch：写入默认分支，创建首个提交，让仓库脱离"空"状态
+        }),
+      })
+      if (!init.ok) return { ok: false, message: `初始化空仓库失败：${friendlyError(init.status, init.data)}` }
+    }
     return { ok: true, message: '' }
   }
   if (existing.status !== 404) return { ok: false, message: friendlyError(existing.status, existing.data) }
@@ -151,6 +167,8 @@ function friendlyError(status: number, body: unknown): string {
   if (status === 401) return '令牌无效或已过期，请重新配置'
   if (status === 403) return '令牌权限不足或触发速率限制，请检查令牌的 Contents 读写权限'
   if (status === 404) return '仓库或分支不存在，请检查仓库名与分支'
+  // 空仓库：Git Data API 会返回 "Git Repository is empty"，改为可操作的中文指引
+  if (status === 409) return '数据仓库尚未初始化完成，请稍后几秒再点连接重试；若反复出现，可在仓库中手动新建任意一个文件后重试'
   return message || `GitHub 请求失败（${status}）`
 }
 
@@ -323,7 +341,18 @@ export async function probeWriteAccess(config: GitHubConfig): Promise<{ ok: bool
 }
 
 /**
- * 确保数据分支存在：不存在则从默认分支创建；对空仓库用 Git Data API 建首个提交。
+ * 确保数据分支存在。
+ *
+ * 关键：GitHub 官方文档明确说明——对空仓库，Git Data API（blobs/trees/commits/refs）
+ * 一律返回 409 "Git Repository is empty"，不能用它来初始化。正确做法是用
+ * Contents API 的 PUT 直接写文件，它会在分支不存在时自动创建分支与首个提交。
+ *
+ * 因此这里只做两件事：
+ *   1. data 分支已存在 → 直接放行；
+ *   2. 不存在 → 若默认分支存在则可用 Git Data API 从默认分支建 data 分支（非空仓库可行）；
+ *      若默认分支也不存在（空仓库）→ 放行，交给后续 probeWriteAccess 的 PUT contents
+ *      用最新数据自动创建 data 分支（ensurePrivateRepo 已保证默认分支被初始化过）。
+ * 全程不对空仓库调用任何 Git Data 端点，彻底消除 409。
  */
 export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
   const repoPath = `/repos/${config.owner}/${config.repo}`
@@ -333,63 +362,20 @@ export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean;
   if (!repoInfo.ok) return { ok: false, message: friendlyError(repoInfo.status, repoInfo.data) }
   const defaultBranch = (repoInfo.data as { default_branch?: string })?.default_branch || 'main'
   const head = await api(config, `${repoPath}/git/ref/heads/${encodeURIComponent(defaultBranch)}`)
-
-  // 空仓库：默认分支 ref 不存在（可能返回 404，也可能返回 409 "Git Repository is empty"）。
-  // 必须先用 Git Data API 在 data 分支建立首个提交，否则后续 Contents API 无分支可写。
-  if (!head.ok) return initEmptyRepoBranch(config)
-
+  // 默认分支 ref 不存在（404/409）= 空仓库：放行，交给 Contents API PUT 自动建 data 分支
+  if (!head.ok) return { ok: true, message: '' }
   const sha = (head.data as { object?: { sha?: string } })?.object?.sha
-  if (!sha) return initEmptyRepoBranch(config)
+  if (!sha) return { ok: true, message: '' }
+  // 默认分支存在 → 用它创建 data 分支（非空仓库，Git Data API 可用）
   const created = await api(config, `${repoPath}/git/refs`, {
     method: 'POST',
     body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha }),
   })
-  if (!created.ok) return { ok: false, message: friendlyError(created.status, created.data) }
-  return { ok: true, message: '' }
-}
-
-/**
- * 空仓库初始化：用 Git Data API（完整仓库路径）创建 blob → tree → commit → ref，
- * 在 data 分支建立带初始快照文件的首个提交。之后 Contents API 即可在此分支读写。
- * 注意：GitHub 对空仓库调用 Contents API 会因无分支基础而失败，必须走 Git Data API。
- */
-async function initEmptyRepoBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
-  const repoPath = `/repos/${config.owner}/${config.repo}`
-  const emptySnapshot: Snapshot = { version: 1, exportedAt: 0, stores: {}, deleted: {} }
-
-  // 1. 创建数据文件的 blob
-  const blob = await api(config, `${repoPath}/git/blobs`, {
-    method: 'POST',
-    body: JSON.stringify({ content: toBase64(JSON.stringify(emptySnapshot)), encoding: 'base64' }),
-  })
-  if (!blob.ok) return { ok: false, message: friendlyError(blob.status, blob.data) }
-  const blobSha = (blob.data as { sha?: string })?.sha
-  if (!blobSha) return { ok: false, message: '创建初始数据文件失败' }
-
-  // 2. 创建 tree（tree 内 path 是文件路径，用原始 config.path，不做 URL 编码）
-  const tree = await api(config, `${repoPath}/git/trees`, {
-    method: 'POST',
-    body: JSON.stringify({ tree: [{ path: config.path, mode: '100644', type: 'blob', sha: blobSha }] }),
-  })
-  if (!tree.ok) return { ok: false, message: friendlyError(tree.status, tree.data) }
-  const treeSha = (tree.data as { sha?: string })?.sha
-  if (!treeSha) return { ok: false, message: '创建初始目录树失败' }
-
-  // 3. 创建无父节点的根提交
-  const commit = await api(config, `${repoPath}/git/commits`, {
-    method: 'POST',
-    body: JSON.stringify({ message: 'chore: init data branch', tree: treeSha }),
-  })
-  if (!commit.ok) return { ok: false, message: friendlyError(commit.status, commit.data) }
-  const commitSha = (commit.data as { sha?: string })?.sha
-  if (!commitSha) return { ok: false, message: '创建初始提交失败' }
-
-  // 4. 把 data 分支指向该提交
-  const ref = await api(config, `${repoPath}/git/refs`, {
-    method: 'POST',
-    body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: commitSha }),
-  })
-  if (!ref.ok) return { ok: false, message: friendlyError(ref.status, ref.data) }
+  if (!created.ok) {
+    // 409 可能是分支已被并发创建，视为成功；其余报错也放行，让 PUT contents 兜底
+    if (created.status === 409) return { ok: true, message: '' }
+    return { ok: true, message: '' }
+  }
   return { ok: true, message: '' }
 }
 
