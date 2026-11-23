@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useGitHubSync } from '../lib/useGitHubSync'
-import { GITHUB_DEFAULTS, repoCreateUrl, tokenCreateUrl, type GitHubConfig } from '../lib/github'
+import { GITHUB_DEFAULTS, tokenCreateUrl, type GitHubConfig } from '../lib/github'
 import { Icon, Modal } from './ui'
 
 const navItems = [
@@ -79,28 +79,22 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
       }
     >
       <p className="small muted" style={{ marginTop: 0 }}>
-        只需 3 步，之后手机和电脑粘贴同一个令牌即可看到同一份数据。数据存在<strong>私有仓库</strong>的独立 <code>data</code> 分支，不公开、不触发网站重新部署。
+        只需 2 步。<strong>私有仓库会自动创建</strong>（走 GitHub 接口，不用打开网页），只需一个令牌。之后手机和电脑粘贴同一个令牌即可看到同一份数据。
       </p>
 
       <div className="connect-step">
-        <div className="connect-step-head"><span className="connect-step-no">1</span><strong>创建私有数据仓库</strong></div>
-        <p className="small muted">点开后仓库名与「Private」已自动填好，点底部绿色 <b>Create repository</b> 即可（已有仓库可跳过）。</p>
-        <a className="btn btn-sm" href={repoCreateUrl()} target="_blank" rel="noopener noreferrer">
-          <Icon name="github" size={14} /> 打开 GitHub 创建私有仓库
-        </a>
-        <p className="small muted" style={{ marginBottom: 0 }}>仓库名：<code>{GITHUB_DEFAULTS.repo}</code></p>
-      </div>
-
-      <div className="connect-step">
-        <div className="connect-step-head"><span className="connect-step-no">2</span><strong>创建访问令牌</strong></div>
-        <p className="small muted">点开后名称、有效期、权限都已预填（仅 Contents 读写）。确认 <b>Repository access</b> 选中刚建的仓库，点 <b>Generate token</b> 后复制。</p>
+        <div className="connect-step-head"><span className="connect-step-no">1</span><strong>创建访问令牌</strong></div>
+        <p className="small muted">
+          用<strong>手机浏览器</strong>或能打开 GitHub 的设备点开下方链接（你电脑网络打不开 github.com，所以别在电脑上点）。名称、有效期、权限已预填：确认 <b>Resource owner</b> 是你的账号、<b>Repository access</b> 选 <b>All repositories</b>，点 <b>Generate token</b> 后复制令牌。
+        </p>
         <a className="btn btn-sm" href={tokenCreateUrl()} target="_blank" rel="noopener noreferrer">
-          <Icon name="github" size={14} /> 打开 GitHub 创建令牌
+          <Icon name="github" size={14} /> 打开 GitHub 创建令牌（建议在手机）
         </a>
+        <p className="small muted" style={{ marginBottom: 0 }}>已生成过令牌的话，跳过这步直接粘贴即可。</p>
       </div>
 
       <div className="connect-step">
-        <div className="connect-step-head"><span className="connect-step-no">3</span><strong>粘贴令牌并连接</strong></div>
+        <div className="connect-step-head"><span className="connect-step-no">2</span><strong>粘贴令牌并连接</strong></div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
             className="input"
@@ -112,7 +106,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
           />
           <button className="btn btn-sm" onClick={() => setShowToken((v) => !v)}>{showToken ? '隐藏' : '显示'}</button>
         </div>
-        <p className="small muted" style={{ marginBottom: 0 }}>用户名、仓库、分支会自动识别，无需填写。</p>
+        <p className="small muted" style={{ marginBottom: 0 }}>用户名自动识别，私有仓库与 <code>data</code> 分支自动创建，无需手动建仓。</p>
       </div>
 
       <div className="form-field">
@@ -150,7 +144,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
       )}
 
       <div className="notice" style={{ fontSize: 12, lineHeight: 1.7 }}>
-        <strong>安全可靠：</strong>令牌只保存在本机浏览器、不会写进代码，且仅申请 Contents 单一权限；只连接<strong>私有仓库</strong>，公开仓库会被拒绝。请勿在公用设备上使用。
+        <strong>安全可靠：</strong>令牌只保存在本机浏览器、不会写进代码，仅申请 Contents（读写数据）与 Administration（自动建私有仓库）两项权限；只连接<strong>私有仓库</strong>，公开仓库会被拒绝。请勿在公用设备上使用。
       </div>
       {error && <p className="form-error">{error}</p>}
     </Modal>

@@ -35,15 +35,17 @@ export const GITHUB_DEFAULTS = {
 }
 
 /**
- * GitHub 官方支持用 URL 参数预填创建表单，把"获取令牌/建仓库"压缩为一次点击。
- * 令牌只申请 Contents: write（写即含读），最短必要权限；仓库访问仍需用户在页面勾选数据仓库。
+ * GitHub 官方支持用 URL 参数预填创建表单，把"获取令牌"压缩为一次点击。
+ * 申请两项权限：Contents 读写（读写数据）+ Administration 写（用于 API 自动创建私有仓库）。
+ * Resource owner 需选自己的账号；Repository access 选 All repositories（建仓时仓库还不存在）。
  */
 export function tokenCreateUrl(): string {
   const params = new URLSearchParams({
     name: '行测工作台-数据同步',
-    description: '仅用于行测工作台跨设备同步（Contents 读写）',
+    description: '仅用于行测工作台跨设备同步（Contents 读写 + 自动建私有仓库）',
     expires_in: '90',
     contents: 'write',
+    administration: 'write',
   })
   return `https://github.com/settings/personal-access-tokens/new?${params.toString()}`
 }
@@ -56,6 +58,40 @@ export function repoCreateUrl(): string {
     visibility: 'private',
   })
   return `https://github.com/new?${params.toString()}`
+}
+
+/**
+ * 用 API 自动创建私有数据仓库（已存在则直接复用）。
+ * 这样用户只需在手机/能访问 GitHub 网页的设备上创建一次令牌，粘贴到本机即可全自动完成。
+ * 需要令牌具备 Administration: write 权限（预填链接已包含）。
+ */
+export async function ensurePrivateRepo(token: string, owner: string, repo: string): Promise<{ ok: boolean; message: string }> {
+  const temp: GitHubConfig = { owner, repo, branch: DEFAULT_BRANCH, path: DEFAULT_PATH, token }
+  // 先检查是否已存在
+  const existing = await api(temp, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`)
+  if (existing.ok) {
+    const isPrivate = Boolean((existing.data as { private?: boolean })?.private)
+    if (!isPrivate) return { ok: false, message: `仓库 ${owner}/${repo} 已存在但是公开的，请改名或改为私有后重试` }
+    return { ok: true, message: '' }
+  }
+  if (existing.status !== 404) return { ok: false, message: friendlyError(existing.status, existing.data) }
+  // 不存在，用 API 创建私有仓库
+  const created = await api(temp, '/user/repos', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: repo,
+      private: true,
+      description: '行测工作台私有数据仓库（请勿删除）',
+      auto_init: false,
+    }),
+  })
+  if (!created.ok) {
+    if (created.status === 403 || created.status === 422) {
+      return { ok: false, message: '自动建仓失败：令牌缺少 Administration 权限。请用「创建令牌」按钮重新生成（已预填该权限），或手动创建私有仓库后重试' }
+    }
+    return { ok: false, message: friendlyError(created.status, created.data) }
+  }
+  return { ok: true, message: '' }
 }
 
 /** 用令牌识别当前登录用户，免去手动填写 owner */
@@ -266,7 +302,7 @@ export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: bool
   return { ok: true, message: '连接成功（私有仓库，数据不会公开）', isPrivate }
 }
 
-/** 确保数据分支存在：不存在则从默认分支创建，避免数据写入触发 Pages 重新构建 */
+/** 确保数据分支存在：不存在则从默认分支创建；对全空仓库直接在 data 分支建首个提交 */
 export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean; message: string }> {
   const exists = await api(config, `/repos/${config.owner}/${config.repo}/branches/${encodeURIComponent(config.branch)}`)
   if (exists.ok) return { ok: true, message: '' }
@@ -274,6 +310,28 @@ export async function ensureBranch(config: GitHubConfig): Promise<{ ok: boolean;
   if (!repoInfo.ok) return { ok: false, message: friendlyError(repoInfo.status, repoInfo.data) }
   const defaultBranch = (repoInfo.data as { default_branch?: string })?.default_branch || 'main'
   const head = await api(config, `/repos/${config.owner}/${config.repo}/git/ref/heads/${encodeURIComponent(defaultBranch)}`)
+
+  // 全新空仓库：默认分支 ref 也不存在。直接在 data 分支创建一个初始化提交，
+  // 后续 writeSnapshotFile 会在此分支上创建/更新数据文件。
+  if (head.status === 404) {
+    const tree = await api(config, '/git/trees', {
+      method: 'POST',
+      body: JSON.stringify({ tree: [] }),
+    })
+    if (!tree.ok) return { ok: false, message: friendlyError(tree.status, tree.data) }
+    const commit = await api(config, '/git/commits', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'chore: init data branch', tree: (tree.data as { sha?: string })?.sha }),
+    })
+    if (!commit.ok) return { ok: false, message: friendlyError(commit.status, commit.data) }
+    const ref = await api(config, '/git/refs', {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: (commit.data as { sha?: string })?.sha }),
+    })
+    if (!ref.ok) return { ok: false, message: friendlyError(ref.status, ref.data) }
+    return { ok: true, message: '' }
+  }
+
   if (!head.ok) return { ok: false, message: friendlyError(head.status, head.data) }
   const sha = (head.data as { object?: { sha?: string } })?.object?.sha
   if (!sha) return { ok: false, message: '无法读取默认分支版本' }

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import {
-  clearGitHubConfig, ensureBranch, fetchAuthenticatedUser, githubPullAll, githubPushAll,
+  clearGitHubConfig, ensureBranch, ensurePrivateRepo, fetchAuthenticatedUser, githubPullAll, githubPushAll,
   githubSyncNow, GITHUB_DEFAULTS, isGitHubConfigured, readGitHubConfig, testGitHubConfig,
   writeGitHubConfig, type GitHubConfig, type SyncResult,
 } from './github'
@@ -88,6 +88,9 @@ async function connect(token: string, mode: 'merge' | 'push' = 'merge'): Promise
   if (!clean) return { ok: false, message: '请先粘贴访问令牌' }
   const user = await fetchAuthenticatedUser(clean)
   if (!user.ok) return { ok: false, message: user.message }
+  // 用 API 自动创建/复用私有数据仓库，无需访问 github.com 网页
+  const repo = await ensurePrivateRepo(clean, user.login, GITHUB_DEFAULTS.repo)
+  if (!repo.ok) return { ok: false, message: repo.message }
   const next: GitHubConfig = {
     owner: user.login,
     repo: GITHUB_DEFAULTS.repo,
