@@ -87,7 +87,7 @@ export async function ensurePrivateRepo(token: string, owner: string, repo: stri
   })
   if (!created.ok) {
     if (created.status === 403 || created.status === 422) {
-      return { ok: false, message: '自动建仓失败：令牌缺少 Administration 权限。请用「创建令牌」按钮重新生成（已预填该权限），或手动创建私有仓库后重试' }
+      return { ok: false, message: '自动建仓失败：令牌缺少 Administration 权限，请展开上方「如何获取令牌」重新生成（已预填该权限），或手动创建私有仓库后重试' }
     }
     return { ok: false, message: friendlyError(created.status, created.data) }
   }
@@ -285,7 +285,7 @@ export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: bool
   const result = await api(config, `/repos/${config.owner}/${config.repo}`)
   if (!result.ok) {
     if (result.status === 404) {
-      return { ok: false, message: `未找到私有仓库 ${config.owner}/${config.repo}，请先用上方「创建数据仓库」按钮创建（要选 Private）` }
+      return { ok: false, message: `未找到私有仓库 ${config.owner}/${config.repo}，请确认令牌的 Resource owner 与仓库访问范围是否正确后重试` }
     }
     return { ok: false, message: friendlyError(result.status, result.data) }
   }
@@ -293,11 +293,11 @@ export async function testGitHubConfig(config: GitHubConfig): Promise<{ ok: bool
   const isPrivate = Boolean(repo.private)
   // 强制私有：公开仓库中的错题与个人数据任何人可读，直接拒绝
   if (!isPrivate) {
-    return { ok: false, message: `仓库 ${config.owner}/${config.repo} 是公开仓库，数据会被任何人读取。请改用私有仓库（用上方「创建数据仓库」按钮）`, isPrivate }
+    return { ok: false, message: `仓库 ${config.owner}/${config.repo} 是公开仓库，数据会被任何人读取。请改用私有仓库`, isPrivate }
   }
   const perms = repo.permissions
   if (perms && perms.contents !== 'write' && perms.contents !== 'admin') {
-    return { ok: false, message: '令牌缺少 Contents 写入权限，请用上方按钮重新生成令牌并确认 Contents 为 Read and write', isPrivate }
+    return { ok: false, message: '令牌缺少 Contents 写入权限，请重新生成令牌并确认 Contents 为 Read and write', isPrivate }
   }
   return { ok: true, message: '连接成功（私有仓库，数据不会公开）', isPrivate }
 }

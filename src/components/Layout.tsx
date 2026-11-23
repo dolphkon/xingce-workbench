@@ -35,6 +35,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
   const [error, setError] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [advanced, setAdvanced] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [form, setForm] = useState<GitHubConfig>({
     owner: initial.owner || '',
     repo: initial.repo || GITHUB_DEFAULTS.repo,
@@ -48,7 +49,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
   const submit = async () => {
     const clean = token.trim()
     if (!clean) {
-      setError('请先粘贴访问令牌（第 2 步生成的 github_pat_...）')
+      setError('请先粘贴访问令牌（github_pat_...）')
       return
     }
     setBusy(true)
@@ -79,22 +80,11 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
       }
     >
       <p className="small muted" style={{ marginTop: 0 }}>
-        只需 2 步。<strong>私有仓库会自动创建</strong>（走 GitHub 接口，不用打开网页），只需一个令牌。之后手机和电脑粘贴同一个令牌即可看到同一份数据。
+        粘贴一个令牌即可。用户名识别、私有仓库创建、<code>data</code> 分支创建<strong>全自动完成，不用打开 GitHub 网页</strong>。之后手机和电脑粘贴同一个令牌即可看到同一份数据。
       </p>
 
       <div className="connect-step">
-        <div className="connect-step-head"><span className="connect-step-no">1</span><strong>创建访问令牌</strong></div>
-        <p className="small muted">
-          用<strong>手机浏览器</strong>或能打开 GitHub 的设备点开下方链接（你电脑网络打不开 github.com，所以别在电脑上点）。名称、有效期、权限已预填：确认 <b>Resource owner</b> 是你的账号、<b>Repository access</b> 选 <b>All repositories</b>，点 <b>Generate token</b> 后复制令牌。
-        </p>
-        <a className="btn btn-sm" href={tokenCreateUrl()} target="_blank" rel="noopener noreferrer">
-          <Icon name="github" size={14} /> 打开 GitHub 创建令牌（建议在手机）
-        </a>
-        <p className="small muted" style={{ marginBottom: 0 }}>已生成过令牌的话，跳过这步直接粘贴即可。</p>
-      </div>
-
-      <div className="connect-step">
-        <div className="connect-step-head"><span className="connect-step-no">2</span><strong>粘贴令牌并连接</strong></div>
+        <div className="connect-step-head"><span className="connect-step-no">1</span><strong>粘贴访问令牌</strong></div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
             className="input"
@@ -108,6 +98,26 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
         </div>
         <p className="small muted" style={{ marginBottom: 0 }}>用户名自动识别，私有仓库与 <code>data</code> 分支自动创建，无需手动建仓。</p>
       </div>
+
+      <button className="link-btn" onClick={() => setShowHelp((v) => !v)}>
+        {showHelp ? '收起「如何获取令牌」' : '还没有令牌？如何获取令牌'}
+      </button>
+      {showHelp && (
+        <div className="notice" style={{ fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
+          在你的账号下创建一个 Fine-grained token 即可，名称、有效期、权限都已预填好：
+          <a href={tokenCreateUrl()} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 4 }}>
+            <Icon name="github" size={13} /> 打开 GitHub 令牌创建页
+          </a>
+          <br />
+          1. 如果当前设备打不开 github.com，可在手机浏览器或任意能访问 GitHub 的设备/网络打开该链接；
+          <br />
+          2. 确认 <b>Resource owner</b> 是你的账号、<b>Repository access</b> 选 <b>All repositories</b>；
+          <br />
+          3. 点 <b>Generate token</b>，复制生成的 <code>github_pat_...</code>，粘贴到上方输入框。
+          <br />
+          已生成过令牌的话，直接粘贴即可，无需重复创建。
+        </div>
+      )}
 
       <div className="form-field">
         <label className="form-label">首次连接的数据处理</label>
