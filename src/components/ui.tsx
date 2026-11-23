@@ -33,6 +33,7 @@ const paths: Record<string, ReactNode> = {
   copy: <><rect x="8" y="8" width="13" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></>,
   pause: <><path d="M9 5v14M15 5v14" /></>,
   more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
+  github: <><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 19.2 5 4.8 4.8 0 0 0 19.1 1S17.9.6 15 2.5a13.4 13.4 0 0 0-7 0C6.1.6 4.9 1 4.9 1A4.8 4.8 0 0 0 4.8 5a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7A3.4 3.4 0 0 0 8.7 18V22" /></>,
 }
 
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
