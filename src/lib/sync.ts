@@ -1,4 +1,4 @@
-import { CLOUD_AVAILABLE, cloud, type SyncUser } from './cloud'
+import { CLOUD_AVAILABLE, getCloud, type SyncUser } from './cloud'
 import { addSyncHook, pauseSync, resumeSync } from './syncHook'
 import {
   applyLocal, buildSnapshot, collectLocal, emitSyncApplied, mergeStores,
@@ -30,6 +30,9 @@ export async function restoreAuth(): Promise<SyncUser | null> {
   const url = new URL(window.location.href)
   const hasCallback = url.searchParams.has('code') || url.searchParams.has('error')
   if (!CLOUD_AVAILABLE) return null
+  const cloudPromise = getCloud()
+  if (!cloudPromise) return null
+  const cloud = await cloudPromise
 
   if (hasCallback) {
     const provider = url.searchParams.get('provider')
@@ -57,6 +60,9 @@ export async function restoreAuth(): Promise<SyncUser | null> {
 export async function signInWithWechat(): Promise<string | null> {
   // OAuth 回调必须落在站点根：hash 路由会让 code/state 参数落进片段而读不到，
   // 因此这里只保留业务 query（如 sharecode），去掉 path 子级与 hash。
+  const cloudPromise = getCloud()
+  if (!cloudPromise) return '当前域名不支持云登录'
+  const cloud = await cloudPromise
   const back = new URL(window.location.origin + '/')
   const current = new URL(window.location.href)
   current.searchParams.forEach((value, key) => {
@@ -73,6 +79,9 @@ export async function signInWithWechat(): Promise<string | null> {
 }
 
 export async function signOut(): Promise<void> {
+  const cloudPromise = getCloud()
+  if (!cloudPromise) return
+  const cloud = await cloudPromise
   await cloud.auth.signOut()
 }
 
@@ -82,6 +91,9 @@ export async function signOut(): Promise<void> {
  */
 export async function syncNow(): Promise<{ ok: boolean; message: string; pushed: number; pulled: number }> {
   if (!CLOUD_AVAILABLE) return { ok: false, message: '当前域名不支持云同步', pushed: 0, pulled: 0 }
+  const cloudPromise = getCloud()
+  if (!cloudPromise) return { ok: false, message: '云同步初始化失败', pushed: 0, pulled: 0 }
+  const cloud = await cloudPromise
   const { data: session, error: sessionError } = await cloud.auth.getSession()
   if (sessionError || !session) return { ok: false, message: '请先登录', pushed: 0, pulled: 0 }
 
@@ -148,6 +160,9 @@ export function queuePush(store: string, id: string, payload: Record<string, unk
 async function flushPushes(): Promise<void> {
   pushTimer = null
   if (pendingPushes.size === 0) return
+  const cloudPromise = getCloud()
+  if (!cloudPromise) return
+  const cloud = await cloudPromise
   const { data: session } = await cloud.auth.getSession()
   if (!session) return
   const items = Array.from(pendingPushes.values())

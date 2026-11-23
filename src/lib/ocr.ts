@@ -1,20 +1,24 @@
-import { createWorker, type Worker } from 'tesseract.js'
+import type { Worker } from 'tesseract.js'
 
 let workerPromise: Promise<Worker> | null = null
 let progressHandler: ((progress: number) => void) | undefined
 
+// 按需加载 OCR 引擎：tesseract.js 体积较大，只在真正识别图片时才下载，
+// 避免拖慢首屏（错题库/知识库等页面的打开速度）。
 async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
-    workerPromise = createWorker('chi_sim', 1, {
-      logger: (message) => {
-        if (message.status === 'recognizing text' && progressHandler) {
-          progressHandler(Math.round((message.progress || 0) * 100))
-        }
-      },
-    }).catch((err) => {
-      workerPromise = null
-      throw err
-    })
+    workerPromise = import('tesseract.js')
+      .then(({ createWorker }) => createWorker('chi_sim', 1, {
+        logger: (message) => {
+          if (message.status === 'recognizing text' && progressHandler) {
+            progressHandler(Math.round((message.progress || 0) * 100))
+          }
+        },
+      }))
+      .catch((err) => {
+        workerPromise = null
+        throw err
+      })
   }
   return workerPromise
 }

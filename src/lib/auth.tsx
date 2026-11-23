@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { CLOUD_AVAILABLE, cloud } from './cloud'
+import { CLOUD_AVAILABLE, getCloud } from './cloud'
 import { restoreAuth, signInWithWechat, signOut as cloudSignOut, syncNow, SYNC_EVENT } from './sync'
 import type { SyncUser } from './cloud'
 
@@ -46,8 +46,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!CLOUD_AVAILABLE) return
+    const cloudPromise = getCloud()
+    if (!cloudPromise) return
     let active = true
-    void restoreAuth().then(async (restored) => {
+    let cleanup: (() => void) | undefined
+
+    void cloudPromise.then(async (cloud) => {
+      if (!active) return
+      const restored = await restoreAuth()
       if (!active) return
       setUser(restored)
       setReady(true)
@@ -62,30 +68,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSyncing(false)
         }
       }
-    })
 
-    const off = cloud.auth.onAuthStateChange((_event, session) => {
       if (!active) return
-      const id = session?.user?.id ?? null
-      setUser(id ? { id, name: session?.user?.name || '用户' } : null)
-    })
+      const off = cloud.auth.onAuthStateChange((_event, session) => {
+        if (!active) return
+        const id = session?.user?.id ?? null
+        setUser(id ? { id, name: session?.user?.name || '用户' } : null)
+      })
 
-    const timer = window.setInterval(() => {
-      void cloud.auth.getSession().then(({ data }) => { if (data) void sync() })
-    }, 30_000)
-
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
+      const timer = window.setInterval(() => {
         void cloud.auth.getSession().then(({ data }) => { if (data) void sync() })
+      }, 30_000)
+
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          void cloud.auth.getSession().then(({ data }) => { if (data) void sync() })
+        }
       }
-    }
-    document.addEventListener('visibilitychange', onVisible)
+      document.addEventListener('visibilitychange', onVisible)
+
+      cleanup = () => {
+        off()
+        window.clearInterval(timer)
+        document.removeEventListener('visibilitychange', onVisible)
+      }
+    }).catch(() => { if (active) setReady(true) })
 
     return () => {
       active = false
-      off()
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisible)
+      cleanup?.()
     }
   }, [sync])
 
