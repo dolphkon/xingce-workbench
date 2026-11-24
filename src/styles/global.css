@@ -122,6 +122,8 @@ a { color: inherit; text-decoration: none; }
   padding: 0 32px;
   position: sticky; top: 0; z-index: 10;
 }
+.topbar-nav-toggle { width: 32px; height: 32px; flex: 0 0 32px; display: inline-grid; place-items: center; margin-right: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.topbar-nav-toggle:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
 .topbar-title { font-weight: 600; font-size: 15px; }
 .topbar-right { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 12px; }
 .page { padding: 28px 32px 56px; max-width: 1440px; width: 100%; margin: 0 auto; }
@@ -356,6 +358,21 @@ a { color: inherit; text-decoration: none; }
 .kb-folder-ops button:last-child:hover { color: var(--danger); }
 .error-text { color: var(--danger); font-size: 12px; margin-top: 8px; }
 .kb-hint { font-size: 11px; color: var(--text-light); line-height: 1.5; padding: 12px 10px 4px; border-top: 1px solid var(--border); margin-top: 10px; }
+.kb-layout.kb-sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
+.kb-sidebar-hidden .kb-sidebar { display: none; }
+.kb-folder-ops { position: relative; }
+.kb-folder-ops.menu-open { opacity: 1; }
+.kb-folder-menu { position: absolute; right: 0; top: 24px; z-index: 40; display: flex; flex-direction: column; min-width: 132px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, .14); opacity: 1; }
+.kb-folder-menu button { width: 100%; display: flex; align-items: center; gap: 7px; padding: 7px 8px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.kb-folder-menu button:hover { background: var(--primary-light); color: var(--primary); }
+.kb-folder-menu button.danger:hover { background: var(--danger-bg); color: var(--danger); }
+.kb-tree-file-row { display: flex; align-items: center; gap: 5px; min-height: 26px; padding-right: 4px; color: var(--text-light); }
+.kb-tree-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: none; background: transparent; font-size: 12px; color: var(--text-muted); padding: 3px 4px; border-radius: 5px; cursor: pointer; }
+.kb-tree-file:hover { background: var(--primary-light); color: var(--primary); }
+.kb-tree-file-del { display: inline-grid; place-items: center; width: 20px; height: 20px; border: none; border-radius: 5px; background: transparent; color: var(--text-light); cursor: pointer; opacity: 0; }
+.kb-tree-file-row:hover .kb-tree-file-del { opacity: 1; }
+.kb-tree-file-del:hover { background: var(--danger-bg); color: var(--danger); }
+@media (max-width: 900px) { .kb-tree-file-del { opacity: 1; } }
 .kb-main { min-width: 0; }
 .kb-file-icon { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 9px; margin-top: 2px; }
 .kb-file-pdf { background: var(--danger-bg); color: var(--danger); }
@@ -383,6 +400,33 @@ a { color: inherit; text-decoration: none; }
 .kb-fullscreen-doc code { background: #34363b; color: #f0f1f3; }
 .kb-fullscreen-doc hr { border-color: #45484e; }
 .kb-fullscreen-doc a { color: #9db4ff; }
+
+/* 沉浸式全屏写作：居中纸张 + 悬浮工具栏 + 块类型菜单 */
+.kb-immersive { position: fixed; inset: 0; z-index: 1100; display: flex; flex-direction: column; background: var(--surface-muted); }
+.kb-immersive-bar { flex: 0 0 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.kb-immersive-back, .kb-immersive-save { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.kb-immersive-back:hover { color: var(--primary); border-color: var(--primary); }
+.kb-immersive-save { background: var(--primary); border-color: var(--primary); color: #fff; }
+.kb-immersive-close { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.kb-immersive-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; padding: 48px 20px 180px; }
+.kb-immersive-paper { width: min(880px, 100%); min-height: 100%; background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 50px rgba(15, 23, 42, .08); padding: 72px 84px; display: flex; flex-direction: column; }
+.kb-immersive-title { width: 100%; border: none; outline: none; background: transparent; font-size: 38px; font-weight: 700; letter-spacing: -1px; color: #1e293b; padding: 0 0 24px; }
+.kb-immersive-title::placeholder { color: #cbd5e1; }
+.kb-immersive-text { flex: 1; min-height: 60vh; width: 100%; border: none; outline: none; resize: none; background: transparent; font-size: 17px; line-height: 2; color: #334155; font-family: inherit; padding: 0; }
+.kb-immersive-text::placeholder { color: #cbd5e1; }
+.kb-immersive-dock { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.kb-immersive-toolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
+.kb-immersive-toolbar button { min-width: 32px; height: 30px; padding: 0 8px; border: none; border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.kb-immersive-toolbar button:hover, .kb-immersive-toolbar button.active { background: var(--primary-light); color: var(--primary); }
+.kb-immersive-sep { width: 1px; height: 20px; margin: 0 4px; background: var(--border); }
+.kb-immersive-blockmenu { width: 220px; max-height: 360px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); display: flex; flex-direction: column; }
+.kb-immersive-blockmenu button { text-align: left; padding: 7px 10px; border: none; border-radius: 7px; background: transparent; color: var(--text); font-size: 12px; cursor: pointer; }
+.kb-immersive-blockmenu button:hover { background: var(--primary-light); color: var(--primary); }
+@media (max-width: 900px) {
+  .kb-immersive-paper { padding: 32px 22px; }
+  .kb-immersive-title { font-size: 28px; }
+  .kb-immersive-toolbar { max-width: calc(100vw - 24px); overflow-x: auto; }
+}
 
 /* 编辑器：工具栏 + 单栏 */
 .editor-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); overflow: hidden; }
@@ -678,4 +722,30 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
   .timer-ring-wrap { width: 200px; height: 200px; }
   .timer-clock { font-size: 38px; }
   .daily-chart { height: 150px; }
+}
+
+/* ---------- 可收起的全局左侧导航 ---------- */
+.app-shell.sidebar-collapsed .sidebar { width: 0; flex-basis: 0; overflow: hidden; border-right: 0; }
+.sidebar-edge {
+  position: fixed; left: 0; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 54px; z-index: 30;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-left: 0;
+  border-radius: 0 8px 8px 0;
+  background: var(--surface); color: var(--primary); cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.sidebar-edge:hover { background: var(--primary-light); }
+@media (max-width: 900px) {
+  .app-shell:not(.sidebar-collapsed) .sidebar {
+    position: fixed; left: 0; top: 0; width: 236px; flex-basis: 236px;
+    box-shadow: 12px 0 32px rgba(15, 23, 42, .14);
+  }
+  .app-shell:not(.sidebar-collapsed) .sidebar-logo-text,
+  .app-shell:not(.sidebar-collapsed) .nav-label,
+  .app-shell:not(.sidebar-collapsed) .nav-item span,
+  .app-shell:not(.sidebar-collapsed) .sidebar-footer p,
+  .app-shell:not(.sidebar-collapsed) .sidebar-footer .sync-panel { display: initial; }
+  .app-shell:not(.sidebar-collapsed) .sidebar-logo-text { display: block; }
+  .app-shell:not(.sidebar-collapsed) .nav-item { justify-content: flex-start; padding: 10px 12px; }
 }

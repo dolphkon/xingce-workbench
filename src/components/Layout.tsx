@@ -291,10 +291,35 @@ function GlobalGithubConfigModal() {
   )
 }
 
+const SIDEBAR_KEY = 'xingce-sidebar-collapsed'
+
 export default function Layout() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(SIDEBAR_KEY)
+      if (saved !== null) return saved === '1'
+    } catch {
+      // 存储不可用时按屏幕宽度决定
+    }
+    return window.innerWidth <= 900
+  })
+
+  const toggleSidebar = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      try { window.localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
+      return next
+    })
+  }
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${collapsed ? ' sidebar-collapsed' : ''}`}>
       <GlobalGithubConfigModal />
+      {collapsed && (
+        <button className="sidebar-edge" onClick={toggleSidebar} title="展开左侧导航">
+          <Icon name="chevron" size={14} />
+        </button>
+      )}
       <aside className="sidebar">
         <div className="sidebar-logo">
           <span className="logo-mark">行</span>
@@ -325,7 +350,11 @@ export default function Layout() {
       </aside>
       <div className="main">
         <header className="topbar">
+          <button className="topbar-nav-toggle" onClick={toggleSidebar} title={collapsed ? '展开左侧导航' : '收起左侧导航'}>
+            <Icon name={collapsed ? 'chevron' : 'back'} size={17} />
+          </button>
           <span className="topbar-title">行测备考 · 一体化工作台</span>
+          <span className="spacer" />
           <div className="topbar-right">
             <TopbarSync />
             <Icon name="clock" size={14} />

@@ -34,6 +34,19 @@ const TOOLS: Tool[] = [
   { label: '—', title: '分割线', wrap: ['\n---\n', ''], block: true },
 ]
 
+const BLOCK_TOOLS: Tool[] = [
+  { label: 'H1', title: '一级标题', wrap: ['# ', ''], block: true },
+  { label: 'H2', title: '二级标题', wrap: ['## ', ''], block: true },
+  { label: 'H3', title: '三级标题', wrap: ['### ', ''], block: true },
+  { label: 'H4', title: '四级标题', wrap: ['#### ', ''], block: true },
+  { label: 'H5', title: '五级标题', wrap: ['##### ', ''], block: true },
+  { label: 'H6', title: '六级标题', wrap: ['###### ', ''], block: true },
+  { label: '• 列表', title: '无序列表', wrap: ['- ', ''], block: true },
+  { label: '1. 列表', title: '有序列表', wrap: ['1. ', ''], block: true },
+  { label: '❝', title: '引用', wrap: ['> ', ''], block: true },
+  { label: '</>', title: '代码块', wrap: ['```\n', '\n```'], block: true },
+]
+
 export default function DocEditor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -72,12 +85,15 @@ export default function DocEditor() {
   // 从列表点击文档进入时 read=1：首帧即全屏阅读，退出后返回列表
   const [fullView, setFullView] = useState(() => readMode)
   const [leaveOnClose, setLeaveOnClose] = useState(() => readMode)
+  const [immersive, setImmersive] = useState(false)
+  const [blockMenuOpen, setBlockMenuOpen] = useState(false)
   const [showTencent, setShowTencent] = useState(false)
   const [tencentInput, setTencentInput] = useState('')
   const [tencentError, setTencentError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [tagsInput, setTagsInput] = useState(() => (id ? readCachedById('docs', id)?.tags.join(', ') ?? '' : ''))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const immersiveRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (isNew || !id) { setLoaded(true); return }
@@ -126,6 +142,7 @@ export default function DocEditor() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && immersive) { setImmersive(false); setBlockMenuOpen(false); return }
       if (event.key === 'Escape' && fullView) {
         if (leaveOnClose) navigate('/knowledge')
         else setFullView(false)
@@ -138,15 +155,15 @@ export default function DocEditor() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [editing, saveNow, fullView, leaveOnClose, navigate])
+  }, [editing, saveNow, fullView, leaveOnClose, navigate, immersive])
 
-  // 全屏阅读时锁定页面滚动
+  // 全屏阅读 / 沉浸写作时锁定页面滚动
   useEffect(() => {
-    if (!fullView) return
+    if (!fullView && !immersive) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
-  }, [fullView])
+  }, [fullView, immersive])
 
   const copyForTencent = async () => {
     const text = doc.kind === 'file' ? (doc.title || doc.fileName || '') : `${doc.title}\n\n${doc.content}`
@@ -176,8 +193,8 @@ export default function DocEditor() {
 
   const update = (patch: Partial<KnowledgeDoc>) => setDoc((prev) => ({ ...prev, ...patch }))
 
-  const applyTool = (tool: Tool) => {
-    const el = textareaRef.current
+  const applyTool = (tool: Tool, target?: HTMLTextAreaElement | null) => {
+    const el = target ?? textareaRef.current
     if (!el) return
     const start = el.selectionStart
     const end = el.selectionEnd
@@ -186,8 +203,17 @@ export default function DocEditor() {
     let inserted: string
     if (tool.block) {
       const lineStart = doc.content.lastIndexOf('\n', start - 1) + 1
-      inserted = before + (selected || '文字') + after
-      const next = doc.content.slice(0, lineStart) + inserted + doc.content.slice(end)
+      const lineEndIndex = doc.content.indexOf('\n', start)
+      const lineEnd = lineEndIndex < 0 ? doc.content.length : lineEndIndex
+      const line = doc.content.slice(lineStart, lineEnd)
+      const raw = selected || line || '文字'
+      const plain = raw.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, '')
+      inserted = before === '\n---\n'
+        ? `\n---\n${plain}`
+        : before === '```\n'
+          ? `\`\`\`\n${plain || '代码'}\n\`\`\``
+          : `${before}${plain}${after}`
+      const next = doc.content.slice(0, lineStart) + inserted + doc.content.slice(lineEnd)
       update({ content: next })
       requestAnimationFrame(() => { el.focus(); el.setSelectionRange(lineStart + inserted.length, lineStart + inserted.length) })
     } else {
@@ -196,6 +222,21 @@ export default function DocEditor() {
       update({ content: next })
       requestAnimationFrame(() => { el.focus(); el.setSelectionRange(start + before.length, start + before.length + (selected || '文字').length) })
     }
+  }
+
+  const applyPlainBlock = () => {
+    const el = immersiveRef.current
+    if (!el) return
+    const start = el.selectionStart
+    const lineStart = doc.content.lastIndexOf('\n', start - 1) + 1
+    const lineEndIndex = doc.content.indexOf('\n', start)
+    const lineEnd = lineEndIndex < 0 ? doc.content.length : lineEndIndex
+    const line = doc.content.slice(lineStart, lineEnd)
+    const plain = line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, '')
+    const next = doc.content.slice(0, lineStart) + plain + doc.content.slice(lineEnd)
+    update({ content: next })
+    setBlockMenuOpen(false)
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(lineStart + plain.length, lineStart + plain.length) })
   }
 
   const handleDelete = async () => {
@@ -226,6 +267,11 @@ export default function DocEditor() {
           )}
           {!isFileDoc && !editing && (
             <button className="btn" onClick={() => { setEditing(true); setTab('edit') }}><Icon name="edit" size={16} /> 编辑</button>
+          )}
+          {!isFileDoc && (
+            <button className="btn btn-primary" onClick={() => { setEditing(true); setBlockMenuOpen(false); setImmersive(true) }} title="沉浸式全屏书写">
+              <Icon name="expand" size={16} /> 沉浸写作
+            </button>
           )}
           {isFileDoc && (
             <button className="btn" onClick={() => setFullView(true)}><Icon name="expand" size={16} /> 全屏阅读</button>
@@ -385,6 +431,44 @@ export default function DocEditor() {
           </div>
           {tencentError && <p className="error-text" style={{ marginBottom: 0 }}>{tencentError}</p>}
         </Modal>
+      )}
+
+      {immersive && (
+        <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="沉浸式写作">
+          <div className="kb-immersive-bar">
+            <button className="kb-immersive-back" onClick={() => { void saveNow(); setImmersive(false) }}><Icon name="back" size={16} /> 返回知识库</button>
+            <span className="small light">{saving ? '保存中…' : '自动保存 · Ctrl/⌘ + S 保存'}</span>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="kb-immersive-save" onClick={() => { void saveNow(); setImmersive(false) }}><Icon name="save" size={15} /> 保存并退出</button>
+              <button className="kb-immersive-close" onClick={() => { void saveNow(); setImmersive(false) }} title="关闭（Esc）"><Icon name="x" size={18} /></button>
+            </div>
+          </div>
+          <div className="kb-immersive-body">
+            <div className="kb-immersive-paper">
+              <input className="kb-immersive-title" value={doc.title}
+                onChange={(e) => update({ title: e.target.value })} placeholder="请输入标题" spellCheck={false} />
+              <textarea ref={immersiveRef} className="kb-immersive-text" value={doc.content}
+                onChange={(e) => update({ content: e.target.value })} placeholder="开始书写…" spellCheck={false} />
+            </div>
+            <div className="kb-immersive-dock">
+              <div className="kb-immersive-toolbar">
+                {TOOLS.slice(0, 10).map((tool) => (
+                  <button key={tool.label} title={tool.title} onClick={() => applyTool(tool, immersiveRef.current)}>{tool.label}</button>
+                ))}
+                <span className="kb-immersive-sep" />
+                <button className={blockMenuOpen ? 'active' : ''} title="块类型" onClick={() => setBlockMenuOpen((v) => !v)}>块类型</button>
+              </div>
+              {blockMenuOpen && (
+                <div className="kb-immersive-blockmenu" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={applyPlainBlock}>正文</button>
+                  {BLOCK_TOOLS.map((tool) => (
+                    <button key={tool.label} onClick={() => { applyTool(tool, immersiveRef.current); setBlockMenuOpen(false) }}>{tool.title}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {fullView && (
