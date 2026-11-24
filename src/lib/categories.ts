@@ -4,21 +4,53 @@
  */
 import { listAll, put, remove, readCachedAll } from './db'
 import { DEFAULT_CATEGORIES, type Mistake, type MotherQuestion, type QuestionCategory } from '../types'
-import { uid } from './utils'
 
-/** 同步读取（首帧渲染用）；为空时不在此写入，由 ensureCategories 异步种子化 */
-export function readCategories(): QuestionCategory[] {
-  return readCachedAll('categories').sort((a, b) => a.createdAt - b.createdAt)
+/**
+ * 同名模块去重：早期并发种子化 / 跨设备同步可能产生多条同名分类。
+ * 保留最早创建的记录，合并其题型与考点，其余记录由 ensureCategories 清理。
+ */
+function normalizeCategories(list: QuestionCategory[]): { items: QuestionCategory[]; duplicates: string[] } {
+  const sorted = [...list].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+  const byName = new Map<string, QuestionCategory>()
+  const duplicates: string[] = []
+  sorted.forEach((item) => {
+    const name = item.name.trim()
+    const key = name || item.id
+    const kept = byName.get(key)
+    if (!kept) {
+      byName.set(key, { ...item, name, types: [...item.types], points: [...item.points] })
+      return
+    }
+    duplicates.push(item.id)
+    kept.types = Array.from(new Set([...kept.types, ...item.types]))
+    kept.points = Array.from(new Set([...kept.points, ...item.points]))
+    kept.updatedAt = Math.max(kept.updatedAt, item.updatedAt)
+  })
+  return { items: Array.from(byName.values()), duplicates }
 }
 
-/** 首次访问时写入默认模块。仅当本地缓存和数据库都没有分类时执行。 */
+/** 同步读取（首帧渲染用）；同名记录即时去重，不在此写库 */
+export function readCategories(): QuestionCategory[] {
+  return normalizeCategories(readCachedAll('categories')).items.sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** 种子模块使用固定 id，避免多标签页 / 多设备同时初始化时产生重复记录 */
+let seeding: Promise<QuestionCategory[]> | null = null
+
+/** 首次访问时写入默认模块；同时清理历史同名重复记录 */
 export async function ensureCategories(): Promise<QuestionCategory[]> {
+  if (seeding) return seeding
+  seeding = doEnsureCategories().finally(() => { seeding = null })
+  return seeding
+}
+
+async function doEnsureCategories(): Promise<QuestionCategory[]> {
   const cached = readCachedAll('categories')
-  const all = cached.length ? cached : await listAll('categories')
-  if (all.length === 0) {
+  let current = cached.length ? cached : await listAll('categories')
+  if (current.length === 0) {
     const now = Date.now()
     const seeds: QuestionCategory[] = DEFAULT_CATEGORIES.map((item, index) => ({
-      id: uid(),
+      id: `seed-category-${index + 1}`,
       name: item.name,
       types: [...item.types],
       points: [...item.points],
@@ -26,9 +58,15 @@ export async function ensureCategories(): Promise<QuestionCategory[]> {
       updatedAt: now + index,
     }))
     await Promise.all(seeds.map((item) => put('categories', item)))
-    return seeds.sort((a, b) => a.createdAt - b.createdAt)
+    current = seeds
   }
-  return cached.length ? cached.sort((a, b) => a.createdAt - b.createdAt) : all.sort((a, b) => a.createdAt - b.createdAt)
+  const { items, duplicates } = normalizeCategories(current)
+  if (duplicates.length > 0) {
+    // 先把合并后的记录写回，再删除多余记录，避免清理过程中数据缺失
+    await Promise.all(items.map((item) => put('categories', item)))
+    await Promise.all(duplicates.map((id) => remove('categories', id)))
+  }
+  return items.sort((a, b) => a.createdAt - b.createdAt)
 }
 
 export async function saveCategory(category: QuestionCategory): Promise<void> {

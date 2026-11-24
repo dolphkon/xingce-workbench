@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
-import { deleteCategory, saveCategory } from '../../lib/categories'
-import { readCachedAll } from '../../lib/db'
+import { deleteCategory, readCategories, saveCategory } from '../../lib/categories'
 import { SYNC_EVENT } from '../../lib/sync'
 import { uid } from '../../lib/utils'
 import type { QuestionCategory } from '../../types'
@@ -22,12 +21,12 @@ function toDraft(c: QuestionCategory, open = false): Draft {
 
 /** 管理模块 / 题型 / 考点的增删。改动即时保存并随同步链路跨设备生效。 */
 export default function CategoryManager({ onClose }: Props) {
-  const [drafts, setDrafts] = useState<Draft[]>(() => readCachedAll('categories').sort((a, b) => a.createdAt - b.createdAt).map((c) => toDraft(c)))
+  const [drafts, setDrafts] = useState<Draft[]>(() => readCategories().map((c) => toDraft(c)))
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    const onSync = () => setDrafts(readCachedAll('categories').sort((a, b) => a.createdAt - b.createdAt).map((c) => toDraft(c)))
+    const onSync = () => setDrafts(readCategories().map((c) => toDraft(c)))
     window.addEventListener(SYNC_EVENT, onSync)
     return () => window.removeEventListener(SYNC_EVENT, onSync)
   }, [])

@@ -27,7 +27,7 @@ export default function MistakesPage() {
   const moduleTabs = useMemo(() => {
     const present = new Set(items.map((i) => i.type))
     const order: string[] = []
-    categories.forEach((c) => { if (present.has(c.name)) order.push(c.name) })
+    categories.forEach((c) => { if (present.has(c.name) && !order.includes(c.name)) order.push(c.name) })
     present.forEach((name) => { if (!order.includes(name)) order.push(name) })
     return order
   }, [items, categories])
