@@ -17,7 +17,7 @@ import {
   type TreeFolder,
 } from '../../lib/folders'
 import { formatDate, uid } from '../../lib/utils'
-import { docFileKind, formatBytes, loadDocFile, makeBlankOfficeFile } from '../../lib/docFile'
+import { docFileKind, formatBytes, makeBlankOfficeFile } from '../../lib/docFile'
 import type { KnowledgeDoc, KnowledgeFolder } from '../../types'
 
 function excerpt(content: string): string {
@@ -39,10 +39,6 @@ export default function KnowledgePage() {
   const [renamingDoc, setRenamingDoc] = useState<KnowledgeDoc | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [moveTarget, setMoveTarget] = useState<string>(UNCATEGORIZED_ID)
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [showUpload, setShowUpload] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
   const [folderDialog, setFolderDialog] = useState<{ mode: 'create' | 'rename'; folder?: KnowledgeFolder; parentId?: string | null } | null>(null)
   const [folderNameInput, setFolderNameInput] = useState('')
   const [folderError, setFolderError] = useState<string | null>(null)
@@ -56,12 +52,11 @@ export default function KnowledgePage() {
     }
   })
   const [showNewFile, setShowNewFile] = useState(false)
-  const [newFileType, setNewFileType] = useState<'md' | 'word' | 'excel'>('md')
+  const [newFileType, setNewFileType] = useState<'word' | 'excel'>('word')
   const [newFileName, setNewFileName] = useState('')
   const [newFileParent, setNewFileParent] = useState<string | null>(null)
   const [newFileError, setNewFileError] = useState<string | null>(null)
   const [folderMenu, setFolderMenu] = useState<string | null>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
   const initExpanded = useRef(false)
   const migrating = useRef(false)
 
@@ -175,18 +170,13 @@ export default function KnowledgePage() {
       ? (isFolderSelected ? selected : null)
       : normalizeParentId(parentId)
     setNewFileParent(target)
-    setNewFileType('md')
+    setNewFileType('word')
     setNewFileName('')
     setNewFileError(null)
     setShowNewFile(true)
   }
 
   const handleCreateFile = async () => {
-    if (newFileType === 'md') {
-      setShowNewFile(false)
-      openNewNote(newFileParent ?? undefined)
-      return
-    }
     setNewFileError(null)
     try {
       const title = newFileName.trim()
@@ -253,53 +243,6 @@ export default function KnowledgePage() {
     setFolderDeleting(null)
     refreshFolders()
     refresh()
-  }
-
-  const handleUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return
-    setUploading(true)
-    setUploadError(null)
-    try {
-      let targetId: string | undefined = isFolderSelected ? selected : undefined
-      let targetName = isFolderSelected ? folderById.get(selected)?.name ?? '' : ''
-      // 输入新名称时，在当前目录下新建子文件夹并上传进去
-      const typed = newFolderName.trim()
-      if (typed) {
-        const parent = targetId ?? null
-        const existing = folders.find((f) => f.name === typed && normalizeParentId(f.parentId) === parent)
-        const created = existing ?? await createFolder(typed, parent)
-        targetId = created.id
-        targetName = created.name
-        if (created.parentId) setExpanded((prev) => new Set([...prev, created.parentId!]))
-        refreshFolders()
-      }
-      const loaded = await Promise.all(Array.from(files).map((file) => loadDocFile(file)))
-      const now = Date.now()
-      const createdDocs: KnowledgeDoc[] = loaded.map((item, i) => ({
-        id: uid(),
-        title: item.title,
-        content: item.content,
-        folderId: targetId,
-        category: targetName,
-        tags: [],
-        createdAt: now + i,
-        updatedAt: now + i,
-        kind: item.kind,
-        fileName: item.fileName,
-        fileType: item.fileType,
-        fileData: item.fileData,
-      }))
-      await Promise.all(createdDocs.map((doc) => put('docs', doc)))
-      if (targetId) setSelected(targetId)
-      refresh()
-      setShowUpload(false)
-      setNewFolderName('')
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : '上传失败')
-    } finally {
-      setUploading(false)
-      if (fileInput.current) fileInput.current.value = ''
-    }
   }
 
   const handleRenameDoc = async () => {
@@ -386,21 +329,19 @@ export default function KnowledgePage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">知识库</h1>
-          <p className="page-subtitle">按文件夹整理资料，上传 PDF/图片在线阅读，或用 Markdown 沉淀笔记</p>
+          <p className="page-subtitle">按文件夹整理资料，新建文档即可沉浸式书写，输入「/」快速插入各类内容块</p>
         </div>
         <div className="header-actions">
           <button className="btn" onClick={toggleKbSidebar} title={sidebarOpen ? '收起文件管理栏' : '展开文件管理栏'}>
             <Icon name={sidebarOpen ? 'back' : 'chevron'} size={16} /> {sidebarOpen ? '收起文件栏' : '展开文件栏'}
           </button>
           <button className="btn" onClick={() => openCreateFolder(isFolderSelected ? selected : null)}><Icon name="plus" size={16} /> 新建文件夹</button>
-          <button className="btn" onClick={() => openNewFile()}><Icon name="filetext" size={16} /> 新建文件</button>
-          <button className="btn" onClick={() => { setUploadError(null); setShowUpload(true) }}><Icon name="upload" size={16} /> 上传文档</button>
-          <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={16} /> 新建笔记</button>
+          <button className="btn" onClick={() => openNewFile()}><Icon name="file" size={16} /> 新建文件</button>
+          <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={16} /> 新建文档</button>
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-      {uploadError && <div className="error-banner">{uploadError}</div>}
 
       <div className={`kb-layout${sidebarOpen ? '' : ' kb-sidebar-hidden'}`}>
         <aside className="kb-sidebar">
@@ -417,7 +358,7 @@ export default function KnowledgePage() {
               <Icon name="folder" size={15} /> <span>未分类</span><span className="kb-count">{uncategorizedCount}</span>
             </button>
             <span className="kb-folder-ops">
-              <button title="在未分类中新建笔记" onClick={() => openNewNote()}><Icon name="file" size={13} /></button>
+              <button title="在未分类中新建文档" onClick={() => openNewNote()}><Icon name="file" size={13} /></button>
               <button title="新建根目录文件夹" onClick={() => openCreateFolder(null)}><Icon name="plus" size={13} /></button>
             </span>
           </div>
@@ -443,12 +384,9 @@ export default function KnowledgePage() {
                 <EmptyState
                   icon="folder"
                   title={docs.length === 0 ? '知识库还是空的' : '这个文件夹还没有文档'}
-                  description={docs.length === 0 ? '上传 PDF/图片资料，或新建一篇 Markdown 笔记' : '可上传文档到这里，或在文档详情中移动到当前文件夹'}
+                  description={docs.length === 0 ? '新建一篇文档，用「/」命令快速组织你的笔记' : '可在这里新建文档，或在文档详情中移动到当前文件夹'}
                   action={
-                    <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                      <button className="btn" onClick={() => setShowUpload(true)}><Icon name="upload" size={15} /> 上传文档</button>
-                      <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={15} /> 新建笔记</button>
-                    </div>
+                    <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={15} /> 新建文档</button>
                   }
                 />
               ) : (
@@ -500,30 +438,6 @@ export default function KnowledgePage() {
         </div>
       </div>
 
-      {showUpload && (
-        <Modal title="上传文档到知识库" onClose={() => setShowUpload(false)}
-          footer={<button className="btn" onClick={() => setShowUpload(false)}>取消</button>}>
-          <p className="small muted" style={{ marginTop: 0 }}>
-            当前目录：<strong>{currentLabel}</strong>。支持 PDF、Word、图片、TXT、Markdown 等；文本类可直接编辑，其余可在线阅读与下载。
-          </p>
-          <div className="form-field">
-            <label className="form-label">新子文件夹（可选，输入后自动创建并把文件上传进去）</label>
-            <input className="input" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="留空则上传到当前目录" />
-          </div>
-          <label className="upload-zone">
-            <Icon name="upload" size={24} />
-            <div style={{ marginTop: 8 }}>{uploading ? '正在读取文件…' : '点击选择文件，可多选'}</div>
-            <span className="form-hint">文档内容保存在本机浏览器，可随 GitHub 同步</span>
-            <input ref={fileInput} type="file" multiple
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp"
-              onChange={(e) => void handleUpload(e.target.files)} />
-          </label>
-          {newFolderName.trim() && (
-            <p className="small muted" style={{ marginBottom: 0 }}>将上传到「{currentLabel} / {newFolderName.trim()}」</p>
-          )}
-        </Modal>
-      )}
-
       {showNewFile && (
         <Modal title="新建文件" onClose={() => setShowNewFile(false)}
           footer={<>
@@ -536,23 +450,19 @@ export default function KnowledgePage() {
           <div className="form-field">
             <label className="form-label">文件类型</label>
             <div className="segmented">
-              {([['md', 'Markdown 笔记'], ['word', 'Word 文档'], ['excel', 'Excel 表格']] as const).map(([value, label]) => (
+              {([['word', 'Word 文档'], ['excel', 'Excel 表格']] as const).map(([value, label]) => (
                 <button key={value} className={newFileType === value ? 'active' : ''} onClick={() => setNewFileType(value)}>{label}</button>
               ))}
             </div>
           </div>
-          {newFileType === 'md' ? (
-            <p className="small muted" style={{ marginBottom: 0 }}>将打开沉浸式 Markdown 编辑器，标题和内容可随时保存。</p>
-          ) : (
-            <div className="form-field" style={{ marginBottom: 0 }}>
-              <label className="form-label">文件名（无需输入扩展名）</label>
-              <input className="input" value={newFileName} autoFocus
-                onChange={(e) => { setNewFileName(e.target.value); setNewFileError(null) }}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateFile() }}
-                placeholder={newFileType === 'word' ? '如：申论范文' : '如：错题统计'} />
-              <span className="form-hint">将生成可用 Word / Excel 打开的空白文件，下载后即可编辑。</span>
-            </div>
-          )}
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label className="form-label">文件名（无需输入扩展名）</label>
+            <input className="input" value={newFileName} autoFocus
+              onChange={(e) => { setNewFileName(e.target.value); setNewFileError(null) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateFile() }}
+              placeholder={newFileType === 'word' ? '如：申论范文' : '如：错题统计'} />
+            <span className="form-hint">将生成可用 Word / Excel 打开的空白文件，下载后即可编辑。</span>
+          </div>
           {newFileError && <p className="error-text" style={{ marginBottom: 0 }}>{newFileError}</p>}
         </Modal>
       )}
