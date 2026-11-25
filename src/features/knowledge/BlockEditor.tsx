@@ -6,6 +6,7 @@ import { uid } from '../../lib/utils'
 import { Icon } from '../../components/ui'
 
 type SlashState = { blockId: string; query: string; left: number; top: number }
+type MentionState = { blockId: string; query: string; left: number; top: number }
 type ToolbarState = { blockId: string; left: number; top: number }
 type SlashItem = { id: string; name: string; icon: string; hint: string; type: BlockType }
 
@@ -46,7 +47,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { id: 'image', name: '插入图片', icon: '▣', hint: 'image 图片', type: 'image' },
   { id: 'link', name: '超链接', icon: '↗', hint: 'link 链接', type: 'link' },
   { id: 'docref', name: '引用文档', icon: '▤', hint: 'doc 文档 引用', type: 'docref' },
-  { id: 'attachment', name: '添加附件', icon: '📎', hint: 'attachment 附件 文件 上传', type: 'attachment' },
+  { id: 'attachment', name: '插入附件', icon: '📎', hint: 'attachment 附件 文件 上传', type: 'attachment' },
 ]
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'html', 'css', 'json', 'bash', 'java', 'go', 'sql']
@@ -76,6 +77,19 @@ function textBeforeCaret(el: HTMLElement): string {
   range.selectNodeContents(el)
   range.setEnd(caret.startContainer, caret.startOffset)
   return range.toString()
+}
+
+/** 在元素内按「纯文本字符偏移」定位到具体 text node，供 Range 删除 @query 使用 */
+function findTextPosition(root: HTMLElement, offset: number): { node: Node; offset: number } | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node: Node | null = null
+  while ((node = walker.nextNode())) {
+    const len = (node.textContent ?? '').length
+    if (remaining <= len) return { node, offset: remaining }
+    remaining -= len
+  }
+  return null
 }
 
 function caretRect(): { left: number; bottom: number } {
@@ -128,6 +142,13 @@ interface BlockItemProps {
   onDragOver: (id: string) => void
   onDrop: (fromId: string, toId: string) => void
   onNavigateDoc: (id: string) => void
+  /** 斜杠插入附件后自动展开上传面板 */
+  autoOpenAttach: boolean
+  /** 附件块未添加任何文件即取消时，交回父级转为空文本块（清除残留的 /） */
+  onCancelEmptyAttach: () => void
+  /** @ 提及菜单状态 */
+  onMention: (state: MentionState | null) => void
+  mentionActive: boolean
   updateCell: (row: number, col: number, value: string) => void
   addRow: () => void
   addCol: () => void
@@ -135,7 +156,8 @@ interface BlockItemProps {
 
 function BlockItem({
   block, total, docs, fileDocs, slashActive, dragOver, onUpdate, onDelete, onInsertAfter, onEnter,
-  onSlash, onDragStart, onDragEnd, onDragOver, onDrop, onNavigateDoc, updateCell, addRow, addCol,
+  onSlash, onDragStart, onDragEnd, onDragOver, onDrop, onNavigateDoc,
+  autoOpenAttach, onCancelEmptyAttach, onMention, mentionActive, updateCell, addRow, addCol,
 }: BlockItemProps) {
   const ref = useRef<HTMLDivElement>(null)
   const lastHtml = useRef(block.html)
@@ -147,10 +169,17 @@ function BlockItem({
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attachMenu, setAttachMenu] = useState<{ id: string; left: number; top: number } | null>(null)
 
+  const closeAttachPanel = () => {
+    setAttachOpen(false)
+    // 未添加任何文件即取消 → 交回父级转为空文本块，连同触发的「/」一起清除
+    if ((block.attachments ?? []).length === 0) onCancelEmptyAttach()
+  }
+
   const addAttachments = (items: DocAttachment[]) => {
     if (!items.length) return
-    onUpdate({ attachments: [...(block.attachments ?? []), ...items], text: `${block.text || '附件'} · ${items.length} 个文件` })
+    onUpdate({ attachments: [...(block.attachments ?? []), ...items], text: '', html: '' })
     setAttachError(null)
+    setAttachOpen(false)
   }
 
   const readFiles = (files: FileList | null) => {
@@ -197,15 +226,25 @@ function BlockItem({
     return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', onKey) }
   }, [attachMenu])
 
+  // 斜杠插入附件后自动展开面板（面板就出现在原「/」位置）
+  useEffect(() => {
+    if (autoOpenAttach && block.type === 'attachment') {
+      setAttachTab('upload')
+      setAttachError(null)
+      setAttachOpen(true)
+    }
+  }, [autoOpenAttach, block.type])
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    if (!mounted.current || block.html !== lastHtml.current) {
+    // 类型切换（如附件取消后回到文本块）时强制同步 DOM，避免残留上一次的输入
+    if (!mounted.current || block.html !== lastHtml.current || el.innerHTML !== block.html) {
       el.innerHTML = block.html
       lastHtml.current = block.html
       mounted.current = true
     }
-  }, [block.html])
+  }, [block.html, block.type])
 
   const handleInput = () => {
     const el = ref.current
@@ -248,13 +287,26 @@ function BlockItem({
         left: Math.max(12, Math.min(rect.left, window.innerWidth - 320)),
         top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 380)),
       })
+      onMention(null)
     } else {
       onSlash(null)
+      const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(before)
+      if (mentionMatch) {
+        const rect = caretRect()
+        onMention({
+          blockId: block.id,
+          query: mentionMatch[1].toLowerCase(),
+          left: Math.max(12, Math.min(rect.left, window.innerWidth - 320)),
+          top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 380)),
+        })
+      } else {
+        onMention(null)
+      }
     }
   }
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (slashActive) return
+    if (slashActive || mentionActive) return
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       onEnter()
@@ -346,7 +398,10 @@ function BlockItem({
               })}
             </div>
           )}
-          <button className="kb-be-attach-add" onClick={() => { setAttachTab('upload'); setAttachError(null); setAttachOpen((v) => !v) }}>
+          <button className="kb-be-attach-add" onClick={() => {
+            if (attachOpen) closeAttachPanel()
+            else { setAttachTab('upload'); setAttachError(null); setAttachOpen(true) }
+          }}>
             📎 添加附件
           </button>
 
@@ -355,6 +410,7 @@ function BlockItem({
               <div className="kb-be-attach-tabs">
                 <button className={attachTab === 'upload' ? 'active' : ''} onClick={() => { setAttachTab('upload'); setAttachError(null) }}>上传</button>
                 <button className={attachTab === 'reference' ? 'active' : ''} onClick={() => { setAttachTab('reference'); setAttachError(null) }}>引用文件</button>
+                <button className="kb-be-attach-close" title="取消" onClick={closeAttachPanel}><Icon name="x" size={14} /></button>
               </div>
               {attachTab === 'upload' ? (
                 <div className="kb-be-attach-pane">
@@ -444,7 +500,7 @@ function BlockItem({
         {block.type === 'number' && <span className="kb-be-marker">1.</span>}
         {block.type === 'quote' && <span className="kb-be-quote-marker" />}
         {isRich ? (
-          <div ref={ref} className={`kb-be-content kb-be-content-${block.type}`} contentEditable
+          <div key={`content-${block.type}`} ref={ref} className={`kb-be-content kb-be-content-${block.type}`} contentEditable
             suppressContentEditableWarning spellCheck={false} data-placeholder={placeholderOf(block.type)}
             onInput={handleInput} onKeyDown={handleKeyDown} />
         ) : renderSpecial()}
@@ -467,9 +523,21 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   const containerRef = useRef<HTMLDivElement>(null)
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [mention, setMention] = useState<MentionState | null>(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [autoOpenAttachId, setAutoOpenAttachId] = useState<string | null>(null)
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+
+  // @ 提及候选：整个知识库的所有文档（含文件类），按标题/文件夹过滤
+  const mentionDocs = useMemo(() => [...docs, ...fileDocs].filter((d, i, arr) => arr.findIndex((x) => x.id === d.id) === i), [docs, fileDocs])
+  const filteredMention = useMemo(() => {
+    if (!mention) return []
+    const q = mention.query.trim().toLowerCase()
+    if (!q) return mentionDocs.slice(0, 60)
+    return mentionDocs.filter((doc) => `${doc.title} ${doc.fileName ?? ''} ${doc.category}`.toLowerCase().includes(q)).slice(0, 60)
+  }, [mention?.query, mentionDocs])
 
   const filteredSlash = useMemo(() => {
     if (!slash) return []
@@ -479,10 +547,26 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   }, [slash?.query])
 
   useEffect(() => { setSlashIndex(0) }, [slash?.query])
+  useEffect(() => { setMentionIndex(0) }, [mention?.query])
 
   useEffect(() => {
-    if (!slash) return
+    if (!slash && !mention) return
     const handler = (event: KeyboardEvent) => {
+      if (mention) {
+        const max = filteredMention.length
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault(); event.stopPropagation()
+          if (max) setMentionIndex((i) => (i + (event.key === 'ArrowDown' ? 1 : max - 1)) % max)
+        } else if (event.key === 'Enter' && max) {
+          event.preventDefault(); event.stopPropagation()
+          applyMention(filteredMention[Math.min(mentionIndex, max - 1)])
+        } else if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation()
+          setMention(null)
+        }
+        return
+      }
+      if (!slash) return
       const max = filteredSlash.length
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault(); event.stopPropagation()
@@ -565,6 +649,9 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
 
   const applySlashItem = (item: SlashItem) => {
     if (!slash) return
+    // 先清空 contentEditable 的手动 DOM 内容，避免 React 复用节点时残留「/xxx」文本
+    const el = getBlockEl(containerRef.current, slash.blockId)
+    if (el) el.innerHTML = ''
     const patch: Partial<DocBlock> = { type: item.type, html: '', text: '' }
     if (item.type === 'todo') patch.checked = false
     if (item.type === 'code') patch.language = 'javascript'
@@ -572,10 +659,57 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
     if (item.type === 'image') patch.src = ''
     if (item.type === 'link') patch.href = ''
     if (item.type === 'docref') patch.docId = docs[0]?.id
-    if (item.type === 'attachment') patch.attachments = []
+    if (item.type === 'attachment') {
+      patch.attachments = []
+      setAutoOpenAttachId(slash.blockId)
+    }
     updateBlock(slash.blockId, patch)
     setSlash(null)
     focusBlock(slash.blockId)
+  }
+
+  /** 在块的 contentEditable 中把 @query 替换成不可编辑的文档 chip */
+  const applyMention = (doc: KnowledgeDoc) => {
+    if (!mention) return
+    const el = getBlockEl(containerRef.current, mention.blockId)
+    const label = doc.title || doc.fileName || '无标题'
+    const chip = `<span class="kb-be-mention" contenteditable="false" data-doc-id="${escapeHtml(doc.id)}" title="打开「${escapeHtml(label)}」">📄 ${escapeHtml(label)}</span>`
+    if (el) {
+      // 用 Range 精确删除光标前的「@query」并插入 chip
+      const selection = window.getSelection()
+      if (selection && selection.rangeCount) {
+        const caret = selection.getRangeAt(0)
+        const before = textBeforeCaret(el)
+        const atIdx = before.lastIndexOf('@')
+        if (atIdx >= 0) {
+          const start = findTextPosition(el, atIdx)
+          if (start) {
+            const range = document.createRange()
+            range.setStart(start.node, start.offset)
+            range.setEnd(caret.startContainer, caret.startOffset)
+            range.deleteContents()
+            const frag = range.createContextualFragment(chip + '&nbsp;')
+            const last = frag.lastChild
+            range.insertNode(frag)
+            if (last) {
+              const after = document.createRange()
+              after.setStartAfter(last)
+              after.collapse(true)
+              selection.removeAllRanges()
+              selection.addRange(after)
+            }
+          }
+        }
+      }
+      updateBlock(mention.blockId, { html: el.innerHTML, text: el.innerText })
+    } else {
+      // 无 DOM 时回退为纯文本追加
+      const block = blocks.find((b) => b.id === mention.blockId)
+      const prev = block?.html ?? ''
+      updateBlock(mention.blockId, { html: `${prev.replace(/@[^\s@]*$/, '')}${chip}&nbsp;`, text: '' })
+    }
+    setMention(null)
+    focusBlock(mention.blockId)
   }
 
   const execFormat = (command: string, value?: string) => {
@@ -599,10 +733,26 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   }
 
   return (
-    <div className="kb-be-editor" ref={containerRef} onClick={() => { if (slash) setSlash(null) }}>
+    <div className="kb-be-editor" ref={containerRef} onClick={(event) => {
+      if (slash) setSlash(null)
+      if (mention) setMention(null)
+      // @ 提及 chip 点击 → 打开目标文档（进入新页面）
+      const chip = (event.target as HTMLElement).closest?.('[data-doc-id]') as HTMLElement | null
+      if (chip?.dataset.docId) { event.preventDefault(); onNavigateDoc?.(chip.dataset.docId) }
+    }}>
       {blocks.map((block) => (
         <BlockItem key={block.id} block={block} total={blocks.length} docs={docs} fileDocs={fileDocs}
           slashActive={slash?.blockId === block.id}
+          mentionActive={mention?.blockId === block.id}
+          autoOpenAttach={autoOpenAttachId === block.id}
+          onCancelEmptyAttach={() => {
+            const el = getBlockEl(containerRef.current, block.id)
+            if (el) el.innerHTML = ''
+            updateBlock(block.id, { type: 'text', html: '', text: '', attachments: undefined })
+            setAutoOpenAttachId(null)
+            focusBlock(block.id)
+          }}
+          onMention={setMention}
           dragOver={dragOverId === block.id && dragId !== block.id}
           onUpdate={(patch) => updateBlock(block.id, patch)}
           onDelete={() => deleteBlock(block.id)}
@@ -638,6 +788,27 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
               <span className="kb-be-slash-hint">{item.hint.split(' ')[0]}</span>
             </button>
           ))}
+          <div className="kb-be-slash-foot">↑↓ 选择 · ↵ 插入 · Esc 关闭</div>
+        </div>
+      )}
+
+      {mention && (
+        <div className="kb-be-mention-menu" style={{ left: mention.left, top: mention.top }}
+          onMouseDown={(event) => event.preventDefault()} onClick={(event) => event.stopPropagation()}>
+          <div className="kb-be-slash-head">@ 引用知识库文档</div>
+          {filteredMention.length === 0
+            ? <div className="kb-be-slash-empty">没有匹配的文档</div>
+            : filteredMention.map((doc, index) => {
+              const icon = doc.kind === 'file' ? attachmentIcon(doc.fileName ?? '', doc.fileType ?? '') : { label: '📄', cls: 'file' }
+              return (
+                <button key={doc.id} className={`kb-be-slash-item${index === mentionIndex ? ' active' : ''}`}
+                  onMouseEnter={() => setMentionIndex(index)} onClick={() => applyMention(doc)}>
+                  <span className={`kb-be-mention-icon ${icon.cls}`}>{icon.label}</span>
+                  <span className="kb-be-slash-name">{doc.title || doc.fileName || '无标题'}</span>
+                  <span className="kb-be-slash-hint">{doc.kind === 'file' ? '文件' : '页面'}</span>
+                </button>
+              )
+            })}
           <div className="kb-be-slash-foot">↑↓ 选择 · ↵ 插入 · Esc 关闭</div>
         </div>
       )}

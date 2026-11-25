@@ -822,6 +822,8 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .kb-be-attach-tabs { display: flex; gap: 16px; padding: 10px 14px 0; border-bottom: 1px solid var(--border); }
 .kb-be-attach-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
 .kb-be-attach-tabs button.active { color: var(--text); border-bottom-color: var(--primary); }
+.kb-be-attach-close { margin-left: auto; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--text-light); cursor: pointer; }
+.kb-be-attach-close:hover { background: var(--surface-muted); color: var(--text); }
 .kb-be-attach-pane { padding: 12px 14px 14px; }
 .kb-be-attach-hint { margin: 0 0 10px; font-size: 12px; color: var(--text-muted); }
 .kb-be-attach-choose { display: inline-flex; align-items: center; justify-content: center; padding: 8px 16px; border: 0; border-radius: 7px; background: var(--primary); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -833,6 +835,13 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .kb-be-attach-menu { position: fixed; z-index: 1500; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(15, 23, 42, .18); }
 .kb-be-attach-menu button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 5px; background: transparent; padding: 6px 10px; font-size: 12px; color: var(--danger); cursor: pointer; white-space: nowrap; }
 .kb-be-attach-menu button:hover { background: var(--danger-bg); }
+
+/* @ 提及：内联文档 chip + 候选菜单 */
+.kb-be-mention { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 4px; background: var(--primary-light); color: var(--primary); font-size: 13px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; white-space: nowrap; }
+.kb-be-mention:hover { filter: brightness(.96); }
+.kb-be-mention-menu { position: fixed; z-index: 1400; width: 300px; max-height: 380px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 36px rgba(15, 23, 42, .18); }
+.kb-be-mention-icon { width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 5px; font-size: 11px; font-weight: 700; color: #fff; }
+.kb-be-mention-icon.file { background: transparent; font-size: 13px; }
 
 .kb-be-slash { position: fixed; z-index: 1400; width: 300px; max-height: 380px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 36px rgba(15, 23, 42, .18); }
 .kb-be-slash-head, .kb-be-slash-foot { padding: 6px 9px; font-size: 10px; color: var(--text-light); letter-spacing: .4px; }

@@ -43,6 +43,10 @@ export function htmlToMarkdown(html: string): string {
     if (node.nodeType !== Node.ELEMENT_NODE) return ''
     const el = node as HTMLElement
     const inner = Array.from(el.childNodes).map(walk).join('')
+    if (el.classList?.contains('kb-be-mention')) {
+      const id = el.getAttribute('data-doc-id') ?? ''
+      return `[${inner || '文档'}](#doc/${id})`
+    }
     switch (el.tagName) {
       case 'B': case 'STRONG': return `**${inner}**`
       case 'I': case 'EM': return `*${inner}*`
@@ -168,6 +172,14 @@ export function markdownToBlocks(markdown: string): DocBlock[] {
       const block = makeBlock('image', '', image[1])
       block.src = safeUrl(image[2])
       blocks.push(block)
+      index += 1
+      continue
+    }
+    // @ 提及 chip 必须优先于普通链接解析（否则会被当作外链）
+    if (trimmed.includes('](#doc/')) {
+      const chipHtml = trimmed.replace(/\[([^\]]+)\]\(#doc\/([^)]+)\)/g,
+        (_all, label: string, id: string) => `<span class="kb-be-mention" contenteditable="false" data-doc-id="${escapeHtml(id)}" title="打开文档">📄 ${escapeHtml(label)}</span>`)
+      blocks.push(makeBlock('text', chipHtml, trimmed))
       index += 1
       continue
     }
