@@ -83,6 +83,26 @@ export interface Mistake {
   point?: string
 }
 
+/* ---------- FlowUs 式块文档 ---------- */
+export type BlockType =
+  | 'text' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'quote'
+  | 'code' | 'table' | 'divider' | 'image' | 'link' | 'docref'
+
+export interface DocBlock {
+  id: string
+  type: BlockType
+  /** contentEditable 块的富文本 HTML */
+  html: string
+  /** 纯文本，便于快捷输入、搜索与字数统计 */
+  text: string
+  checked?: boolean
+  language?: string
+  rows?: string[][]
+  src?: string
+  href?: string
+  docId?: string
+}
+
 /** 知识库文件夹（独立于文档，支持空文件夹与无限层级子文件夹） */
 export interface KnowledgeFolder {
   id: string
@@ -96,7 +116,10 @@ export interface KnowledgeFolder {
 export interface KnowledgeDoc {
   id: string
   title: string
+  /** Markdown 纯文本，由 blocks 派生，用于预览与兼容旧数据 */
   content: string
+  /** FlowUs 式块结构；新建与编辑的文档均以此为准 */
+  blocks?: DocBlock[]
   /** 兼容旧数据：所属文件夹名称（现以 folderId 为准） */
   category: string
   /** 所属文件夹 id；空值表示未分类 */

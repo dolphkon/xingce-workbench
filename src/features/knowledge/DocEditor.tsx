@@ -1,110 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { getById, put, readCachedAll, readCachedById, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { folderPath } from '../../lib/folders'
 import { renderMarkdown } from '../../lib/markdown'
+import { blocksToMarkdown, markdownToBlocks } from '../../lib/blocks'
 import { formatDate, uid } from '../../lib/utils'
 import { docFileKind, formatBytes } from '../../lib/docFile'
-import type { KnowledgeDoc } from '../../types'
-
-/** FlowUS 式斜杠命令 */
-type SlashCommand = {
-  id: string
-  name: string
-  shortcut: string
-  icon: string
-  group: string
-  insert: string
-  caret?: number
-  keywords?: string
-}
-
-const SLASH_COMMANDS: SlashCommand[] = [
-  { id: 'brainstorm', name: '头脑风暴', shortcut: 'tfnf', icon: 'sparkle', group: '内容模板', keywords: 'brainstorm 灵感',
-    insert: '## 头脑风暴\n\n**目标**\n\n\n**关键问题**\n- \n\n**备选方案**\n- \n\n**结论**\n' },
-  { id: 'blog', name: '博客文章', shortcut: 'bkwz', icon: 'filetext', group: '内容模板', keywords: 'blog 文章',
-    insert: '## 文章标题\n\n## 背景\n\n## 正文\n\n## 结语\n' },
-  { id: 'meeting', name: '会议记录', shortcut: 'hyjl', icon: 'calendar', group: '内容模板', keywords: 'meeting 纪要',
-    insert: '## 会议记录\n\n时间：\n参与人：\n\n### 议题\n- \n\n### 决议\n- \n' },
-  { id: 'exam', name: '核心考点', shortcut: 'hxkd', icon: 'book', group: '内容模板', keywords: '考点 行测',
-    insert: '## 核心考点\n\n## 解题方法\n\n## 易错提醒\n\n## 相关例题\n' },
-  { id: 'text', name: '正文', shortcut: 'zw', icon: 'file', group: '基础块', keywords: 'paragraph 文本', insert: '', caret: 0 },
-  { id: 'h1', name: '一级标题', shortcut: 'bt1', icon: 'filetext', group: '基础块', keywords: 'h1 heading', insert: '# ' },
-  { id: 'h2', name: '二级标题', shortcut: 'bt2', icon: 'filetext', group: '基础块', keywords: 'h2 heading', insert: '## ' },
-  { id: 'h3', name: '三级标题', shortcut: 'bt3', icon: 'filetext', group: '基础块', keywords: 'h3 heading', insert: '### ' },
-  { id: 'todo', name: '待办列表', shortcut: 'diblb', icon: 'check', group: '基础块', keywords: 'todo checkbox 任务', insert: '- [ ] ' },
-  { id: 'bullet', name: '无序列表', shortcut: 'wxlb', icon: 'list', group: '基础块', keywords: 'ul list 项目', insert: '- ' },
-  { id: 'number', name: '有序列表', shortcut: 'yxlb', icon: 'list', group: '基础块', keywords: 'ol list 编号', insert: '1. ' },
-  { id: 'quote', name: '引用', shortcut: 'yy', icon: 'edit', group: '基础块', keywords: 'quote', insert: '> ' },
-  { id: 'code', name: '代码块', shortcut: 'dmk', icon: 'copy', group: '基础块', keywords: 'code 代码', insert: '```\n\n```', caret: 4 },
-  { id: 'table', name: '表格', shortcut: 'bg', icon: 'chart', group: '基础块', keywords: 'table',
-    insert: '| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n' },
-  { id: 'divider', name: '分割线', shortcut: 'fgx', icon: 'more', group: '基础块', keywords: 'divider hr 分隔', insert: '---\n' },
-]
-
-type SlashState = { start: number; query: string; index: number; left: number; top: number }
-
-/** 用镜像 div 计算 textarea 光标坐标，让命令菜单贴着光标出现 */
-function caretPosition(el: HTMLTextAreaElement, cursor: number) {
-  const style = window.getComputedStyle(el)
-  const mirror = document.createElement('div')
-  const copied = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing',
-    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth',
-    'boxSizing', 'whiteSpace', 'wordWrap', 'overflowWrap', 'tabSize'] as const
-  copied.forEach((key) => { mirror.style[key] = style[key] })
-  mirror.style.position = 'absolute'
-  mirror.style.left = '-9999px'
-  mirror.style.top = '0'
-  mirror.style.visibility = 'hidden'
-  mirror.style.width = `${el.clientWidth}px`
-  mirror.style.height = 'auto'
-  mirror.style.whiteSpace = 'pre-wrap'
-  mirror.style.wordWrap = 'break-word'
-  mirror.textContent = el.value.slice(0, cursor)
-  const marker = document.createElement('span')
-  marker.textContent = el.value.slice(cursor) || '.'
-  mirror.appendChild(marker)
-  document.body.appendChild(mirror)
-  const left = marker.offsetLeft - el.scrollLeft
-  const top = marker.offsetTop - el.scrollTop + (parseFloat(style.lineHeight) || 24)
-  document.body.removeChild(mirror)
-  const rect = el.getBoundingClientRect()
-  return {
-    left: Math.max(12, Math.min(rect.left + left, window.innerWidth - 320)),
-    top: Math.max(12, Math.min(rect.top + top, window.innerHeight - 400)),
-  }
-}
-
-type Tool = { label: string; title: string; wrap: [string, string]; block?: boolean }
-
-const TOOLS: Tool[] = [
-  { label: 'H2', title: '二级标题', wrap: ['## ', ''], block: true },
-  { label: 'H3', title: '三级标题', wrap: ['### ', ''], block: true },
-  { label: 'B', title: '加粗', wrap: ['**', '**'] },
-  { label: 'I', title: '斜体', wrap: ['*', '*'] },
-  { label: '• 列表', title: '无序列表', wrap: ['- ', ''], block: true },
-  { label: '1. 列表', title: '有序列表', wrap: ['1. ', ''], block: true },
-  { label: '❝', title: '引用', wrap: ['> ', ''], block: true },
-  { label: '</>', title: '行内代码', wrap: ['`', '`'] },
-  { label: '代码块', title: '代码块', wrap: ['```\n', '\n```'], block: true },
-  { label: '链接', title: '链接', wrap: ['[', '](https://)'] },
-  { label: '—', title: '分割线', wrap: ['\n---\n', ''], block: true },
-]
-
-const BLOCK_TOOLS: Tool[] = [
-  { label: 'H1', title: '一级标题', wrap: ['# ', ''], block: true },
-  { label: 'H2', title: '二级标题', wrap: ['## ', ''], block: true },
-  { label: 'H3', title: '三级标题', wrap: ['### ', ''], block: true },
-  { label: 'H4', title: '四级标题', wrap: ['#### ', ''], block: true },
-  { label: 'H5', title: '五级标题', wrap: ['##### ', ''], block: true },
-  { label: 'H6', title: '六级标题', wrap: ['###### ', ''], block: true },
-  { label: '• 列表', title: '无序列表', wrap: ['- ', ''], block: true },
-  { label: '1. 列表', title: '有序列表', wrap: ['1. ', ''], block: true },
-  { label: '❝', title: '引用', wrap: ['> ', ''], block: true },
-  { label: '</>', title: '代码块', wrap: ['```\n', '\n```'], block: true },
-]
+import BlockEditor from './BlockEditor'
+import type { DocBlock, KnowledgeDoc } from '../../types'
 
 export default function DocEditor() {
   const { id } = useParams<{ id: string }>()
@@ -114,15 +19,17 @@ export default function DocEditor() {
   const readMode = searchParams.get('read') === '1' && !isNew
   const targetFolderId = searchParams.get('folder') ?? ''
   const { items: folders } = useCollection('folders')
+  const { items: docs } = useCollection('docs')
 
+  const cachedDoc = !isNew && id ? readCachedById('docs', id) : undefined
   const [doc, setDoc] = useState<KnowledgeDoc>(() => {
-    const cached = !isNew && id ? readCachedById('docs', id) : undefined
-    if (cached) return cached
+    if (cachedDoc) return cachedDoc
     const folder = readCachedAll('folders').find((f) => f.id === targetFolderId)
     return {
       id: isNew ? uid() : (id ?? uid()),
       title: '',
       content: '',
+      blocks: undefined,
       folderId: folder?.id,
       category: folder?.name ?? '',
       tags: [],
@@ -131,8 +38,13 @@ export default function DocEditor() {
       kind: 'md',
     }
   })
+  const [blocks, setBlocks] = useState<DocBlock[]>(() =>
+    cachedDoc?.blocks?.length ? cachedDoc.blocks : markdownToBlocks(cachedDoc?.content ?? ''))
+
   const isFileDoc = doc.kind === 'file' && Boolean(doc.fileData)
   const fileKind = useMemo(() => docFileKind(doc.fileName, doc.fileType), [doc.fileName, doc.fileType])
+  const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
+  const refDocs = useMemo(() => docs.filter((item) => item.id !== doc.id && item.kind !== 'file'), [docs, doc.id])
 
   const [editing, setEditing] = useState(() => isNew || Boolean(id && !readCachedById('docs', id)?.content.trim()))
   const [loaded, setLoaded] = useState(() => isNew || Boolean(id && readCachedById('docs', id)))
@@ -140,104 +52,48 @@ export default function DocEditor() {
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
-  const [tab, setTab] = useState<'edit' | 'preview'>('edit')
-  // 从列表点击文档进入时 read=1：首帧即全屏阅读，退出后返回列表
   const [fullView, setFullView] = useState(() => readMode)
   const [leaveOnClose, setLeaveOnClose] = useState(() => readMode)
-  // 新建文档直接打开 FlowUS 式沉浸编辑页
   const [immersive, setImmersive] = useState(() => isNew)
-  const [blockMenuOpen, setBlockMenuOpen] = useState(false)
-  const [slash, setSlash] = useState<SlashState | null>(null)
   const [showTencent, setShowTencent] = useState(false)
   const [tencentInput, setTencentInput] = useState('')
   const [tencentError, setTencentError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [tagsInput, setTagsInput] = useState(() => (id ? readCachedById('docs', id)?.tags.join(', ') ?? '' : ''))
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const immersiveRef = useRef<HTMLTextAreaElement>(null)
+
+  const update = (patch: Partial<KnowledgeDoc>) => setDoc((prev) => ({ ...prev, ...patch }))
+
+  const applyBlocks = (next: DocBlock[]) => {
+    setBlocks(next)
+    setDoc((prev) => ({ ...prev, blocks: next, content: blocksToMarkdown(next) }))
+  }
 
   useEffect(() => {
     if (isNew || !id) { setLoaded(true); return }
     let active = true
     const cached = readCachedById('docs', id)
+    const hydrate = (data: KnowledgeDoc) => {
+      setDoc(data)
+      setBlocks(data.blocks?.length ? data.blocks : markdownToBlocks(data.content))
+      setSavedAt(data.updatedAt)
+      setEditing(!data.content.trim() && data.kind !== 'file')
+      setTagsInput(data.tags.join(', '))
+      setLoaded(true)
+    }
     if (cached) {
-      setDoc(cached); setSavedAt(cached.updatedAt); setEditing(!cached.content.trim() && cached.kind !== 'file')
-      setTagsInput(cached.tags.join(', ')); setLoaded(true)
+      hydrate(cached)
       return () => { active = false }
     }
     getById('docs', id)
       .then((data) => {
         if (!active) return
-        if (data) {
-          setDoc(data); setSavedAt(data.updatedAt)
-          setEditing(!data.content.trim() && data.kind !== 'file'); setTagsInput(data.tags.join(', '))
-        } else navigate('/knowledge')
+        if (data) hydrate(data)
+        else navigate('/knowledge')
         setLoaded(true)
       })
       .catch(() => { if (active) setLoaded(true) })
     return () => { active = false }
   }, [id, isNew, navigate])
-
-  const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
-
-  const slashCommands = useMemo(() => {
-    if (!slash) return []
-    const q = slash.query.trim().toLowerCase()
-    if (!q) return SLASH_COMMANDS
-    return SLASH_COMMANDS.filter((cmd) =>
-      cmd.shortcut.includes(q) || cmd.name.toLowerCase().includes(q) || (cmd.keywords ?? '').toLowerCase().includes(q))
-  }, [slash?.query])
-
-  const slashGroups = useMemo(() => {
-    const groups: Array<{ name: string; items: Array<{ cmd: SlashCommand; index: number }> }> = []
-    slashCommands.forEach((cmd, index) => {
-      let group = groups.find((item) => item.name === cmd.group)
-      if (!group) { group = { name: cmd.group, items: [] }; groups.push(group) }
-      group.items.push({ cmd, index })
-    })
-    return groups
-  }, [slashCommands])
-
-  const handleContentChange = (value: string, el: HTMLTextAreaElement) => {
-    update({ content: value })
-    const before = value.slice(0, el.selectionStart)
-    const match = /(?:^|\s)\/([^\s/]*)$/.exec(before)
-    if (!match) { if (slash) setSlash(null); return }
-    const coords = caretPosition(el, el.selectionStart)
-    setSlash({
-      start: el.selectionStart - match[1].length - 1,
-      query: match[1].toLowerCase(),
-      index: 0,
-      ...coords,
-    })
-  }
-
-  const applySlashCommand = (cmd: SlashCommand, el: HTMLTextAreaElement) => {
-    if (!slash) return
-    const next = el.value.slice(0, slash.start) + cmd.insert + el.value.slice(el.selectionStart)
-    update({ content: next })
-    setSlash(null)
-    const caret = slash.start + (cmd.caret ?? cmd.insert.length)
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret) })
-  }
-
-  const handleSlashKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!slash || slashCommands.length === 0) return
-    const max = slashCommands.length
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      event.stopPropagation()
-      setSlash((prev) => prev ? { ...prev, index: (prev.index + (event.key === 'ArrowDown' ? 1 : max - 1)) % max } : prev)
-    } else if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault()
-      event.stopPropagation()
-      applySlashCommand(slashCommands[Math.min(slash.index, max - 1)], event.currentTarget)
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      setSlash(null)
-    }
-  }
 
   const saveNow = useCallback(async (switchToView = false) => {
     if (!loaded) return
@@ -245,15 +101,15 @@ export default function DocEditor() {
     try {
       const now = Date.now()
       const tags = tagsInput.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean)
-      await put('docs', { ...doc, tags, updatedAt: now })
+      const saved = { ...doc, blocks, content: blocksToMarkdown(blocks), tags, updatedAt: now }
+      await put('docs', saved)
       setSavedAt(now)
-      if (switchToView && doc.content.trim()) setEditing(false)
+      if (switchToView && saved.content.trim()) setEditing(false)
     } finally {
       setSaving(false)
     }
-  }, [doc, loaded, tagsInput])
+  }, [doc, blocks, loaded, tagsInput])
 
-  // 自动保存（仅文本编辑态）
   useEffect(() => {
     if (!loaded || !editing || isFileDoc) return
     const timer = setTimeout(() => { void saveNow() }, 800)
@@ -262,7 +118,11 @@ export default function DocEditor() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && immersive) { setImmersive(false); setBlockMenuOpen(false); setSlash(null); return }
+      if (event.key === 'Escape' && immersive) {
+        void saveNow()
+        setImmersive(false)
+        return
+      }
       if (event.key === 'Escape' && fullView) {
         if (leaveOnClose) navigate('/knowledge')
         else setFullView(false)
@@ -277,7 +137,6 @@ export default function DocEditor() {
     return () => window.removeEventListener('keydown', handler)
   }, [editing, saveNow, fullView, leaveOnClose, navigate, immersive])
 
-  // 全屏阅读 / 沉浸写作时锁定页面滚动
   useEffect(() => {
     if (!fullView && !immersive) return
     const prev = document.body.style.overflow
@@ -304,59 +163,16 @@ export default function DocEditor() {
   const saveTencentUrl = async () => {
     setTencentError(null)
     const value = tencentInput.trim()
-    if (!value) { await put('docs', { ...doc, tencentUrl: undefined, updatedAt: Date.now() }); update({ tencentUrl: undefined }); setShowTencent(false); return }
+    if (!value) {
+      await put('docs', { ...doc, tencentUrl: undefined, updatedAt: Date.now() })
+      update({ tencentUrl: undefined })
+      setShowTencent(false)
+      return
+    }
     if (!/^https?:\/\//i.test(value)) { setTencentError('请输入以 http:// 或 https:// 开头的链接'); return }
     await put('docs', { ...doc, tencentUrl: value, updatedAt: Date.now() })
     update({ tencentUrl: value })
     setShowTencent(false)
-  }
-
-  const update = (patch: Partial<KnowledgeDoc>) => setDoc((prev) => ({ ...prev, ...patch }))
-
-  const applyTool = (tool: Tool, target?: HTMLTextAreaElement | null) => {
-    const el = target ?? textareaRef.current
-    if (!el) return
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const selected = doc.content.slice(start, end)
-    const [before, after] = tool.wrap
-    let inserted: string
-    if (tool.block) {
-      const lineStart = doc.content.lastIndexOf('\n', start - 1) + 1
-      const lineEndIndex = doc.content.indexOf('\n', start)
-      const lineEnd = lineEndIndex < 0 ? doc.content.length : lineEndIndex
-      const line = doc.content.slice(lineStart, lineEnd)
-      const raw = selected || line || '文字'
-      const plain = raw.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, '')
-      inserted = before === '\n---\n'
-        ? `\n---\n${plain}`
-        : before === '```\n'
-          ? `\`\`\`\n${plain || '代码'}\n\`\`\``
-          : `${before}${plain}${after}`
-      const next = doc.content.slice(0, lineStart) + inserted + doc.content.slice(lineEnd)
-      update({ content: next })
-      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(lineStart + inserted.length, lineStart + inserted.length) })
-    } else {
-      inserted = before + (selected || '文字') + after
-      const next = doc.content.slice(0, start) + inserted + doc.content.slice(end)
-      update({ content: next })
-      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(start + before.length, start + before.length + (selected || '文字').length) })
-    }
-  }
-
-  const applyPlainBlock = () => {
-    const el = immersiveRef.current
-    if (!el) return
-    const start = el.selectionStart
-    const lineStart = doc.content.lastIndexOf('\n', start - 1) + 1
-    const lineEndIndex = doc.content.indexOf('\n', start)
-    const lineEnd = lineEndIndex < 0 ? doc.content.length : lineEndIndex
-    const line = doc.content.slice(lineStart, lineEnd)
-    const plain = line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, '')
-    const next = doc.content.slice(0, lineStart) + plain + doc.content.slice(lineEnd)
-    update({ content: next })
-    setBlockMenuOpen(false)
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(lineStart + plain.length, lineStart + plain.length) })
   }
 
   const handleDelete = async () => {
@@ -365,6 +181,15 @@ export default function DocEditor() {
   }
 
   if (!loaded) return <div className="loading">加载中…</div>
+
+  const editor = (
+    <BlockEditor
+      blocks={blocks}
+      docs={refDocs}
+      onChangeBlocks={applyBlocks}
+      onNavigateDoc={(docId) => { void saveNow(); setImmersive(false); navigate(`/knowledge/${docId}`) }}
+    />
+  )
 
   return (
     <>
@@ -386,10 +211,10 @@ export default function DocEditor() {
             <button className="btn btn-primary" onClick={() => void saveNow(true)} disabled={saving}><Icon name="save" size={16} /> 保存</button>
           )}
           {!isFileDoc && !editing && (
-            <button className="btn" onClick={() => { setEditing(true); setTab('edit') }}><Icon name="edit" size={16} /> 编辑</button>
+            <button className="btn" onClick={() => setEditing(true)}><Icon name="edit" size={16} /> 编辑</button>
           )}
           {!isFileDoc && (
-            <button className="btn btn-primary" onClick={() => { setEditing(true); setBlockMenuOpen(false); setImmersive(true) }} title="沉浸式全屏书写">
+            <button className="btn btn-primary" onClick={() => { setEditing(true); void saveNow(); setImmersive(true) }} title="沉浸式全屏书写">
               <Icon name="expand" size={16} /> 沉浸写作
             </button>
           )}
@@ -444,7 +269,6 @@ export default function DocEditor() {
         </div>
       )}
 
-      {/* 上传文件：在线阅读 */}
       {isFileDoc ? (
         <div className="card">
           <div className="card-header">
@@ -471,39 +295,17 @@ export default function DocEditor() {
             )}
           </div>
         </div>
-      ) : editing ? (
-        /* Markdown 编辑器：工具栏 + 单栏编辑/预览切换 */
-        <div className="editor-card">
-          <div className="editor-toolbar">
-            <div className="segmented">
-              <button className={tab === 'edit' ? 'active' : ''} onClick={() => setTab('edit')}>编辑</button>
-              <button className={tab === 'preview' ? 'active' : ''} onClick={() => setTab('preview')}>预览</button>
-            </div>
-            {tab === 'edit' && (
-              <>
-                <span className="editor-tool-sep" />
-                {TOOLS.map((tool) => (
-                  <button key={tool.label} className="editor-tool" title={tool.title} onClick={() => applyTool(tool)}>{tool.label}</button>
-                ))}
-              </>
-            )}
-            <span className="spacer" />
-            <span className="small light">自动保存 · ⌘/Ctrl+S 保存并返回</span>
+      ) : editing && !immersive ? (
+        <div className="card kb-be-doc">
+          <div className="card-body">{editor}</div>
+        </div>
+      ) : editing && immersive ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-icon"><Icon name="expand" size={24} /></div>
+            <h3>正在沉浸式书写</h3>
+            <p>已打开全屏编辑器，关闭后可回到此页面</p>
           </div>
-          {tab === 'edit' ? (
-            <textarea
-              ref={textareaRef}
-              className="editor-textarea"
-              value={doc.content}
-              onChange={(e) => handleContentChange(e.target.value, e.target)}
-              onKeyDown={handleSlashKeyDown}
-              onScroll={() => setSlash(null)}
-              placeholder="输入「/」插入内容块，或直接开始书写…"
-              spellCheck={false}
-            />
-          ) : (
-            <div className="md-preview editor-preview" dangerouslySetInnerHTML={{ __html: html }} />
-          )}
         </div>
       ) : doc.content.trim() ? (
         <div className="card">
@@ -514,8 +316,8 @@ export default function DocEditor() {
           <div className="empty-state">
             <div className="empty-icon"><Icon name="file" size={24} /></div>
             <h3>这篇文档还没有内容</h3>
-            <p>点击右上角「编辑」开始书写</p>
-            <button className="btn btn-primary" onClick={() => { setEditing(true); setTab('edit') }}><Icon name="edit" size={15} /> 编辑文档</button>
+            <p>点击右上角「编辑」开始书写，输入「/」唤出块菜单</p>
+            <button className="btn btn-primary" onClick={() => setEditing(true)}><Icon name="edit" size={15} /> 编辑文档</button>
           </div>
         </div>
       )}
@@ -555,42 +357,21 @@ export default function DocEditor() {
         </Modal>
       )}
 
-      {immersive && (
+      {immersive && !isFileDoc && (
         <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="沉浸式写作">
           <div className="kb-immersive-bar">
             <button className="kb-immersive-back" onClick={() => { void saveNow(); navigate('/knowledge') }}><Icon name="back" size={16} /> 返回知识库</button>
-            <span className="small light">{saving ? '保存中…' : '自动保存 · 输入「/」插入内容块'}</span>
+            <span className="small light">{saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令'}</span>
             <div className="row" style={{ gap: 8 }}>
               <button className="kb-immersive-save" onClick={() => { void saveNow(); navigate('/knowledge') }}><Icon name="save" size={15} /> 保存并退出</button>
-              <button className="kb-immersive-close" onClick={() => { void saveNow(); setImmersive(false); setSlash(null) }} title="退出沉浸（Esc）"><Icon name="x" size={18} /></button>
+              <button className="kb-immersive-close" onClick={() => { void saveNow(); setImmersive(false) }} title="退出沉浸（Esc）"><Icon name="x" size={18} /></button>
             </div>
           </div>
           <div className="kb-immersive-body">
             <div className="kb-immersive-paper">
               <input className="kb-immersive-title" value={doc.title}
                 onChange={(e) => update({ title: e.target.value })} placeholder="无标题" spellCheck={false} />
-              <textarea ref={immersiveRef} className="kb-immersive-text" value={doc.content}
-                onChange={(e) => handleContentChange(e.target.value, e.target)}
-                onKeyDown={handleSlashKeyDown}
-                onScroll={() => setSlash(null)}
-                placeholder="输入「/」唤出命令菜单，或直接开始书写…" spellCheck={false} />
-            </div>
-            <div className="kb-immersive-dock">
-              <div className="kb-immersive-toolbar">
-                {TOOLS.slice(0, 10).map((tool) => (
-                  <button key={tool.label} title={tool.title} onClick={() => applyTool(tool, immersiveRef.current)}>{tool.label}</button>
-                ))}
-                <span className="kb-immersive-sep" />
-                <button className={blockMenuOpen ? 'active' : ''} title="块类型" onClick={() => setBlockMenuOpen((v) => !v)}>块类型</button>
-              </div>
-              {blockMenuOpen && (
-                <div className="kb-immersive-blockmenu" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={applyPlainBlock}>正文</button>
-                  {BLOCK_TOOLS.map((tool) => (
-                    <button key={tool.label} onClick={() => { applyTool(tool, immersiveRef.current); setBlockMenuOpen(false) }}>{tool.title}</button>
-                  ))}
-                </div>
-              )}
+              {editor}
             </div>
           </div>
         </div>
@@ -606,7 +387,6 @@ export default function DocEditor() {
                   setLeaveOnClose(false)
                   setFullView(false)
                   setEditing(true)
-                  setTab('edit')
                 }} title="编辑文档"><Icon name="edit" size={16} /> 编辑</button>
               )}
               {doc.fileData && (
@@ -632,33 +412,6 @@ export default function DocEditor() {
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {slash && (
-        <div className="kb-slash-menu" style={{ left: slash.left, top: slash.top }}
-          onMouseDown={(event) => event.preventDefault()}>
-          {slashCommands.length === 0 ? (
-            <div className="kb-slash-empty">没有匹配的内容块</div>
-          ) : slashGroups.map((group) => (
-            <div className="kb-slash-group" key={group.name}>
-              <div className="kb-slash-group-label">{group.name}</div>
-              {group.items.map(({ cmd, index }) => (
-                <button key={cmd.id}
-                  className={`kb-slash-item${index === slash.index ? ' active' : ''}`}
-                  onMouseEnter={() => setSlash((prev) => prev ? { ...prev, index } : prev)}
-                  onClick={() => {
-                    const el = immersive ? immersiveRef.current : textareaRef.current
-                    if (el) applySlashCommand(cmd, el)
-                  }}>
-                  <span className="kb-slash-icon"><Icon name={cmd.icon} size={14} /></span>
-                  <span className="kb-slash-name">{cmd.name}</span>
-                  <span className="kb-slash-shortcut">/{cmd.shortcut}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-          <div className="kb-slash-foot">↑↓ 选择 · ↵ 插入 · Esc 关闭</div>
         </div>
       )}
     </>
