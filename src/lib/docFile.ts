@@ -60,36 +60,6 @@ export function docFileKind(fileName?: string, fileType?: string): 'pdf' | 'imag
   return 'file'
 }
 
-/** 生成可下载的空白 Office 文件（HTML 格式，Word/Excel 均可直接打开） */
-export function makeBlankOfficeFile(type: 'word' | 'excel', title: string): {
-  fileName: string
-  fileType: string
-  fileData: string
-} {
-  const safeTitle = title.trim() || (type === 'word' ? '新建文档' : '新建表格')
-  const safeName = safeTitle.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || '未命名'
-  if (type === 'word') {
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(safeTitle)}</title></head><body><h1>${escapeHtml(safeTitle)}</h1><p></p></body></html>`
-    return {
-      fileName: `${safeName}.doc`,
-      fileType: 'application/msword',
-      fileData: `data:application/msword;charset=utf-8,${encodeURIComponent(html)}`,
-    }
-  }
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(safeTitle)}</title></head><body><table border="1"><tr><th>列1</th><th>列2</th><th>列3</th></tr><tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></table></body></html>`
-  return {
-    fileName: `${safeName}.xls`,
-    fileType: 'application/vnd.ms-excel',
-    fileData: `data:application/vnd.ms-excel;charset=utf-8,${encodeURIComponent(html)}`,
-  }
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[ch] ?? ch)
-}
-
 function dataBytes(dataUrl: string): number {
   const comma = dataUrl.indexOf(',')
   if (comma < 0) return 0

@@ -406,7 +406,7 @@ export default function DocEditor() {
             ) : fileKind === 'image' ? (
               <img src={doc.fileData ?? ''} alt={doc.title} className="kb-fullscreen-img" />
             ) : (
-              <div className="empty-state" style={{ color: '#fff' }}>
+              <div className="empty-state">
                 <h3>此格式暂不支持在线预览</h3>
                 <p>请点击右上角下载后用本地软件打开</p>
               </div>

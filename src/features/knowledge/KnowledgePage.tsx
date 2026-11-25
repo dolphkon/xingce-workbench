@@ -16,8 +16,8 @@ import {
   renameFolder,
   type TreeFolder,
 } from '../../lib/folders'
-import { formatDate, uid } from '../../lib/utils'
-import { docFileKind, formatBytes, makeBlankOfficeFile } from '../../lib/docFile'
+import { formatDate } from '../../lib/utils'
+import { docFileKind, formatBytes } from '../../lib/docFile'
 import type { KnowledgeDoc, KnowledgeFolder } from '../../types'
 
 function excerpt(content: string): string {
@@ -51,11 +51,6 @@ export default function KnowledgePage() {
       return true
     }
   })
-  const [showNewFile, setShowNewFile] = useState(false)
-  const [newFileType, setNewFileType] = useState<'word' | 'excel'>('word')
-  const [newFileName, setNewFileName] = useState('')
-  const [newFileParent, setNewFileParent] = useState<string | null>(null)
-  const [newFileError, setNewFileError] = useState<string | null>(null)
   const [folderMenu, setFolderMenu] = useState<string | null>(null)
   const initExpanded = useRef(false)
   const migrating = useRef(false)
@@ -165,50 +160,6 @@ export default function KnowledgePage() {
     navigate(`/knowledge/new${param}`)
   }
 
-  const openNewFile = (parentId?: string | null) => {
-    const target = parentId === undefined
-      ? (isFolderSelected ? selected : null)
-      : normalizeParentId(parentId)
-    setNewFileParent(target)
-    setNewFileType('word')
-    setNewFileName('')
-    setNewFileError(null)
-    setShowNewFile(true)
-  }
-
-  const handleCreateFile = async () => {
-    setNewFileError(null)
-    try {
-      const title = newFileName.trim()
-      if (!title) { setNewFileError('请输入文件名'); return }
-      const parent = newFileParent && folderById.has(newFileParent) ? newFileParent : undefined
-      const folder = parent ? folderById.get(parent) : undefined
-      const blank = makeBlankOfficeFile(newFileType, title)
-      const now = Date.now()
-      await put('docs', {
-        id: uid(),
-        title,
-        content: '',
-        folderId: parent,
-        category: folder?.name ?? '',
-        tags: [],
-        createdAt: now,
-        updatedAt: now,
-        kind: 'file',
-        ...blank,
-      })
-      if (parent) {
-        setSelected(parent)
-        setExpanded((prev) => new Set([...prev, parent]))
-      }
-      setShowNewFile(false)
-      setNewFileName('')
-      refresh()
-    } catch (err) {
-      setNewFileError(err instanceof Error ? err.message : '创建失败')
-    }
-  }
-
   const handleFolderSubmit = async () => {
     if (!folderDialog) return
     setFolderError(null)
@@ -291,7 +242,7 @@ export default function KnowledgePage() {
             }}><Icon name="more" size={14} /></button>
             {folderMenu === folder.id && (
               <span className="kb-folder-menu" onClick={(event) => event.stopPropagation()}>
-                <button onClick={() => { setFolderMenu(null); openNewFile(folder.id) }}><Icon name="filetext" size={13} /> 新建文件</button>
+                <button onClick={() => { setFolderMenu(null); openNewNote(folder.id) }}><Icon name="filetext" size={13} /> 新建文档</button>
                 <button onClick={() => { setFolderMenu(null); openCreateFolder(folder.id) }}><Icon name="plus" size={13} /> 新建子文件夹</button>
                 <button onClick={() => { setFolderMenu(null); openRenameFolder(folder) }}><Icon name="edit" size={13} /> 重命名</button>
                 <button className="danger" onClick={() => { setFolderMenu(null); setFolderDeleting(folder) }}><Icon name="trash" size={13} /> 删除文件夹</button>
@@ -336,7 +287,6 @@ export default function KnowledgePage() {
             <Icon name={sidebarOpen ? 'back' : 'chevron'} size={16} /> {sidebarOpen ? '收起文件栏' : '展开文件栏'}
           </button>
           <button className="btn" onClick={() => openCreateFolder(isFolderSelected ? selected : null)}><Icon name="plus" size={16} /> 新建文件夹</button>
-          <button className="btn" onClick={() => openNewFile()}><Icon name="file" size={16} /> 新建文件</button>
           <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={16} /> 新建文档</button>
         </div>
       </div>
@@ -363,7 +313,7 @@ export default function KnowledgePage() {
             </span>
           </div>
           {tree.map((folder) => renderFolder(folder, 0))}
-          <div className="kb-hint">点击文件夹右侧「···」可新建文件/子文件夹、重命名或删除；文件可直接展开查看并单独删除。</div>
+          <div className="kb-hint">点击文件夹右侧「···」可新建文档/子文件夹、重命名或删除；文档可直接展开查看并单独删除。</div>
         </aside>
 
         <div className="kb-main">
@@ -437,35 +387,6 @@ export default function KnowledgePage() {
           </div>
         </div>
       </div>
-
-      {showNewFile && (
-        <Modal title="新建文件" onClose={() => setShowNewFile(false)}
-          footer={<>
-            <button className="btn" onClick={() => setShowNewFile(false)}>取消</button>
-            <button className="btn btn-primary" onClick={() => void handleCreateFile()}>创建</button>
-          </>}>
-          <p className="small muted" style={{ marginTop: 0 }}>
-            创建位置：<strong>{newFileParent && folderById.has(newFileParent) ? folderPath(newFileParent, folders) : '未分类'}</strong>
-          </p>
-          <div className="form-field">
-            <label className="form-label">文件类型</label>
-            <div className="segmented">
-              {([['word', 'Word 文档'], ['excel', 'Excel 表格']] as const).map(([value, label]) => (
-                <button key={value} className={newFileType === value ? 'active' : ''} onClick={() => setNewFileType(value)}>{label}</button>
-              ))}
-            </div>
-          </div>
-          <div className="form-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">文件名（无需输入扩展名）</label>
-            <input className="input" value={newFileName} autoFocus
-              onChange={(e) => { setNewFileName(e.target.value); setNewFileError(null) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') void handleCreateFile() }}
-              placeholder={newFileType === 'word' ? '如：申论范文' : '如：错题统计'} />
-            <span className="form-hint">将生成可用 Word / Excel 打开的空白文件，下载后即可编辑。</span>
-          </div>
-          {newFileError && <p className="error-text" style={{ marginBottom: 0 }}>{newFileError}</p>}
-        </Modal>
-      )}
 
       {folderDialog && (
         <Modal title={folderDialog.mode === 'rename' ? '重命名文件夹' : '新建文件夹'} onClose={() => setFolderDialog(null)}
