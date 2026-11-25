@@ -86,7 +86,16 @@ export interface Mistake {
 /* ---------- FlowUs 式块文档 ---------- */
 export type BlockType =
   | 'text' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'quote'
-  | 'code' | 'table' | 'divider' | 'image' | 'link' | 'docref'
+  | 'code' | 'table' | 'divider' | 'image' | 'link' | 'docref' | 'attachment'
+
+/** 块内附件（Base64 DataURL 存储，支持多文件） */
+export interface DocAttachment {
+  id: string
+  name: string
+  fileType: string
+  fileData: string
+  size: number
+}
 
 export interface DocBlock {
   id: string
@@ -101,6 +110,8 @@ export interface DocBlock {
   src?: string
   href?: string
   docId?: string
+  /** 附件列表（attachment 块） */
+  attachments?: DocAttachment[]
 }
 
 /** 知识库文件夹（独立于文档，支持空文件夹与无限层级子文件夹） */

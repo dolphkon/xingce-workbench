@@ -1,4 +1,4 @@
-import type { DocBlock, BlockType } from '../types'
+import type { DocBlock, BlockType, DocAttachment } from '../types'
 import { uid } from './utils'
 
 export function escapeHtml(value: string): string {
@@ -18,6 +18,7 @@ export function makeBlock(type: BlockType = 'text', html = '', text = ''): DocBl
   if (type === 'todo') block.checked = false
   if (type === 'code') block.language = 'javascript'
   if (type === 'table') block.rows = [['', ''], ['', '']]
+  if (type === 'attachment') block.attachments = []
   return block
 }
 
@@ -80,6 +81,8 @@ export function blocksToMarkdown(blocks: DocBlock[]): string {
       case 'image': lines.push(`![${block.text || '图片'}](${block.src ?? ''})`); break
       case 'link': lines.push(`[${block.text || block.href || '链接'}](${block.href ?? ''})`); break
       case 'docref': lines.push(`[文档引用](#${block.docId ?? ''})`); break
+      // 附件数据只存于 blocks（避免 content 副本翻倍撑爆本地存储），Markdown 侧仅保留文件名标记
+      case 'attachment': (block.attachments ?? []).forEach((att) => lines.push(`📎 ${att.name}`)); break
       default: lines.push(md)
     }
   })
@@ -200,6 +203,8 @@ export function blocksToHtml(blocks: DocBlock[], title = ''): string {
       case 'image': return `<img src="${escapeHtml(safeUrl(block.src ?? ''))}" alt="${escapeHtml(block.text)}">`
       case 'link': return `<p><a href="${escapeHtml(safeUrl(block.href ?? ''))}">${escapeHtml(block.text)}</a></p>`
       case 'docref': return `<p><a href="#${escapeHtml(block.docId ?? '')}">文档引用</a></p>`
+      case 'attachment': return (block.attachments ?? []).map((att: DocAttachment) =>
+        `<p>📎 <a href="${escapeHtml(att.fileData)}" download="${escapeHtml(att.name)}">${escapeHtml(att.name)}</a></p>`).join('')
       default: return `<p>${block.html}</p>`
     }
   }).join('\n')

@@ -1,10 +1,35 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { DocBlock, BlockType, KnowledgeDoc } from '../../types'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import type { DocAttachment, DocBlock, BlockType, KnowledgeDoc } from '../../types'
 import { escapeHtml, makeBlock } from '../../lib/blocks'
+import { formatBytes } from '../../lib/docFile'
+import { uid } from '../../lib/utils'
+import { Icon } from '../../components/ui'
 
 type SlashState = { blockId: string; query: string; left: number; top: number }
 type ToolbarState = { blockId: string; left: number; top: number }
 type SlashItem = { id: string; name: string; icon: string; hint: string; type: BlockType }
+
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
+
+function dataUrlBytes(dataUrl: string): number {
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) return 0
+  const payload = dataUrl.slice(comma + 1)
+  if (/;base64/i.test(dataUrl.slice(0, comma))) return Math.floor(payload.replace(/\s/g, '').length * 3 / 4)
+  return new TextEncoder().encode(payload).length
+}
+
+/** 附件图标：按扩展名给出短标签与配色类 */
+function attachmentIcon(name: string, type: string): { label: string; cls: string } {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  if (ext === 'pdf' || type === 'application/pdf') return { label: 'PDF', cls: 'pdf' }
+  if (/ppt|key/.test(ext)) return { label: 'P', cls: 'ppt' }
+  if (/doc|pages/.test(ext)) return { label: 'W', cls: 'doc' }
+  if (/xls|csv|numbers/.test(ext)) return { label: 'X', cls: 'xls' }
+  if (/png|jpe?g|gif|webp|svg|bmp/.test(ext) || type.startsWith('image/')) return { label: '▣', cls: 'img' }
+  if (/txt|md|markdown|json|log/.test(ext) || type.startsWith('text/')) return { label: 'T', cls: 'text' }
+  return { label: '📎', cls: 'file' }
+}
 
 const SLASH_ITEMS: SlashItem[] = [
   { id: 'text', name: '文本', icon: 'T', hint: 'text 正文', type: 'text' },
@@ -21,6 +46,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { id: 'image', name: '插入图片', icon: '▣', hint: 'image 图片', type: 'image' },
   { id: 'link', name: '超链接', icon: '↗', hint: 'link 链接', type: 'link' },
   { id: 'docref', name: '引用文档', icon: '▤', hint: 'doc 文档 引用', type: 'docref' },
+  { id: 'attachment', name: '添加附件', icon: '📎', hint: 'attachment 附件 文件 上传', type: 'attachment' },
 ]
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'html', 'css', 'json', 'bash', 'java', 'go', 'sql']
@@ -88,6 +114,8 @@ interface BlockItemProps {
   block: DocBlock
   total: number
   docs: KnowledgeDoc[]
+  /** 可作为附件引用的文件类文档 */
+  fileDocs: KnowledgeDoc[]
   slashActive: boolean
   dragOver: boolean
   onUpdate: (patch: Partial<DocBlock>) => void
@@ -106,13 +134,68 @@ interface BlockItemProps {
 }
 
 function BlockItem({
-  block, total, docs, slashActive, dragOver, onUpdate, onDelete, onInsertAfter, onEnter,
+  block, total, docs, fileDocs, slashActive, dragOver, onUpdate, onDelete, onInsertAfter, onEnter,
   onSlash, onDragStart, onDragEnd, onDragOver, onDrop, onNavigateDoc, updateCell, addRow, addCol,
 }: BlockItemProps) {
   const ref = useRef<HTMLDivElement>(null)
   const lastHtml = useRef(block.html)
   const mounted = useRef(false)
-  const isRich = !['code', 'table', 'divider', 'image', 'link', 'docref'].includes(block.type)
+  const isRich = !['code', 'table', 'divider', 'image', 'link', 'docref', 'attachment'].includes(block.type)
+
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachTab, setAttachTab] = useState<'upload' | 'reference'>('upload')
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const [attachMenu, setAttachMenu] = useState<{ id: string; left: number; top: number } | null>(null)
+
+  const addAttachments = (items: DocAttachment[]) => {
+    if (!items.length) return
+    onUpdate({ attachments: [...(block.attachments ?? []), ...items], text: `${block.text || '附件'} · ${items.length} 个文件` })
+    setAttachError(null)
+  }
+
+  const readFiles = (files: FileList | null) => {
+    if (!files || !files.length) return
+    const accepted: File[] = []
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i]
+      if (file.size > MAX_ATTACHMENT_BYTES) { setAttachError(`「${file.name}」超过 2MB，请压缩后重试`); continue }
+      accepted.push(file)
+    }
+    if (!accepted.length) return
+    let remaining = accepted.length
+    const results: DocAttachment[] = []
+    accepted.forEach((file) => {
+      const reader = new FileReader()
+      reader.onerror = () => { remaining -= 1; if (remaining === 0 && results.length) addAttachments(results) }
+      reader.onload = () => {
+        results.push({ id: uid(), name: file.name, fileType: file.type || 'application/octet-stream', fileData: String(reader.result), size: file.size })
+        remaining -= 1
+        if (remaining === 0) addAttachments(results)
+      }
+      reader.readAsDataURL(file)
+    })
+    setAttachOpen(false)
+  }
+
+  const removeAttachment = (id: string) => {
+    const next = (block.attachments ?? []).filter((item) => item.id !== id)
+    onUpdate({ attachments: next, text: next.length ? `附件 · ${next.length} 个文件` : '' })
+    setAttachMenu(null)
+  }
+
+  const onAttachContext = (event: ReactMouseEvent, id: string) => {
+    event.preventDefault()
+    setAttachMenu({ id, left: Math.min(event.clientX, window.innerWidth - 130), top: Math.min(event.clientY, window.innerHeight - 90) })
+  }
+
+  useEffect(() => {
+    if (!attachMenu) return
+    const close = () => setAttachMenu(null)
+    const onKey = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') close() }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', onKey) }
+  }, [attachMenu])
 
   useEffect(() => {
     const el = ref.current
@@ -244,6 +327,74 @@ function BlockItem({
         </div>
       )
     }
+    if (block.type === 'attachment') {
+      const attachments = block.attachments ?? []
+      return (
+        <div className="kb-be-attach-block">
+          {attachments.length > 0 && (
+            <div className="kb-be-attach-list">
+              {attachments.map((att) => {
+                const icon = attachmentIcon(att.name, att.fileType)
+                return (
+                  <div key={att.id} className="kb-be-attach-item" onContextMenu={(e) => onAttachContext(e, att.id)}>
+                    <span className={`kb-be-attach-icon ${icon.cls}`}>{icon.label}</span>
+                    <a className="kb-be-attach-name" href={att.fileData} download={att.name} title={att.name}
+                      onClick={(e) => e.stopPropagation()}>{att.name}</a>
+                    <span className="kb-be-attach-size">{formatBytes(att.fileData) || `${Math.round(att.size / 1024)} KB`}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <button className="kb-be-attach-add" onClick={() => { setAttachTab('upload'); setAttachError(null); setAttachOpen((v) => !v) }}>
+            📎 添加附件
+          </button>
+
+          {attachOpen && (
+            <div className="kb-be-attach-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="kb-be-attach-tabs">
+                <button className={attachTab === 'upload' ? 'active' : ''} onClick={() => { setAttachTab('upload'); setAttachError(null) }}>上传</button>
+                <button className={attachTab === 'reference' ? 'active' : ''} onClick={() => { setAttachTab('reference'); setAttachError(null) }}>引用文件</button>
+              </div>
+              {attachTab === 'upload' ? (
+                <div className="kb-be-attach-pane">
+                  <p className="kb-be-attach-hint">空间：单个文件大小不超过 2MB</p>
+                  <label className="kb-be-attach-choose">选择文件（支持多选）
+                    <input type="file" multiple hidden onChange={(e) => readFiles(e.target.files)} />
+                  </label>
+                  {attachError && <p className="kb-be-attach-error">{attachError}</p>}
+                </div>
+              ) : (
+                <div className="kb-be-attach-pane">
+                  {fileDocs.length === 0
+                    ? <p className="kb-be-attach-hint">知识库中暂无文件类文档</p>
+                    : (
+                      <div className="kb-be-attach-refs">
+                        {fileDocs.map((file) => (
+                          <button key={file.id} title={file.fileName}
+                            onClick={() => {
+                              addAttachments([{ id: uid(), name: file.fileName || file.title, fileType: file.fileType || 'application/octet-stream', fileData: file.fileData ?? '', size: dataUrlBytes(file.fileData ?? '') }])
+                              setAttachOpen(false)
+                            }}>
+                            📎 {file.fileName || file.title} <span className="kb-be-attach-size">{formatBytes(file.fileData)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {attachMenu && (
+            <div className="kb-be-attach-menu" style={{ left: attachMenu.left, top: attachMenu.top }}
+              onClick={(e) => e.stopPropagation()}>
+              <button className="danger" onClick={() => removeAttachment(attachMenu.id)}><Icon name="trash" size={13} /> 删除文件</button>
+            </div>
+          )}
+        </div>
+      )
+    }
     if (block.type === 'link') {
       return block.href ? (
         <p className="kb-be-link"><a href={block.href} target="_blank" rel="noreferrer">{block.text || block.href}</a></p>
@@ -306,11 +457,13 @@ function BlockItem({
 interface BlockEditorProps {
   blocks: DocBlock[]
   docs?: KnowledgeDoc[]
+  /** 可引用的文件类文档（有 fileData） */
+  fileDocs?: KnowledgeDoc[]
   onChangeBlocks: (blocks: DocBlock[]) => void
   onNavigateDoc?: (id: string) => void
 }
 
-export default function BlockEditor({ blocks, docs = [], onChangeBlocks, onNavigateDoc }: BlockEditorProps) {
+export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChangeBlocks, onNavigateDoc }: BlockEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -419,6 +572,7 @@ export default function BlockEditor({ blocks, docs = [], onChangeBlocks, onNavig
     if (item.type === 'image') patch.src = ''
     if (item.type === 'link') patch.href = ''
     if (item.type === 'docref') patch.docId = docs[0]?.id
+    if (item.type === 'attachment') patch.attachments = []
     updateBlock(slash.blockId, patch)
     setSlash(null)
     focusBlock(slash.blockId)
@@ -447,7 +601,7 @@ export default function BlockEditor({ blocks, docs = [], onChangeBlocks, onNavig
   return (
     <div className="kb-be-editor" ref={containerRef} onClick={() => { if (slash) setSlash(null) }}>
       {blocks.map((block) => (
-        <BlockItem key={block.id} block={block} total={blocks.length} docs={docs}
+        <BlockItem key={block.id} block={block} total={blocks.length} docs={docs} fileDocs={fileDocs}
           slashActive={slash?.blockId === block.id}
           dragOver={dragOverId === block.id && dragId !== block.id}
           onUpdate={(patch) => updateBlock(block.id, patch)}

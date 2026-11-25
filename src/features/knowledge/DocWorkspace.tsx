@@ -44,6 +44,7 @@ export default function DocWorkspace({
   const isFileDoc = doc?.kind === 'file' && Boolean(doc.fileData)
   const fileKind = useMemo(() => docFileKind(doc?.fileName, doc?.fileType), [doc?.fileName, doc?.fileType])
   const refDocs = useMemo(() => docs.filter((item) => item.id !== doc?.id && item.kind !== 'file'), [docs, doc?.id])
+  const fileDocs = useMemo(() => docs.filter((item) => item.kind === 'file' && Boolean(item.fileData)), [docs])
 
   // 仅在切换文档时重建本地状态，列表刷新不应打断正在书写的内容
   useEffect(() => {
@@ -171,6 +172,7 @@ export default function DocWorkspace({
     <BlockEditor
       blocks={blocks}
       docs={refDocs}
+      fileDocs={fileDocs}
       onChangeBlocks={(next) => {
         setBlocks(next)
         setDoc((prev) => (prev ? { ...prev, blocks: next, content: blocksToMarkdown(next) } : prev))
@@ -212,8 +214,8 @@ export default function DocWorkspace({
           </div>
         </div>
         <div className="fw-doc-actions">
-          <button className="fw-action" onClick={() => { setImmersive(true) }} title="沉浸式全屏">
-            <Icon name="expand" size={15} /> 全屏沉浸
+          <button className="fw-action" onClick={() => { setImmersive(true) }} title="全屏阅读">
+            <Icon name="expand" size={15} /> 全屏阅读
           </button>
           {doc.tencentUrl && (
             <a className="fw-action" href={doc.tencentUrl} target="_blank" rel="noreferrer" title="打开腾讯文档"><Icon name="link" size={15} /> 腾讯文档</a>
@@ -317,7 +319,7 @@ export default function DocWorkspace({
       )}
 
       {immersive && (
-        <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="全屏沉浸">
+        <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="全屏阅读">
           <div className="kb-immersive-bar">
             <button className="kb-immersive-back" onClick={closeImmersive}><Icon name="back" size={16} /> 返回工作台</button>
             <span className="small light">{isFileDoc
