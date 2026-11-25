@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import type { DocAttachment, DocBlock, BlockType, KnowledgeDoc } from '../../types'
 import { escapeHtml, makeBlock } from '../../lib/blocks'
 import { formatBytes } from '../../lib/docFile'
@@ -51,6 +51,40 @@ function videoEmbedUrl(src: string): string | null {
   if (match) return `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(match[1])}&page=1&high_quality=1`
   return null
 }
+
+/** 本地视频以 Blob URL 播放：避免浏览器反复解码整段 base64 DataURL 造成卡顿 */
+function dataVideoToBlobUrl(src: string): string {
+  if (!/^data:video\//i.test(src)) return src
+  try {
+    const comma = src.indexOf(',')
+    if (comma < 0) return src
+    const meta = src.slice(0, comma)
+    const payload = src.slice(comma + 1)
+    const mime = /data:([^;,]+)/i.exec(meta)?.[1] || 'video/mp4'
+    let bytes: Uint8Array
+    if (/;base64/i.test(meta)) {
+      const binary = atob(payload.replace(/\s/g, ''))
+      bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(payload))
+    }
+    return URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: mime }))
+  } catch {
+    return src
+  }
+}
+
+/** 独立记忆化组件：编辑其他块时不会重建 <video>，播放进度不受影响 */
+const VideoPlayer = memo(function VideoPlayer({ src }: { src: string }) {
+  const [playable, setPlayable] = useState(src)
+  useEffect(() => {
+    const url = dataVideoToBlobUrl(src)
+    setPlayable(url)
+    return () => { if (url.startsWith('blob:')) URL.revokeObjectURL(url) }
+  }, [src])
+  return <video src={playable} controls playsInline preload="metadata" />
+})
 
 const SLASH_ITEMS: SlashItem[] = [
   { id: 'text', name: '文本', icon: 'T', hint: 'text 正文', type: 'text' },
@@ -432,7 +466,7 @@ function BlockItem({
             {embed ? (
               <iframe src={embed} title={block.text || '在线视频'} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
             ) : playable ? (
-              <video src={playable} controls playsInline preload="metadata" />
+              <VideoPlayer src={playable} />
             ) : (
               <div className="kb-be-video-invalid">视频地址无效，请重新粘贴或选择本地视频</div>
             )}

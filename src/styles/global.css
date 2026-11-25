@@ -1043,6 +1043,13 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .fr-unsupported { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 320px; text-align: center; }
 .fr-unsupported h3 { margin: 6px 0 0; font-size: 16px; }
 .fr-unsupported p { margin: 0; font-size: 13px; color: var(--text-muted); }
+/* Office 原版式阅读：去掉通用纸张内边距，让文档/幻灯片按自身版式铺开 */
+.fr-paper-office { width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.fr-office { width: 100%; min-height: 320px; }
+.fr-office-pptx .pptx-preview-wrapper { padding: 18px 0; background: #eef0f4 !important; box-sizing: border-box; }
+.fr-office-pptx .pptx-preview-slide-wrapper { box-shadow: 0 6px 24px rgba(15,23,42,.12); }
+.fr-office-docx .fr-docx-wrapper, .fr-office-docx .docx-wrapper { padding: 0 !important; background: transparent !important; }
+.fr-office-docx .fr-docx, .fr-office-docx section.docx { margin: 0 auto 20px !important; box-shadow: 0 6px 24px rgba(15,23,42,.12) !important; border-radius: 4px; }
 
 @media (max-width: 900px) {
   .fw-workspace { margin: -18px -16px -40px; width: calc(100% + 32px); height: calc(100vh - 64px); }

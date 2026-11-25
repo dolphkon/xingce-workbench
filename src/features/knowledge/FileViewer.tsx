@@ -1,8 +1,7 @@
 /** 应用内文件阅读器：统一用于知识库文件文档、全屏阅读与附件预览。
  *  采用「文档页」式版面（纸张、页边距、缩放、工具栏），支持 PDF / 图片 /
  *  DOCX / XLSX / PPTX / Markdown / TXT / CSV / JSON 等常见格式。 */
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
-import mammoth from 'mammoth'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
 import { Icon } from '../../components/ui'
@@ -12,6 +11,13 @@ import { formatBytes } from '../../lib/docFile'
 type PreviewKind = 'pdf' | 'image' | 'text' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'unknown'
 
 interface SlideData { text: string[]; images: string[] }
+
+/** 需要按原始版式渲染的 Office 文件：由专用渲染器直接操作 DOM */
+type NativeRender = {
+  kind: 'docx' | 'pptx'
+  buffer: ArrayBuffer
+  fallback?: ReactNode
+} | null
 
 function detectKind(name: string, type: string): PreviewKind {
   const lower = name.toLowerCase()
@@ -123,13 +129,14 @@ async function parsePptx(buffer: ArrayBuffer): Promise<SlideData[]> {
 
 function useParsedFile(fileData: string, kind: PreviewKind) {
   const [content, setContent] = useState<ReactNode>(null)
+  const [native, setNative] = useState<NativeRender>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     const render = async () => {
-      setLoading(true); setError(null); setContent(null)
+      setLoading(true); setError(null); setContent(null); setNative(null)
       try {
         if (kind === 'pdf' || kind === 'image') {
           if (!cancelled) setLoading(false)
@@ -138,8 +145,15 @@ function useParsedFile(fileData: string, kind: PreviewKind) {
         const buffer = decodeDataUrl(fileData)
         if (!buffer) throw new Error('文件数据无效')
         if (kind === 'docx') {
-          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
-          if (!cancelled) setContent(<div className="fr-rich" dangerouslySetInnerHTML={{ __html: sanitizeMammothHtml(result.value) }} />)
+          // 优先使用保留版式的渲染器；不可用时回退到文本抽取
+          try {
+            await import('docx-preview')
+            if (!cancelled) setNative({ kind: 'docx', buffer })
+          } catch {
+            const { default: mammoth } = await import('mammoth')
+            const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+            if (!cancelled) setContent(<div className="fr-rich" dangerouslySetInnerHTML={{ __html: sanitizeMammothHtml(result.value) }} />)
+          }
         } else if (kind === 'xlsx') {
           const workbook = XLSX.read(buffer, { type: 'array' })
           const sheets = workbook.SheetNames.map((name) => ({
@@ -158,8 +172,9 @@ function useParsedFile(fileData: string, kind: PreviewKind) {
             </div>,
           )
         } else if (kind === 'pptx') {
+          // 原版式幻灯片渲染；解析失败时回退到文字/图片版
           const slides = await parsePptx(buffer)
-          if (!cancelled) setContent(
+          const fallback = (
             <div className="fr-slides">
               <div className="fr-page-heading">幻灯片 · 共 {slides.length} 页</div>
               {slides.map((slide, index) => (
@@ -170,8 +185,9 @@ function useParsedFile(fileData: string, kind: PreviewKind) {
                   {!slide.text.length && !slide.images.length && <p className="fr-muted">（此页无可提取文字或图片）</p>}
                 </section>
               ))}
-            </div>,
+            </div>
           )
+          if (!cancelled) setNative({ kind: 'pptx', buffer, fallback })
         } else if (kind === 'csv') {
           const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
           const rows = parseCsv(text)
@@ -210,7 +226,65 @@ function useParsedFile(fileData: string, kind: PreviewKind) {
     return () => { cancelled = true }
   }, [kind, fileData])
 
-  return { content, loading, error }
+  return { content, native, loading, error }
+}
+
+/** Office 原版式渲染器：按文件原始排版输出 DOM，接近 PDF 阅读效果 */
+function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    let cancelled = false
+    let destroy: (() => void) | null = null
+    host.innerHTML = ''
+    setFailed(false)
+
+    void (async () => {
+      try {
+        if (request.kind === 'docx') {
+          const { renderAsync } = await import('docx-preview')
+          if (cancelled) return
+          await renderAsync(request.buffer, host, host, {
+            className: 'fr-docx',
+            inWrapper: true,
+            breakPages: true,
+            ignoreLastRenderedPageBreak: false,
+            useBase64URL: true,
+          })
+        } else {
+          const { init } = await import('pptx-preview')
+          if (cancelled) return
+          const width = Math.max(320, Math.min(host.clientWidth || 960, 1280))
+          const viewer = init(host, { width, mode: 'list' })
+          destroy = () => viewer.destroy()
+          await viewer.preview(request.buffer)
+        }
+      } catch {
+        if (!cancelled) setFailed(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      try { destroy?.() } catch { /* 预览器已销毁 */ }
+      host.innerHTML = ''
+    }
+  }, [request])
+
+  if (failed && request.fallback) return <>{request.fallback}</>
+  if (failed) {
+    return (
+      <div className="fr-unsupported">
+        <div className="empty-icon"><Icon name="file" size={26} /></div>
+        <h3>原版式渲染失败</h3>
+        <p>可点击右上角下载后用本地软件打开</p>
+      </div>
+    )
+  }
+  return <div ref={hostRef} className={`fr-office fr-office-${request.kind}`} />
 }
 
 export interface FileReaderProps {
@@ -231,7 +305,7 @@ export function FileReader({
   onClose, onFullscreen, fullscreenLabel = '全屏阅读', className = '',
 }: FileReaderProps) {
   const kind = useMemo(() => detectKind(fileName, fileType), [fileName, fileType])
-  const { content, loading, error } = useParsedFile(fileData, kind)
+  const { content, native, loading, error } = useParsedFile(fileData, kind)
   const [zoom, setZoom] = useState(1)
 
   useEffect(() => { setZoom(1) }, [fileData, fileName])
@@ -280,11 +354,13 @@ export function FileReader({
       {loading && <div className="fr-loading">正在解析文档…</div>}
       {error && <div className="fr-error">解析失败：{error}</div>}
       {!loading && !error && (
-        <div className="fr-paper" style={{ '--fr-zoom': zoom } as CSSProperties}>
+        <div className={`fr-paper${native ? ' fr-paper-office' : ''}`} style={{ '--fr-zoom': zoom } as CSSProperties}>
           {kind === 'pdf' ? (
             <iframe src={`${fileData}#toolbar=0&navpanes=0&view=FitH`} title={title} className="fr-frame" />
           ) : kind === 'image' ? (
             <img src={fileData} alt={title} className="fr-image" />
+          ) : native ? (
+            <OfficeRenderer request={native} />
           ) : content}
         </div>
       )}

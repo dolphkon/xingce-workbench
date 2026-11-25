@@ -269,13 +269,13 @@ export default function MistakeDetail() {
         )}
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">关联母题</h2>
-          {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
-        </div>
-        <div className="card-body">
-          {relatedMothersList.length > 0 ? (
+      {relatedMothersList.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">关联母题</h2>
+            {item.point && <span className="chip chip-warning">考点：{item.point}</span>}
+          </div>
+          <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {relatedMothersList.map((m) => (
                 <Link key={m.id} to={`/mothers/${m.id}`} className="row" style={{ justifyContent: 'space-between' }}>
@@ -287,13 +287,9 @@ export default function MistakeDetail() {
                 </Link>
               ))}
             </div>
-          ) : (
-            <p className="muted small" style={{ margin: 0 }}>
-              {item.point ? `暂无考点为「${item.point}」的母题，可在母题库中按此考点创建。` : '尚未设置考点，在编辑中选择考点即可自动关联母题。'}
-            </p>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <QuestionNavigator
         items={navItems}
