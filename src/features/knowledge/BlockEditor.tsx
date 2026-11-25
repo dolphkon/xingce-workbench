@@ -10,7 +10,8 @@ type MentionState = { blockId: string; query: string; left: number; top: number 
 type ToolbarState = { blockId: string; left: number; top: number }
 type SlashItem = { id: string; name: string; icon: string; hint: string; type: BlockType }
 
-const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
+/** 插入后需要在下方补一个空文本块的基础块类型（这些块自身不可直接输入文字） */
+const TEXT_AFTER_TYPES: BlockType[] = ['code', 'table', 'divider', 'image', 'link']
 
 function dataUrlBytes(dataUrl: string): number {
   const comma = dataUrl.indexOf(',')
@@ -46,7 +47,6 @@ const SLASH_ITEMS: SlashItem[] = [
   { id: 'divider', name: '分割线', icon: '―', hint: 'divider 分割线', type: 'divider' },
   { id: 'image', name: '插入图片', icon: '▣', hint: 'image 图片', type: 'image' },
   { id: 'link', name: '超链接', icon: '↗', hint: 'link 链接', type: 'link' },
-  { id: 'docref', name: '引用文档', icon: '▤', hint: 'doc 文档 引用', type: 'docref' },
   { id: 'attachment', name: '插入附件', icon: '📎', hint: 'attachment 附件 文件 上传', type: 'attachment' },
 ]
 
@@ -186,11 +186,7 @@ function BlockItem({
   const readFiles = (files: FileList | null) => {
     if (!files || !files.length) return
     const accepted: File[] = []
-    for (let i = 0; i < files.length; i += 1) {
-      const file = files[i]
-      if (file.size > MAX_ATTACHMENT_BYTES) { setAttachError(`「${file.name}」超过 2MB，请压缩后重试`); continue }
-      accepted.push(file)
-    }
+    for (let i = 0; i < files.length; i += 1) accepted.push(files[i])
     if (!accepted.length) return
     let remaining = accepted.length
     const results: DocAttachment[] = []
@@ -399,8 +395,12 @@ function BlockItem({
                 return (
                   <div key={att.id} className="kb-be-attach-item" onContextMenu={(e) => onAttachContext(e, att.id)}>
                     <span className={`kb-be-attach-icon ${icon.cls}`}>{icon.label}</span>
-                    {/* 文件名仅作展示，单击不再触发下载；右键仍可删除 */}
-                    <span className="kb-be-attach-name" title={att.name}>{att.name}</span>
+                    {/* 单击文件名在新标签打开预览（PDF/图片等），右键仍可删除 */}
+                    <span className="kb-be-attach-name" title={`打开：${att.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (att.fileData) window.open(att.fileData, '_blank', 'noopener,noreferrer')
+                      }}>{att.name}</span>
                     <span className="kb-be-attach-size">{formatBytes(att.fileData) || `${Math.round(att.size / 1024)} KB`}</span>
                   </div>
                 )
@@ -438,7 +438,7 @@ function BlockItem({
               </div>
               {attachTab === 'upload' ? (
                 <div className="kb-be-attach-pane">
-                  <p className="kb-be-attach-hint">空间：单个文件大小不超过 2MB</p>
+                  <p className="kb-be-attach-hint">支持多文件；大文件建议压缩以获得更快的同步速度</p>
                   <label className="kb-be-attach-choose">选择文件（支持多选）
                     <input type="file" multiple hidden onChange={(e) => readFiles(e.target.files)} />
                   </label>
@@ -545,6 +545,47 @@ interface BlockEditorProps {
 
 export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChangeBlocks, onNavigateDoc }: BlockEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // 撤销/重做：历史快照栈；blocksRef 始终指向最新 blocks，避免快速连续操作时闭包读到旧值
+  const blocksRef = useRef(blocks)
+  blocksRef.current = blocks
+  const historyRef = useRef<DocBlock[][]>([])
+  const futureRef = useRef<DocBlock[][]>([])
+  const lastMergeRef = useRef<string | null>(null)
+  const lastCommitAtRef = useRef(0)
+
+  /** 统一提交：记录历史后输出新 blocks。mergeKey 相同且间隔 <800ms 的连续变更合并为一条历史（如打字） */
+  const commit = (next: DocBlock[], mergeKey?: string) => {
+    const now = Date.now()
+    const canMerge = Boolean(mergeKey) && mergeKey === lastMergeRef.current && now - lastCommitAtRef.current < 800
+    if (!canMerge) {
+      historyRef.current.push(blocksRef.current)
+      if (historyRef.current.length > 100) historyRef.current.shift()
+    }
+    lastMergeRef.current = mergeKey ?? null
+    lastCommitAtRef.current = now
+    futureRef.current = []
+    blocksRef.current = next
+    onChangeBlocks(next)
+  }
+
+  const undo = () => {
+    const prev = historyRef.current.pop()
+    if (!prev) return
+    futureRef.current.push(blocksRef.current)
+    lastMergeRef.current = null
+    blocksRef.current = prev
+    onChangeBlocks(prev)
+  }
+
+  const redo = () => {
+    const next = futureRef.current.pop()
+    if (!next) return
+    historyRef.current.push(blocksRef.current)
+    lastMergeRef.current = null
+    blocksRef.current = next
+    onChangeBlocks(next)
+  }
+
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [mention, setMention] = useState<MentionState | null>(null)
@@ -572,6 +613,23 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
 
   useEffect(() => { setSlashIndex(0) }, [slash?.query])
   useEffect(() => { setMentionIndex(0) }, [mention?.query])
+
+  // 撤销/重做：拦截 Ctrl/Cmd+Z（撤销）、Ctrl/Cmd+Shift+Z 与 Ctrl+Y（重做）
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey
+      if (!mod || event.key.toLowerCase() !== 'z' && event.key.toLowerCase() !== 'y') return
+      const isRedo = event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z')
+      event.preventDefault()
+      event.stopPropagation()
+      setSlash(null)
+      setMention(null)
+      setToolbar(null)
+      if (isRedo) redo(); else undo()
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  })
 
   useEffect(() => {
     if (!slash && !mention) return
@@ -628,8 +686,12 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
     return () => document.removeEventListener('selectionchange', handler)
   }, [])
 
-  const updateBlock = (id: string, patch: Partial<DocBlock>) => {
-    onChangeBlocks(blocks.map((block) => block.id === id ? { ...block, ...patch } : block))
+  const updateBlock = (id: string, patch: Partial<DocBlock>, mergeKey?: string) => {
+    // 仅改 html/text 视为文字编辑，连续输入合并为一条历史；其余（类型/附件/表格等）为结构操作，单独记录
+    const keys = Object.keys(patch)
+    const textOnly = keys.length > 0 && keys.every((key) => key === 'html' || key === 'text')
+    const key = mergeKey ?? (textOnly ? `text:${id}` : undefined)
+    commit(blocksRef.current.map((block) => block.id === id ? { ...block, ...patch } : block), key)
   }
 
   const focusBlock = (id: string) => {
@@ -640,33 +702,33 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   }
 
   const insertAfter = (id: string, type: BlockType = 'text') => {
-    const index = blocks.findIndex((block) => block.id === id)
+    const index = blocksRef.current.findIndex((block) => block.id === id)
     if (index < 0) return
     const block = makeBlock(type)
-    const next = [...blocks]
+    const next = [...blocksRef.current]
     next.splice(index + 1, 0, block)
-    onChangeBlocks(next)
+    commit(next)
     focusBlock(block.id)
   }
 
   const deleteBlock = (id: string) => {
-    const index = blocks.findIndex((block) => block.id === id)
+    const index = blocksRef.current.findIndex((block) => block.id === id)
     if (index < 0) return
-    if (blocks.length === 1) { updateBlock(id, { type: 'text', html: '', text: '' }); focusBlock(id); return }
-    const next = blocks.filter((block) => block.id !== id)
-    onChangeBlocks(next)
+    if (blocksRef.current.length === 1) { updateBlock(id, { type: 'text', html: '', text: '' }); focusBlock(id); return }
+    const next = blocksRef.current.filter((block) => block.id !== id)
+    commit(next)
     focusBlock(next[Math.max(0, index - 1)].id)
   }
 
   const moveBlock = (fromId: string, toId: string) => {
     if (!fromId || fromId === toId) return
-    const next = [...blocks]
+    const next = [...blocksRef.current]
     const from = next.findIndex((block) => block.id === fromId)
     const to = next.findIndex((block) => block.id === toId)
     if (from < 0 || to < 0) return
     const [item] = next.splice(from, 1)
     next.splice(to, 0, item)
-    onChangeBlocks(next)
+    commit(next)
     setDragId(null)
     setDragOverId(null)
   }
@@ -687,9 +749,20 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
       patch.attachments = []
       setAutoOpenAttachId(slash.blockId)
     }
-    updateBlock(slash.blockId, patch)
+    // 转换块 + 必要时补一个空文本块，合并为一次提交（撤销时整体回退）
+    const index = blocksRef.current.findIndex((block) => block.id === slash.blockId)
+    const next = blocksRef.current.map((block) => block.id === slash.blockId ? { ...block, ...patch } : block)
+    let focusId = slash.blockId
+    // 需求2：代码块/表格/分割线/图片/超链接完成后自动在下方加文本行，光标移过去即可输入
+    // 附件块自身已带说明文字区，无需再加
+    if (index >= 0 && TEXT_AFTER_TYPES.includes(item.type)) {
+      const textBlock = makeBlock('text')
+      next.splice(index + 1, 0, textBlock)
+      focusId = textBlock.id
+    }
+    commit(next)
     setSlash(null)
-    focusBlock(slash.blockId)
+    focusBlock(focusId)
   }
 
   /** 在块的 contentEditable 中把 @query 替换成不可编辑的文档 chip */

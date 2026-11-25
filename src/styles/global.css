@@ -814,7 +814,7 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .kb-be-attach-icon.img { background: #8b5cf6; }
 .kb-be-attach-icon.text { background: #64748b; }
 .kb-be-attach-icon.file { background: transparent; font-size: 14px; }
-.kb-be-attach-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; cursor: default; }
+.kb-be-attach-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .kb-be-attach-size { flex: 0 0 auto; font-size: 11px; color: var(--text-light); }
 /* 附件块内的说明文字区：与文件行共存，支持选中呼出格式工具栏 */
 .kb-be-content-attachment { min-height: 1.6em; padding: 4px 4px 2px; }
