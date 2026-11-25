@@ -86,7 +86,7 @@ export interface Mistake {
 /* ---------- FlowUs 式块文档 ---------- */
 export type BlockType =
   | 'text' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'quote'
-  | 'code' | 'table' | 'divider' | 'image' | 'link' | 'docref' | 'attachment'
+  | 'code' | 'table' | 'divider' | 'image' | 'video' | 'link' | 'docref' | 'attachment'
 
 /** 块内附件（Base64 DataURL 存储，支持多文件） */
 export interface DocAttachment {

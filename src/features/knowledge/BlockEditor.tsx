@@ -12,7 +12,7 @@ type ToolbarState = { blockId: string; left: number; top: number }
 type SlashItem = { id: string; name: string; icon: string; hint: string; type: BlockType }
 
 /** 插入后需要在下方补一个空文本块的基础块类型（这些块自身不可直接输入文字） */
-const TEXT_AFTER_TYPES: BlockType[] = ['code', 'table', 'divider', 'image', 'link']
+const TEXT_AFTER_TYPES: BlockType[] = ['code', 'table', 'divider', 'image', 'video', 'link']
 
 function dataUrlBytes(dataUrl: string): number {
   const comma = dataUrl.indexOf(',')
@@ -34,6 +34,24 @@ function attachmentIcon(name: string, type: string): { label: string; cls: strin
   return { label: '📎', cls: 'file' }
 }
 
+/** 视频地址白名单：外链 / 本地 DataURL / 站内相对路径 */
+function safeMediaUrl(url: string): string {
+  const value = url.trim()
+  return /^(https?:\/\/|data:video\/|\/|\.\/)/i.test(value) ? value : ''
+}
+
+/** 常见在线视频地址 → 可内嵌播放地址；其他地址交给 <video> 直接播放 */
+function videoEmbedUrl(src: string): string | null {
+  const url = src.trim()
+  let match = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?(?:.*&)?v=([^&#]+)/i.exec(url)
+  if (match) return `https://www.youtube.com/embed/${encodeURIComponent(match[1])}`
+  match = /^https?:\/\/youtu\.be\/([^?#]+)/i.exec(url)
+  if (match) return `https://www.youtube.com/embed/${encodeURIComponent(match[1])}`
+  match = /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(url)
+  if (match) return `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(match[1])}&page=1&high_quality=1`
+  return null
+}
+
 const SLASH_ITEMS: SlashItem[] = [
   { id: 'text', name: '文本', icon: 'T', hint: 'text 正文', type: 'text' },
   { id: 'h1', name: '标题 H1', icon: 'H¹', hint: 'h1 一级标题', type: 'h1' },
@@ -47,8 +65,9 @@ const SLASH_ITEMS: SlashItem[] = [
   { id: 'table', name: '表格', icon: '▦', hint: 'table 表格', type: 'table' },
   { id: 'divider', name: '分割线', icon: '―', hint: 'divider 分割线', type: 'divider' },
   { id: 'image', name: '插入图片', icon: '▣', hint: 'image 图片', type: 'image' },
+  { id: 'video', name: '插入视频', icon: '▶', hint: 'video 视频 播放', type: 'video' },
   { id: 'link', name: '超链接', icon: '↗', hint: 'link 链接', type: 'link' },
-  { id: 'attachment', name: '插入附件', icon: '📎', hint: 'attachment 附件 文件 上传', type: 'attachment' },
+  { id: 'attachment', name: '插入文件', icon: '📎', hint: 'file 附件 文件 上传', type: 'attachment' },
 ]
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'html', 'css', 'json', 'bash', 'java', 'go', 'sql']
@@ -149,6 +168,8 @@ interface BlockItemProps {
   onCancelEmptyAttach: () => void
   /** 打开附件：交给父级在应用内阅读层展示 */
   onOpenFile: (att: DocAttachment) => void
+  /** 查看大图：交给父级在灯箱层展示 */
+  onOpenImage: (src: string, alt: string) => void
   /** @ 提及菜单状态 */
   onMention: (state: MentionState | null) => void
   mentionActive: boolean
@@ -160,13 +181,15 @@ interface BlockItemProps {
 function BlockItem({
   block, total, docs, fileDocs, slashActive, dragOver, onUpdate, onDelete, onInsertAfter, onEnter,
   onSlash, onDragStart, onDragEnd, onDragOver, onDrop, onNavigateDoc,
-  autoOpenAttach, onCancelEmptyAttach, onOpenFile, onMention, mentionActive, updateCell, addRow, addCol,
+  autoOpenAttach, onCancelEmptyAttach, onOpenFile, onOpenImage, onMention, mentionActive, updateCell, addRow, addCol,
 }: BlockItemProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const videoFrameRef = useRef<HTMLDivElement>(null)
   const lastHtml = useRef(block.html)
   const mounted = useRef(false)
-  const isRich = !['code', 'table', 'divider', 'image', 'link', 'docref', 'attachment'].includes(block.type)
+  const isRich = !['code', 'table', 'divider', 'image', 'video', 'link', 'docref', 'attachment'].includes(block.type)
 
+  const [imgZoom, setImgZoom] = useState(1)
   const [attachOpen, setAttachOpen] = useState(false)
   const [attachTab, setAttachTab] = useState<'upload' | 'reference'>('upload')
   const [attachError, setAttachError] = useState<string | null>(null)
@@ -364,9 +387,21 @@ function BlockItem({
     }
     if (block.type === 'divider') return <hr className="kb-be-divider" />
     if (block.type === 'image') {
-      return block.src ? (
-        <figure className="kb-be-media">
-          <img src={block.src} alt={block.text || '图片'} />
+      const src = block.src ?? ''
+      const alt = block.text || '图片'
+      return src ? (
+        <figure className="kb-be-media kb-be-image">
+          <div className="kb-be-image-stage">
+            <img src={src} alt={alt} style={{ zoom: imgZoom }} title="点击查看大图"
+              onClick={() => onOpenImage(src, alt)} />
+            <div className="kb-be-image-tools" onClick={(e) => e.stopPropagation()}>
+              <button title="缩小" onClick={() => setImgZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100))}>−</button>
+              <span>{Math.round(imgZoom * 100)}%</span>
+              <button title="放大" onClick={() => setImgZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 100) / 100))}>+</button>
+              <button onClick={() => setImgZoom(1)}>复位</button>
+              <button className="primary" onClick={() => onOpenImage(src, alt)}>查看大图</button>
+            </div>
+          </div>
           <figcaption contentEditable suppressContentEditableWarning
             onBlur={(e) => onUpdate({ text: e.currentTarget.innerText })}>{block.text}</figcaption>
         </figure>
@@ -377,6 +412,46 @@ function BlockItem({
           }} />
           <label className="kb-be-file-btn">或选择本地图片
             <input type="file" accept="image/*" hidden onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (!file) return
+              const reader = new FileReader()
+              reader.onload = () => onUpdate({ src: String(reader.result), text: file.name })
+              reader.readAsDataURL(file)
+            }} />
+          </label>
+        </div>
+      )
+    }
+    if (block.type === 'video') {
+      const src = block.src ?? ''
+      const embed = videoEmbedUrl(src)
+      const playable = safeMediaUrl(src)
+      return src ? (
+        <figure className="kb-be-media kb-be-video">
+          <div className="kb-be-video-frame" ref={videoFrameRef}>
+            {embed ? (
+              <iframe src={embed} title={block.text || '在线视频'} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+            ) : playable ? (
+              <video src={playable} controls playsInline preload="metadata" />
+            ) : (
+              <div className="kb-be-video-invalid">视频地址无效，请重新粘贴或选择本地视频</div>
+            )}
+          </div>
+          <div className="kb-be-video-tools">
+            <button onClick={() => { if (videoFrameRef.current?.requestFullscreen) void videoFrameRef.current.requestFullscreen() }}>全屏播放</button>
+            <span>{block.text || '视频'}</span>
+            {(embed || playable) && <a href={embed || playable} target="_blank" rel="noreferrer">新窗口打开</a>}
+          </div>
+          <figcaption contentEditable suppressContentEditableWarning
+            onBlur={(e) => onUpdate({ text: e.currentTarget.innerText })}>{block.text}</figcaption>
+        </figure>
+      ) : (
+        <div className="kb-be-media-empty">
+          <input className="kb-be-input" placeholder="粘贴视频 URL（mp4 / YouTube / B站）" onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.currentTarget.value.trim()) onUpdate({ src: e.currentTarget.value.trim(), text: '视频' })
+          }} />
+          <label className="kb-be-file-btn">或选择本地视频
+            <input type="file" accept="video/*" hidden onChange={(e) => {
               const file = e.target.files?.[0]
               if (!file) return
               const reader = new FileReader()
@@ -425,7 +500,7 @@ function BlockItem({
               if (attachOpen) closeAttachPanel()
               else { setAttachTab('upload'); setAttachError(null); setAttachOpen(true) }
             }}>
-              📎 添加附件
+              ＋ 添加文件
             </button>
           )}
 
@@ -595,6 +670,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [viewingFile, setViewingFile] = useState<DocAttachment | null>(null)
+  const [viewingImage, setViewingImage] = useState<{ src: string; alt: string } | null>(null)
 
   // @ 提及候选：整个知识库的所有文档（含文件类），按标题/文件夹过滤
   const mentionDocs = useMemo(() => [...docs, ...fileDocs].filter((d, i, arr) => arr.findIndex((x) => x.id === d.id) === i), [docs, fileDocs])
@@ -743,7 +819,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
     if (item.type === 'todo') patch.checked = false
     if (item.type === 'code') patch.language = 'javascript'
     if (item.type === 'table') patch.rows = [['', ''], ['', '']]
-    if (item.type === 'image') patch.src = ''
+    if (item.type === 'image' || item.type === 'video') patch.src = ''
     if (item.type === 'link') patch.href = ''
     if (item.type === 'docref') patch.docId = docs[0]?.id
     if (item.type === 'attachment') {
@@ -853,6 +929,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
           }}
           onMention={setMention}
           onOpenFile={(att) => setViewingFile(att)}
+          onOpenImage={(src, alt) => setViewingImage({ src, alt })}
           dragOver={dragOverId === block.id && dragId !== block.id}
           onUpdate={(patch) => updateBlock(block.id, patch)}
           onDelete={() => deleteBlock(block.id)}
@@ -937,6 +1014,43 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
         onClose={() => setViewingFile(null)}
       />
     )}
+    {viewingImage && (
+      <ImageLightbox src={viewingImage.src} alt={viewingImage.alt} onClose={() => setViewingImage(null)} />
+    )}
     </>
+  )
+}
+
+/** 图片大图查看层：支持缩放、下载与 Esc 关闭 */
+function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1)
+  useEffect(() => { setZoom(1) }, [src])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+      if (event.key === '+' || event.key === '=') setZoom((z) => Math.min(3, Math.round((z + 0.1) * 100) / 100))
+      if (event.key === '-') setZoom((z) => Math.max(0.3, Math.round((z - 0.1) * 100) / 100))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="be-lightbox" role="dialog" aria-modal="true" aria-label={alt}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="be-lightbox-bar">
+        <span className="be-lightbox-title">{alt || '图片'}</span>
+        <div className="be-lightbox-actions">
+          <button onClick={() => setZoom((z) => Math.max(0.3, Math.round((z - 0.1) * 100) / 100))} title="缩小">−</button>
+          <button onClick={() => setZoom(1)} title="恢复 100%">{Math.round(zoom * 100)}%</button>
+          <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.1) * 100) / 100))} title="放大">+</button>
+          <a href={src} download={alt || 'image'} title="下载图片"><Icon name="download" size={16} /></a>
+          <button onClick={onClose} title="关闭（Esc）"><Icon name="x" size={18} /></button>
+        </div>
+      </div>
+      <div className="be-lightbox-body">
+        <img src={src} alt={alt} style={{ zoom }} />
+      </div>
+    </div>
   )
 }

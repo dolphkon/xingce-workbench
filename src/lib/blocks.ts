@@ -10,7 +10,7 @@ export function escapeHtml(value: string): string {
 }
 
 function safeUrl(url: string): string {
-  return /^(https?:|mailto:|#|\/|\.\/|data:image\/)/i.test(url.trim()) ? url.trim() : '#'
+  return /^(https?:|mailto:|#|\/|\.\/|data:image\/|data:video\/)/i.test(url.trim()) ? url.trim() : '#'
 }
 
 export function makeBlock(type: BlockType = 'text', html = '', text = ''): DocBlock {
@@ -83,6 +83,13 @@ export function blocksToMarkdown(blocks: DocBlock[]): string {
         })
         break
       case 'image': lines.push(`![${block.text || '图片'}](${block.src ?? ''})`); break
+      // 视频数据只存于 blocks（DataURL 不重复写入 Markdown），外链则保留可点击地址
+      case 'video': {
+        const label = block.text || '视频'
+        const src = block.src ?? ''
+        lines.push(src && !src.startsWith('data:') ? `🎬 [${label}](${src})` : `🎬 ${label}`)
+        break
+      }
       case 'link': lines.push(`[${block.text || block.href || '链接'}](${block.href ?? ''})`); break
       case 'docref': lines.push(`[文档引用](#${block.docId ?? ''})`); break
       // 附件数据只存于 blocks（避免 content 副本翻倍撑爆本地存储），Markdown 侧保留文件名标记与说明文字
@@ -178,6 +185,19 @@ export function markdownToBlocks(markdown: string): DocBlock[] {
       index += 1
       continue
     }
+    const videoLink = /^🎬\s+\[([^\]]*)\]\(([^)]+)\)$/.exec(trimmed)
+    if (videoLink) {
+      const block = makeBlock('video', '', videoLink[1] || '视频')
+      block.src = safeUrl(videoLink[2])
+      blocks.push(block)
+      index += 1
+      continue
+    }
+    if (/^🎬\s+\S/.test(trimmed)) {
+      blocks.push(makeBlock('video', '', trimmed.replace(/^🎬\s+/, '')))
+      index += 1
+      continue
+    }
     // @ 提及 chip 必须优先于普通链接解析（否则会被当作外链）
     if (trimmed.includes('](#doc/')) {
       const chipHtml = trimmed.replace(/\[([^\]]+)\]\(#doc\/([^)]+)\)/g,
@@ -216,6 +236,13 @@ export function blocksToHtml(blocks: DocBlock[], title = ''): string {
       case 'table': return `<table>${(block.rows ?? []).map((row, i) =>
         `<tr>${row.map((cell) => i === 0 ? `<th>${escapeHtml(cell)}</th>` : `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</table>`
       case 'image': return `<img src="${escapeHtml(safeUrl(block.src ?? ''))}" alt="${escapeHtml(block.text)}">`
+      case 'video': {
+        const label = escapeHtml(block.text || '视频')
+        const src = block.src ?? ''
+        return src && !src.startsWith('data:')
+          ? `<p>🎬 <a href="${escapeHtml(safeUrl(src))}">${label}</a></p>`
+          : `<p>🎬 ${label}</p>`
+      }
       case 'link': return `<p><a href="${escapeHtml(safeUrl(block.href ?? ''))}">${escapeHtml(block.text)}</a></p>`
       case 'docref': return `<p><a href="#${escapeHtml(block.docId ?? '')}">文档引用</a></p>`
       case 'attachment': return (block.attachments ?? []).map((att: DocAttachment) =>
