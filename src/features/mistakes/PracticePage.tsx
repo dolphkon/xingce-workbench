@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../components/ui'
+import QuestionImages from '../../components/QuestionImages'
 import { put } from '../../lib/db'
 import {
   ACCURACY_RANGES, isAccuracyRange, isDateRange, matchesAccuracy, matchesDate,
@@ -281,13 +282,7 @@ export default function PracticePage() {
             <div className="small muted" style={{ marginTop: 6 }}>来源：{current.source}</div>
           )}
 
-          {current.images.length > 0 && (
-            <div className="image-grid" style={{ marginTop: 16 }}>
-              {current.images.map((image, i) => (
-                <img key={`${image.slice(0, 40)}-${i}`} src={image} alt={`题目图片 ${i + 1}`} style={{ width: '100%', height: 170, objectFit: 'cover', border: '1px solid var(--border)', borderRadius: 8 }} />
-              ))}
-            </div>
-          )}
+          <QuestionImages images={current.images} altPrefix="题目图片" className="question-images-section" />
 
           {visibleOptions.length > 0 ? (
             <div className="option-list">

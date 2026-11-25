@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Icon } from '../../components/ui'
+import QuestionImages from '../../components/QuestionImages'
 import { put } from '../../lib/db'
 import { readCategories } from '../../lib/categories'
 import { compressImage, fileToDataUrl } from '../../lib/image'
@@ -343,49 +344,48 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         <label className="upload-zone">
           <Icon name="image" size={22} />
           <div style={{ marginTop: 6 }}>点击上传，或直接 <strong>Ctrl/⌘ + V</strong> 粘贴截图（自动识别）</div>
-          <span className="form-hint">图片会压缩后保存在本机</span>
+          <span className="form-hint">支持图形推理等题干长图，按原比例完整显示；PNG 无损保存在本机</span>
           <input type="file" accept="image/*" multiple onChange={handleImages} />
         </label>
-        {images.length > 0 && (
-          <div className="image-grid" style={{ marginTop: 10 }}>
-            {images.map((image, index) => (
-              <div className="image-thumb" key={`${image.slice(0, 40)}-${index}`}>
-                <img src={image} alt={`题目图片 ${index + 1}`} />
-                <div className="row" style={{ position: 'absolute', bottom: 4, right: 4, gap: 2 }}>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    style={{ padding: '3px 7px', fontSize: 11, background: 'rgba(255,255,255,.92)' }}
-                    disabled={ocrBusy}
-                    onClick={() => handleOcr(index)}
-                  >
-                    <Icon name="sparkle" size={12} /> OCR 识别
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn danger"
-                    style={{ background: 'rgba(255,255,255,.92)' }}
-                    onClick={() => {
-                      setImages((prev) => prev.filter((_, i) => i !== index))
-                      // 重建原始图缓存索引，避免删除后错位
-                      const nextSources: Record<number, string> = {}
-                      let to = 0
-                      for (let i = 0; i < 8; i++) {
-                        if (i === index) continue
-                        if (ocrSourcesRef.current[i] != null) nextSources[to] = ocrSourcesRef.current[i]
-                        to++
-                      }
-                      ocrSourcesRef.current = nextSources
-                    }}
-                    aria-label="删除图片"
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <QuestionImages
+          images={images}
+          altPrefix="题目图片"
+          variant="thumb"
+          className="question-images-form"
+          renderActions={(index) => (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ padding: '3px 7px', fontSize: 11, background: 'rgba(255,255,255,.92)' }}
+                disabled={ocrBusy}
+                onClick={() => handleOcr(index)}
+              >
+                <Icon name="sparkle" size={12} /> OCR 识别
+              </button>
+              <button
+                type="button"
+                className="icon-btn danger"
+                style={{ background: 'rgba(255,255,255,.92)' }}
+                onClick={() => {
+                  setImages((prev) => prev.filter((_, i) => i !== index))
+                  // 重建原始图缓存索引，避免删除后错位
+                  const nextSources: Record<number, string> = {}
+                  let to = 0
+                  for (let i = 0; i < 8; i++) {
+                    if (i === index) continue
+                    if (ocrSourcesRef.current[i] != null) nextSources[to] = ocrSourcesRef.current[i]
+                    to++
+                  }
+                  ocrSourcesRef.current = nextSources
+                }}
+                aria-label="删除图片"
+              >
+                <Icon name="trash" size={13} />
+              </button>
+            </>
+          )}
+        />
         {ocrBusy && (
           <div className="ocr-status" style={{ marginTop: 10, marginBottom: 0 }}>
             <Icon name="sparkle" size={15} />

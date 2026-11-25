@@ -15,8 +15,12 @@ export function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-/** 压缩图片为 DataURL，控制本地存储体积，同时保证 OCR 可读性 */
-export function compressImage(file: File, maxSize = 2400, quality = 0.92): Promise<string> {
+/**
+ * 压缩图片为 DataURL，控制本地存储体积。
+ * 图形推理等线条题截图用 PNG 无损保存（JPEG 会把细线条和 A/B/C/D 字母压糊），
+ * 照片类（JPEG/WebP）继续高质量压缩。
+ */
+export function compressImage(file: File, maxSize = 3200, quality = 0.95): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith('image/')) {
       reject(new Error('请选择图片文件'))
@@ -37,10 +41,13 @@ export function compressImage(file: File, maxSize = 2400, quality = 0.92): Promi
           reject(new Error('浏览器不支持 Canvas'))
           return
         }
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        const lossless = /png|gif|bmp/i.test(file.type)
+        if (!lossless) {
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/jpeg', quality))
+        resolve(lossless ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality))
       }
       img.src = reader.result as string
     }

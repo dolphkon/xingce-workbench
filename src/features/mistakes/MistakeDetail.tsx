@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
+import QuestionImages from '../../components/QuestionImages'
 import { getById, readCachedById, remove } from '../../lib/db'
 import { relatedMothers } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
@@ -150,15 +151,7 @@ export default function MistakeDetail() {
         <div className="card-body">
           <div className="question-text">{formatQuestionText(item.title)}</div>
 
-          {item.images.length > 0 && (
-            <div className="image-grid" style={{ marginTop: 16 }}>
-              {item.images.map((image, index) => (
-                <a href={image} target="_blank" rel="noreferrer" key={`${image.slice(0, 40)}-${index}`}>
-                  <img src={image} alt={`题目图片 ${index + 1}`} style={{ width: '100%', height: 160, objectFit: 'cover', border: '1px solid var(--border)', borderRadius: 8 }} />
-                </a>
-              ))}
-            </div>
-          )}
+          <QuestionImages images={item.images} altPrefix="题目图片" className="question-images-section" />
 
           {visibleOptions.length > 0 ? (
             <div className="option-list">
