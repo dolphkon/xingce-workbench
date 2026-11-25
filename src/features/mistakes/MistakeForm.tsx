@@ -26,6 +26,8 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const [categoryId, setCategoryId] = useState<string | undefined>(initial?.categoryId)
   const [subType, setSubType] = useState(initial?.subType ?? '')
   const [point, setPoint] = useState(initial?.point ?? '')
+  // 旧数据若已有考点/手动母题，视为已开启关联；新建错题默认不关联
+  const [linkMother, setLinkMother] = useState(() => initial?.linkMother ?? Boolean(initial?.point || initial?.motherId))
   const [options, setOptions] = useState<string[]>(() => {
     const base = [...(initial?.options ?? [])]
     while (base.length < 4) base.push('')
@@ -186,10 +188,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         lastReviewedAt: initial?.lastReviewedAt,
         reviewCount: initial?.reviewCount ?? 0,
         correctCount: initial?.correctCount ?? 0,
-        motherId: motherId || undefined,
+        motherId: linkMother ? motherId || undefined : undefined,
         categoryId,
         subType: subType.trim() || undefined,
-        point: point.trim() || undefined,
+        point: linkMother ? point.trim() || undefined : undefined,
+        linkMother,
       }
       await put('mistakes', record)
       onSaved()
@@ -223,6 +226,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         categoryId={categoryId}
         subType={subType}
         point={point}
+        linkMother={linkMother}
+        onLinkMotherChange={(value) => {
+          setLinkMother(value)
+          if (!value) setMotherId('')
+        }}
         onManage={() => setManaging(true)}
         onChange={(patch) => {
           setType(patch.type)
@@ -232,16 +240,18 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         }}
       />
 
-      <div className="form-field">
-        <label className="form-label">关联母题（可选）</label>
-        <select className="select" value={motherId} onChange={(e) => setMotherId(e.target.value)}>
-          <option value="">{point.trim() ? `自动按考点「${point.trim()}」关联（可不选）` : '按考点自动关联，或手动选择'}</option>
-          {mothers.map((item) => (
-            <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
-          ))}
-        </select>
-        <span className="form-hint">未手动选择时，系统会自动关联考点相同的母题</span>
-      </div>
+      {linkMother && (
+        <div className="form-field">
+          <label className="form-label">指定母题（可选）</label>
+          <select className="select" value={motherId} onChange={(e) => setMotherId(e.target.value)}>
+            <option value="">{point.trim() ? `自动按考点「${point.trim()}」关联（可不选）` : '按考点自动关联，或手动选择'}</option>
+            {mothers.map((item) => (
+              <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
+            ))}
+          </select>
+          <span className="form-hint">未手动选择时，系统会自动关联考点相同的母题</span>
+        </div>
+      )}
 
       <div className="form-field">
         <label className="form-label">选项（留空即视为非选择题）</label>

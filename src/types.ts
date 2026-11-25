@@ -7,6 +7,8 @@ export interface QuestionCategory {
   name: string
   types: string[]
   points: string[]
+  /** 题型 → 该题型可用考点；未配置的题型沿用模块全部考点 */
+  typePoints?: Record<string, string[]>
   createdAt: number
   updatedAt: number
 }
@@ -15,6 +17,7 @@ export interface SeedCategory {
   name: string
   types: string[]
   points: string[]
+  typePoints?: Record<string, string[]>
 }
 
 /** 首次使用时预置的公考模块（可自由增删/修改） */
@@ -23,6 +26,12 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
     name: '言语理解',
     types: ['片段阅读', '逻辑填空', '语句表达', '篇章阅读'],
     points: ['主旨概括', '意图判断', '细节理解', '标题选择', '语句排序', '词语辨析', '语句填空'],
+    typePoints: {
+      片段阅读: ['主旨概括', '意图判断', '细节理解', '标题选择'],
+      逻辑填空: ['词语辨析', '语句填空'],
+      语句表达: ['语句排序', '语句填空'],
+      篇章阅读: ['主旨概括', '细节理解', '标题选择'],
+    },
   },
   {
     name: '数量关系',
@@ -33,6 +42,12 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
     name: '判断推理',
     types: ['图形推理', '定义判断', '类比推理', '逻辑判断'],
     points: ['削弱论证', '加强论证', '翻译推理', '真假推理', '图形规律', '空间重构', '集合关系'],
+    typePoints: {
+      图形推理: ['图形规律', '空间重构'],
+      定义判断: ['集合关系'],
+      类比推理: ['集合关系'],
+      逻辑判断: ['削弱论证', '加强论证', '翻译推理', '真假推理'],
+    },
   },
   {
     name: '资料分析',
@@ -43,11 +58,23 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
     name: '常识判断',
     types: ['政治', '法律', '经济', '人文', '科技', '地理'],
     points: ['宪法', '民法典', '科技常识', '党史', '宏观经济', '文学常识'],
+    typePoints: {
+      政治: ['党史'],
+      法律: ['宪法', '民法典'],
+      经济: ['宏观经济'],
+      人文: ['文学常识'],
+      科技: ['科技常识'],
+      地理: ['文学常识', '科技常识'],
+    },
   },
   {
     name: '其他',
     types: ['申论', '面试'],
     points: ['归纳概括', '综合分析', '提出对策', '文章写作'],
+    typePoints: {
+      申论: ['归纳概括', '综合分析', '提出对策', '文章写作'],
+      面试: ['综合分析', '提出对策'],
+    },
   },
 ]
 
@@ -81,6 +108,8 @@ export interface Mistake {
   subType?: string
   /** 考点（模块下的 points 之一），错题与母题据此关联 */
   point?: string
+  /** 是否关联母题：关闭后即使有历史考点也不参与自动关联 */
+  linkMother?: boolean
 }
 
 /* ---------- FlowUs 式块文档 ---------- */

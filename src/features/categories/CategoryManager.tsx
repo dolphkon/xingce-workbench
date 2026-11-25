@@ -12,11 +12,21 @@ interface Props {
 interface Draft extends QuestionCategory {
   newType: string
   newPoint: string
+  selectedType: string
   open: boolean
 }
 
 function toDraft(c: QuestionCategory, open = false): Draft {
-  return { ...c, types: [...c.types], points: [...c.points], newType: '', newPoint: '', open }
+  return {
+    ...c,
+    types: [...c.types],
+    points: [...c.points],
+    typePoints: c.typePoints ? { ...c.typePoints } : undefined,
+    newType: '',
+    newPoint: '',
+    selectedType: '',
+    open,
+  }
 }
 
 /** 管理模块 / 题型 / 考点的增删。改动即时保存并随同步链路跨设备生效。 */
@@ -34,7 +44,7 @@ export default function CategoryManager({ onClose }: Props) {
   const patch = (id: string, fn: (d: Draft) => Draft) => setDrafts((prev) => prev.map((d) => (d.id === id ? fn(d) : d)))
 
   const persist = (d: Draft) => {
-    const { newType: _t, newPoint: _p, open: _o, ...category } = d
+    const { newType: _t, newPoint: _p, selectedType: _s, open: _o, ...category } = d
     void saveCategory({ ...category, name: category.name.trim() || '未命名模块' })
   }
 
@@ -57,7 +67,9 @@ export default function CategoryManager({ onClose }: Props) {
   const removeType = (id: string, type: string) => {
     const d = drafts.find((x) => x.id === id)
     if (!d) return
-    const next = { ...d, types: d.types.filter((t) => t !== type) }
+    const typePoints = { ...(d.typePoints ?? {}) }
+    delete typePoints[type]
+    const next = { ...d, types: d.types.filter((t) => t !== type), typePoints, selectedType: d.selectedType === type ? '' : d.selectedType }
     patch(id, () => next)
     persist(next)
   }
@@ -75,9 +87,35 @@ export default function CategoryManager({ onClose }: Props) {
   const removePoint = (id: string, point: string) => {
     const d = drafts.find((x) => x.id === id)
     if (!d) return
-    const next = { ...d, points: d.points.filter((p) => p !== point) }
+    const typePoints: Record<string, string[]> = {}
+    Object.entries(d.typePoints ?? {}).forEach(([type, points]) => {
+      typePoints[type] = points.filter((p) => p !== point)
+    })
+    const next = { ...d, points: d.points.filter((p) => p !== point), typePoints }
     patch(id, () => next)
     persist(next)
+  }
+
+  /** 设置某题型的专属考点；传 undefined 表示恢复为「全部模块考点」 */
+  const setTypePoints = (id: string, type: string, points?: string[]) => {
+    const d = drafts.find((x) => x.id === id)
+    if (!d) return
+    const typePoints = { ...(d.typePoints ?? {}) }
+    if (points === undefined) delete typePoints[type]
+    else typePoints[type] = points
+    const next = { ...d, typePoints }
+    patch(id, () => next)
+    persist(next)
+  }
+
+  /** 在「全部模块考点」与「部分考点」间切换某个考点 */
+  const toggleTypePoint = (id: string, type: string, point: string) => {
+    const d = drafts.find((x) => x.id === id)
+    if (!d) return
+    const mapped = d.typePoints?.[type]
+    const base = mapped ?? d.points
+    const points = base.includes(point) ? base.filter((p) => p !== point) : [...base, point]
+    setTypePoints(id, type, points)
   }
 
   const addCategory = () => {
@@ -109,7 +147,7 @@ export default function CategoryManager({ onClose }: Props) {
         footer={<button className="btn btn-primary" onClick={onClose}>完成</button>}
       >
         <p className="small muted" style={{ marginTop: 0 }}>
-          按公考模块组织题库：模块下维护题型与考点。录入错题/母题时选择考点，<strong>同考点的错题与母题会自动关联</strong>。改动实时保存并同步到其他设备。
+          按公考模块组织题库：模块下维护题型与考点，并可指定每个题型可用的考点。错题开启「关联母题」后选择考点，<strong>同考点的错题与母题会自动关联</strong>。改动实时保存并同步到其他设备。
         </p>
 
         <div className="category-manager">
@@ -152,6 +190,44 @@ export default function CategoryManager({ onClose }: Props) {
                       <input className="input" value={d.newPoint} onChange={(e) => patch(d.id, (x) => ({ ...x, newPoint: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') addPoint(d.id) }} placeholder="新增考点，如：主旨概括" />
                       <button className="btn btn-sm" onClick={() => addPoint(d.id)}><Icon name="plus" size={13} /></button>
                     </div>
+                  </div>
+                  <div className="category-type-points">
+                    <div className="form-label" style={{ marginBottom: 6 }}>题型对应考点</div>
+                    <select
+                      className="select"
+                      value={d.selectedType}
+                      onChange={(e) => patch(d.id, (x) => ({ ...x, selectedType: e.target.value }))}
+                    >
+                      <option value="">选择题型后配置可用考点…</option>
+                      {d.types.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    {d.selectedType && (
+                      <div className="tag-row" style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className={`chip${d.typePoints?.[d.selectedType] ? '' : ' chip-primary'}`}
+                          onClick={() => setTypePoints(d.id, d.selectedType, undefined)}
+                          title="该题型可选题目模块下的全部考点"
+                        >全部模块考点</button>
+                        {d.points.map((p) => {
+                          const mapped = d.typePoints?.[d.selectedType]
+                          const active = !mapped || mapped.includes(p)
+                          return (
+                            <button
+                              type="button"
+                              key={p}
+                              className={`chip${active ? ' chip-warning' : ''}`}
+                              onClick={() => toggleTypePoint(d.id, d.selectedType, p)}
+                              title={active ? '点击取消该题型下的此考点' : '点击为此题型添加此考点'}
+                            >{p}</button>
+                          )
+                        })}
+                        {d.points.length === 0 && <span className="small light">暂无考点</span>}
+                      </div>
+                    )}
+                    <span className="form-hint" style={{ marginTop: 6 }}>
+                      错题开启「关联母题」后，仅能选择对应题型下已勾选的考点；默认“全部模块考点”。
+                    </span>
                   </div>
                 </div>
               )}

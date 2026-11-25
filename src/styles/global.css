@@ -180,6 +180,12 @@ a { color: inherit; text-decoration: none; }
 .form-label .req { color: var(--danger); margin-left: 2px; }
 .form-hint { font-size: 11px; color: var(--text-light); }
 .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.form-switch-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.form-switch { position: relative; width: 38px; height: 22px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 999px; background: #d4d4d8; cursor: pointer; transition: background .2s; }
+.form-switch.on { background: var(--primary); }
+.form-switch-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s; }
+.form-switch.on .form-switch-thumb { transform: translateX(16px); }
+.form-switch:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 6px; }
 .input, .textarea, .select {
   width: 100%;
@@ -466,6 +472,9 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .category-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px; }
 .category-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 12px 14px 14px 46px; border-top: 1px solid var(--border); background: var(--surface-muted); }
 .category-col .input { padding: 7px 10px; font-size: 12px; }
+.category-type-points { grid-column: 1 / -1; padding-top: 10px; border-top: 1px dashed var(--border); }
+.category-type-points .chip { cursor: pointer; }
+.category-type-points .select { padding: 7px 10px; font-size: 12px; }
 
 /* ---------- Question navigation ---------- */
 .question-nav {
