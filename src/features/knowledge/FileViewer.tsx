@@ -1,0 +1,278 @@
+/** 通用在线文件阅读层：PDF / 图片 / 文本 / Markdown / CSV / DOCX / XLSX / PPTX。
+ *  附件与文件类文档共用，全部在应用内渲染，不依赖浏览器打开 DataURL（会被拦截为 about:blank）。 */
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
+import JSZip from 'jszip'
+import { Icon } from '../../components/ui'
+import { renderMarkdown } from '../../lib/markdown'
+import { formatBytes } from '../../lib/docFile'
+
+type PreviewKind = 'pdf' | 'image' | 'text' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'unknown'
+
+interface SlideData { text: string[]; images: string[] }
+
+function detectKind(name: string, type: string): PreviewKind {
+  const lower = name.toLowerCase()
+  const ext = (lower.split('.').pop() ?? '').trim()
+  if (ext === 'pdf' || type === 'application/pdf') return 'pdf'
+  if (/^(png|jpe?g|gif|webp|bmp|svg|avif)$/.test(ext) || type.startsWith('image/')) return 'image'
+  if (ext === 'md' || ext === 'markdown' || type === 'text/markdown') return 'markdown'
+  if (ext === 'csv' || type === 'text/csv') return 'csv'
+  if (ext === 'docx') return 'docx'
+  if (/^(xlsx|xls)$/.test(ext)) return 'xlsx'
+  if (ext === 'pptx') return 'pptx'
+  if (/^(txt|text|log|json|ya?ml|ini|xml|html?|css|js|ts)$/.test(ext) || type.startsWith('text/')) return 'text'
+  return 'unknown'
+}
+
+/** DataURL → ArrayBuffer（兼容 base64 与 URI 编码两种形式） */
+function decodeDataUrl(dataUrl: string): ArrayBuffer | null {
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) return null
+  const meta = dataUrl.slice(0, comma)
+  const payload = dataUrl.slice(comma + 1)
+  if (/;base64/i.test(meta)) {
+    try {
+      const binary = atob(payload.replace(/\s/g, ''))
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+      return bytes.buffer
+    } catch { return null }
+  }
+  try { return new TextEncoder().encode(decodeURIComponent(payload)).buffer } catch { return null }
+}
+
+function decodeEntities(input: string): string {
+  return input
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i += 1 }
+      else quoted = !quoted
+    } else if (char === ',' && !quoted) {
+      row.push(cell); cell = ''
+    } else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && text[i + 1] === '\n') i += 1
+      row.push(cell); cell = ''
+      if (row.some((v) => v.trim())) rows.push(row)
+      row = []
+    } else cell += char
+  }
+  row.push(cell)
+  if (row.some((v) => v.trim())) rows.push(row)
+  return rows
+}
+
+async function parsePptx(buffer: ArrayBuffer): Promise<SlideData[]> {
+  const zip = await JSZip.loadAsync(buffer)
+  const names = Object.keys(zip.files)
+    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = Number(/slide(\d+)\.xml/.exec(a)?.[1] ?? 0)
+      const nb = Number(/slide(\d+)\.xml/.exec(b)?.[1] ?? 0)
+      return na - nb
+    })
+  const slides: SlideData[] = []
+  for (const name of names) {
+    const xml = await zip.file(name)!.async('string')
+    const text = Array.from(xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g))
+      .map((match) => decodeEntities(match[1]).trim()).filter(Boolean)
+    const images: string[] = []
+    const relName = `ppt/slides/_rels/${name.split('/').pop()}.rels`
+    const relFile = zip.file(relName)
+    if (relFile) {
+      const relXml = await relFile.async('string')
+      const rels = new Map<string, string>()
+      for (const match of relXml.matchAll(/<Relationship\b[^>]*\bId="([^"]+)"[^>]*\bTarget="([^"]+)"[^>]*\/>/g)) {
+        rels.set(match[1], match[2])
+      }
+      const blipIds = Array.from(xml.matchAll(/<a:blip[^>]*\br:embed="([^"]+)"/g)).map((match) => match[1])
+      for (const id of blipIds) {
+        const target = rels.get(id)
+        if (!target) continue
+        const mediaPath = `ppt/${target.replace(/^\.\.\//, '').replace(/^\//, '')}`
+        const media = zip.file(mediaPath)
+        if (!media) continue
+        const base64 = await media.async('base64')
+        const ext = (mediaPath.split('.').pop() ?? 'png').toLowerCase()
+        const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext
+        images.push(`data:image/${mime};base64,${base64}`)
+      }
+    }
+    slides.push({ text, images })
+  }
+  return slides
+}
+
+interface FileViewerProps {
+  fileData: string
+  fileName: string
+  fileType?: string
+  onClose: () => void
+}
+
+export default function FileViewer({ fileData, fileName, fileType = '', onClose }: FileViewerProps) {
+  const kind = useMemo(() => detectKind(fileName, fileType), [fileName, fileType])
+  const [content, setContent] = useState<ReactNode>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const render = async () => {
+      setLoading(true); setError(null); setContent(null)
+      try {
+        if (kind === 'pdf' || kind === 'image') {
+          if (!cancelled) setLoading(false)
+          return
+        }
+        const buffer = decodeDataUrl(fileData)
+        if (!buffer) throw new Error('文件数据无效')
+        if (kind === 'docx') {
+          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+          if (!cancelled) setContent(<div className="fv-rich" dangerouslySetInnerHTML={{ __html: renderMammothHtml(result.value) }} />)
+        } else if (kind === 'xlsx') {
+          const workbook = XLSX.read(buffer, { type: 'array' })
+          const sheets = workbook.SheetNames.map((name) => ({
+            name,
+            table: XLSX.utils.sheet_to_html(workbook.Sheets[name]),
+          }))
+          if (!cancelled) setContent(
+            <div className="fv-sheets">
+              {sheets.map((sheet) => (
+                <div className="fv-sheet" key={sheet.name}>
+                  <h3>{sheet.name}</h3>
+                  <div className="fv-table" dangerouslySetInnerHTML={{ __html: DOMPurifySheet(sheet.table) }} />
+                </div>
+              ))}
+            </div>,
+          )
+        } else if (kind === 'pptx') {
+          const slides = await parsePptx(buffer)
+          if (!cancelled) setContent(
+            <div className="fv-slides">
+              {slides.map((slide, index) => (
+                <div className="fv-slide" key={index}>
+                  <div className="fv-slide-no">第 {index + 1} 页</div>
+                  {slide.images.map((src, i) => <img className="fv-slide-img" key={i} src={src} alt={`第 ${index + 1} 页图片 ${i + 1}`} />)}
+                  {slide.text.map((line, i) => <p key={i}>{line}</p>)}
+                  {!slide.text.length && !slide.images.length && <p className="fv-muted">（此页无可提取文字或图片）</p>}
+                </div>
+              ))}
+            </div>,
+          )
+        } else if (kind === 'csv') {
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+          const rows = parseCsv(text)
+          if (!cancelled) setContent(
+            <div className="fv-table fv-csv">
+              <table><tbody>
+                {rows.map((row, r) => <tr key={r}>{row.map((cell, c) => (
+                  r === 0 ? <th key={c}>{cell}</th> : <td key={c}>{cell}</td>
+                ))}</tr>)}
+              </tbody></table>
+            </div>,
+          )
+        } else if (kind === 'markdown' || kind === 'text') {
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+          if (kind === 'markdown') {
+            if (!cancelled) setContent(<div className="fv-rich" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />)
+          } else {
+            if (!cancelled) setContent(<pre className="fv-pre">{text}</pre>)
+          }
+        } else {
+          if (!cancelled) setContent(
+            <div className="fv-unsupported">
+              <div className="empty-icon"><Icon name="file" size={26} /></div>
+              <h3>此格式暂不支持在线阅读</h3>
+              <p>可点击右上角下载后用本地软件打开</p>
+            </div>,
+          )
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : '文件解析失败')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void render()
+    return () => { cancelled = true }
+  }, [kind, fileData])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const title = fileName || '文件预览'
+  return (
+    <div className="fv-overlay" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="fv-panel">
+        <div className="fv-bar">
+          <div className="fv-title"><Icon name="filetext" size={17} /> <span>{title}</span></div>
+          <div className="fv-bar-actions">
+            {fileData && <span className="fv-size">{formatBytes(fileData)}</span>}
+            {fileData && <a className="fv-btn" href={fileData} download={fileName} title="下载"><Icon name="download" size={17} /></a>}
+            <button className="fv-btn" onClick={onClose} title="关闭（Esc）"><Icon name="x" size={19} /></button>
+          </div>
+        </div>
+        <div className="fv-body">
+          {loading && <div className="fv-loading">正在解析文件…</div>}
+          {error && <div className="fv-error">解析失败：{error}</div>}
+          {!loading && !error && (kind === 'pdf'
+            ? <iframe src={fileData} title={title} className="fv-frame" />
+            : kind === 'image'
+              ? <img src={fileData} alt={title} className="fv-image" />
+              : content)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** mammoth 生成的 HTML 消毒：保留 docx 图片 data-uri 与基本排版标签 */
+function renderMammothHtml(html: string): string {
+  // 轻量消毒：仅保留安全标签与属性，图片 data-uri 需放行以显示 docx 内嵌图片
+  const allowed = /^(p|br|h[1-6]|strong|em|b|i|u|ul|ol|li|table|thead|tbody|tr|th|td|blockquote|img|span|div)$/
+  return html.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (full, tag: string, attrs: string) => {
+    if (!allowed.test(tag.toLowerCase())) return ''
+    const cleanAttrs = attrs
+      .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\s(?:href|src)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, (m, value: string) => {
+        const raw = value.replace(/^['"]|['"]$/g, '')
+        if (/^(data:image\/|https?:\/\/|\/|#)/i.test(raw)) return m
+        return ''
+      })
+      .replace(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, (m, value: string) => {
+        const raw = value.replace(/^['"]|['"]$/g, '')
+        return /(?:url\s*\(|expression|javascript:)/i.test(raw) ? '' : m
+      })
+    return full.startsWith('</') ? `</${tag}>` : `<${tag}${cleanAttrs}>`
+  })
+}
+
+/** SheetJS sheet_to_html 输出消毒，仅保留表格标签与基础属性 */
+function DOMPurifySheet(html: string): string {
+  return html.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (full, tag: string, attrs: string) => {
+    if (!/^(table|thead|tbody|tr|th|td|br|span|div|p)$/i.test(tag)) return ''
+    const cleanAttrs = attrs
+      .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, (m, value: string) => {
+        const raw = value.replace(/^['"]|['"]$/g, '')
+        return /(?:url\s*\(|expression|javascript:)/i.test(raw) ? '' : m
+      })
+    return full.startsWith('</') ? `</${tag}>` : `<${tag}${cleanAttrs}>`
+  })
+}

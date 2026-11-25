@@ -7,6 +7,7 @@ import { blocksToMarkdown, markdownToBlocks } from '../../lib/blocks'
 import { formatDate } from '../../lib/utils'
 import { docFileKind, formatBytes } from '../../lib/docFile'
 import BlockEditor from './BlockEditor'
+import FileViewer from './FileViewer'
 import type { DocBlock, KnowledgeDoc, KnowledgeFolder } from '../../types'
 
 export interface DocWorkspaceProps {
@@ -40,6 +41,7 @@ export default function DocWorkspace({
   const [tencentInput, setTencentInput] = useState('')
   const [tencentError, setTencentError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [viewerOpen, setViewerOpen] = useState(false)
 
   const isFileDoc = doc?.kind === 'file' && Boolean(doc.fileData)
   const fileKind = useMemo(() => docFileKind(doc?.fileName, doc?.fileType), [doc?.fileName, doc?.fileType])
@@ -266,17 +268,22 @@ export default function DocWorkspace({
       <div className="fw-doc-scroll">
         {isFileDoc ? (
           <div className="fw-file-view">
-            {fileKind === 'pdf' ? (
-              <iframe src={doc.fileData} title={doc.fileName} className="kb-viewer" />
-            ) : fileKind === 'image' ? (
-              <img src={doc.fileData} alt={doc.title} className="kb-viewer-img" />
-            ) : (
-              <div className="empty-state">
-                <div className="empty-icon"><Icon name="file" size={24} /></div>
-                <h3>此格式暂不支持在线预览</h3>
-                <p>可点击右上角下载后用本地软件打开</p>
-              </div>
-            )}
+            <div className="fw-file-inline">
+              {fileKind === 'pdf' ? (
+                <iframe src={doc.fileData} title={doc.fileName} className="kb-viewer" />
+              ) : fileKind === 'image' ? (
+                <img src={doc.fileData} alt={doc.title} className="kb-viewer-img" />
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-icon"><Icon name="file" size={24} /></div>
+                  <h3>在线阅读此文件</h3>
+                  <p>点击下方按钮在应用内打开（支持 Word / Excel / PPT / 文本等常见格式）</p>
+                </div>
+              )}
+            </div>
+            <div className="fw-file-more">
+              <button className="btn" onClick={() => setViewerOpen(true)}><Icon name="eye" size={15} /> 在线阅读</button>
+            </div>
           </div>
         ) : (
           <div className="fw-doc-canvas">{editor}</div>
@@ -326,6 +333,9 @@ export default function DocWorkspace({
               ? (doc.title || doc.fileName || '文档')
               : (saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令')}</span>
             <div className="row" style={{ gap: 8 }}>
+              {isFileDoc && (
+                <button className="fw-action" onClick={() => setViewerOpen(true)} title="在线阅读"><Icon name="eye" size={15} /> 在线阅读</button>
+              )}
               {doc.fileData && (
                 <a className="fw-action" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={15} /></a>
               )}
@@ -359,6 +369,15 @@ export default function DocWorkspace({
             )}
           </div>
         </div>
+      )}
+
+      {viewerOpen && isFileDoc && doc.fileData && (
+        <FileViewer
+          fileData={doc.fileData}
+          fileName={doc.fileName || doc.title || '文件'}
+          fileType={doc.fileType}
+          onClose={() => setViewerOpen(false)}
+        />
       )}
     </>
   )

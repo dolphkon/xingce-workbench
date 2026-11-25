@@ -4,6 +4,7 @@ import { escapeHtml, makeBlock } from '../../lib/blocks'
 import { formatBytes } from '../../lib/docFile'
 import { uid } from '../../lib/utils'
 import { Icon } from '../../components/ui'
+import FileViewer from './FileViewer'
 
 type SlashState = { blockId: string; query: string; left: number; top: number }
 type MentionState = { blockId: string; query: string; left: number; top: number }
@@ -146,6 +147,8 @@ interface BlockItemProps {
   autoOpenAttach: boolean
   /** 附件块未添加任何文件即取消时，交回父级转为空文本块（清除残留的 /） */
   onCancelEmptyAttach: () => void
+  /** 打开附件：交给父级在应用内阅读层展示 */
+  onOpenFile: (att: DocAttachment) => void
   /** @ 提及菜单状态 */
   onMention: (state: MentionState | null) => void
   mentionActive: boolean
@@ -157,7 +160,7 @@ interface BlockItemProps {
 function BlockItem({
   block, total, docs, fileDocs, slashActive, dragOver, onUpdate, onDelete, onInsertAfter, onEnter,
   onSlash, onDragStart, onDragEnd, onDragOver, onDrop, onNavigateDoc,
-  autoOpenAttach, onCancelEmptyAttach, onMention, mentionActive, updateCell, addRow, addCol,
+  autoOpenAttach, onCancelEmptyAttach, onOpenFile, onMention, mentionActive, updateCell, addRow, addCol,
 }: BlockItemProps) {
   const ref = useRef<HTMLDivElement>(null)
   const lastHtml = useRef(block.html)
@@ -395,12 +398,9 @@ function BlockItem({
                 return (
                   <div key={att.id} className="kb-be-attach-item" onContextMenu={(e) => onAttachContext(e, att.id)}>
                     <span className={`kb-be-attach-icon ${icon.cls}`}>{icon.label}</span>
-                    {/* 单击文件名在新标签打开预览（PDF/图片等），右键仍可删除 */}
-                    <span className="kb-be-attach-name" title={`打开：${att.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (att.fileData) window.open(att.fileData, '_blank', 'noopener,noreferrer')
-                      }}>{att.name}</span>
+                    {/* 单击文件名在应用内在线阅读（PDF/图片/Office/文本等），右键仍可删除 */}
+                    <span className="kb-be-attach-name" title={`在线阅读：${att.name}`}
+                      onClick={(e) => { e.stopPropagation(); onOpenFile(att) }}>{att.name}</span>
                     <span className="kb-be-attach-size">{formatBytes(att.fileData) || `${Math.round(att.size / 1024)} KB`}</span>
                   </div>
                 )
@@ -594,6 +594,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [viewingFile, setViewingFile] = useState<DocAttachment | null>(null)
 
   // @ 提及候选：整个知识库的所有文档（含文件类），按标题/文件夹过滤
   const mentionDocs = useMemo(() => [...docs, ...fileDocs].filter((d, i, arr) => arr.findIndex((x) => x.id === d.id) === i), [docs, fileDocs])
@@ -830,6 +831,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
   }
 
   return (
+    <>
     <div className="kb-be-editor" ref={containerRef} onClick={(event) => {
       if (slash) setSlash(null)
       if (mention) setMention(null)
@@ -850,6 +852,7 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
             focusBlock(block.id)
           }}
           onMention={setMention}
+          onOpenFile={(att) => setViewingFile(att)}
           dragOver={dragOverId === block.id && dragId !== block.id}
           onUpdate={(patch) => updateBlock(block.id, patch)}
           onDelete={() => deleteBlock(block.id)}
@@ -926,5 +929,14 @@ export default function BlockEditor({ blocks, docs = [], fileDocs = [], onChange
         </div>
       )}
     </div>
+    {viewingFile && (
+      <FileViewer
+        fileData={viewingFile.fileData}
+        fileName={viewingFile.name}
+        fileType={viewingFile.fileType}
+        onClose={() => setViewingFile(null)}
+      />
+    )}
+    </>
   )
 }
