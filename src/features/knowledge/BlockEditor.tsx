@@ -219,11 +219,11 @@ function BlockItem({
 }: BlockItemProps) {
   const ref = useRef<HTMLDivElement>(null)
   const videoFrameRef = useRef<HTMLDivElement>(null)
+  const imgStageRef = useRef<HTMLDivElement>(null)
   const lastHtml = useRef(block.html)
   const mounted = useRef(false)
   const isRich = !['code', 'table', 'divider', 'image', 'video', 'link', 'docref', 'attachment'].includes(block.type)
 
-  const [imgZoom, setImgZoom] = useState(1)
   const [attachOpen, setAttachOpen] = useState(false)
   const [attachTab, setAttachTab] = useState<'upload' | 'reference'>('upload')
   const [attachError, setAttachError] = useState<string | null>(null)
@@ -423,18 +423,39 @@ function BlockItem({
     if (block.type === 'image') {
       const src = block.src ?? ''
       const alt = block.text || '图片'
+      const width = Math.max(10, Math.min(300, block.imgWidth ?? 100))
+      const setWidth = (w: number) => onUpdate({ imgWidth: Math.max(10, Math.min(300, Math.round(w))) })
+      const stageRef = imgStageRef
+      const startResize = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const startX = e.clientX
+        const startW = width
+        const onMove = (ev: MouseEvent) => {
+          // 按舞台当前像素宽度换算百分比，保证拖拽直观
+          const stagePx = stageRef.current?.clientWidth || 600
+          setWidth(startW + ((ev.clientX - startX) / stagePx) * 100)
+        }
+        const onUp = () => {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+      }
       return src ? (
         <figure className="kb-be-media kb-be-image">
-          <div className="kb-be-image-stage">
-            <img src={src} alt={alt} style={{ zoom: imgZoom }} title="点击查看大图"
+          <div className="kb-be-image-stage" ref={stageRef} style={{ width: `${width}%` }}>
+            <img src={src} alt={alt} title="拖拽右下角调整大小，点击查看大图"
               onClick={() => onOpenImage(src, alt)} />
             <div className="kb-be-image-tools" onClick={(e) => e.stopPropagation()}>
-              <button title="缩小" onClick={() => setImgZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100))}>−</button>
-              <span>{Math.round(imgZoom * 100)}%</span>
-              <button title="放大" onClick={() => setImgZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 100) / 100))}>+</button>
-              <button onClick={() => setImgZoom(1)}>复位</button>
+              <button title="缩小" onClick={() => setWidth(width - 10)}>−</button>
+              <span>{width}%</span>
+              <button title="放大" onClick={() => setWidth(width + 10)}>+</button>
+              <button onClick={() => setWidth(100)}>复位</button>
               <button className="primary" onClick={() => onOpenImage(src, alt)}>查看大图</button>
             </div>
+            <span className="kb-be-image-resize" title="拖拽调整图片大小" onMouseDown={startResize} />
           </div>
           <figcaption contentEditable suppressContentEditableWarning
             onBlur={(e) => onUpdate({ text: e.currentTarget.innerText })}>{block.text}</figcaption>

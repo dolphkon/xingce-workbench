@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Icon } from '../../components/ui'
 import { pointsForType } from '../../lib/categories'
 import type { QuestionCategory } from '../../types'
@@ -39,6 +39,13 @@ export default function CategoryFields({
   )
 
   const patchPoint = (value: string) => onChange({ type: moduleName, categoryId: current?.id, subType, point: value })
+
+  // 下拉框不再展示提示性占位项：开启关联母题后默认选中第一个真实考点
+  const effectivePoint = point && pointOptions.includes(point) ? point : (pointOptions[0] ?? '')
+  useEffect(() => {
+    if (!isMistake || !linkMother) return
+    if (effectivePoint && effectivePoint !== point) patchPoint(effectivePoint)
+  }, [isMistake, linkMother, effectivePoint, point])
 
   const handleModule = (name: string) => {
     const cat = categories.find((c) => c.name === name)
@@ -128,16 +135,14 @@ export default function CategoryFields({
                 <select
                   className="select"
                   data-field="point"
-                  value={point ?? ''}
+                  value={effectivePoint}
                   onChange={(e) => patchPoint(e.target.value)}
                 >
-                  <option value="">{subType ? `选择「${subType}」考点` : '请先选择题型'}</option>
                   {pointOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-                  {point && !pointOptions.includes(point) && <option value={point}>{point}（原考点）</option>}
                 </select>
                 <span className="form-hint">
                   {pointOptions.length
-                    ? `仅显示「${subType || '当前题型'}」下的考点，选择后自动关联同考点母题`
+                    ? `默认选中「${subType || '当前题型'}」下第一个考点，可手动切换`
                     : '该题型暂无考点，可在「管理」中为其配置考点'}
                 </span>
               </>

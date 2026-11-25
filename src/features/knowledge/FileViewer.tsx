@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 import { Icon } from '../../components/ui'
 import { renderMarkdown } from '../../lib/markdown'
 import { formatBytes } from '../../lib/docFile'
+import { parsePptxDeck, type PptxDeck, type PptxPara, type PptxRun, type PptxShape } from '../../lib/pptxSlide'
 
 type PreviewKind = 'pdf' | 'image' | 'text' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'unknown'
 
@@ -238,7 +239,6 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
     const host = hostRef.current
     if (!host) return
     let cancelled = false
-    let destroy: (() => void) | null = null
     host.innerHTML = ''
     setFailed(false)
 
@@ -255,12 +255,7 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
             useBase64URL: true,
           })
         } else {
-          const { init } = await import('pptx-preview')
-          if (cancelled) return
-          const width = Math.max(320, Math.min(host.clientWidth || 960, 1280))
-          const viewer = init(host, { width, mode: 'list' })
-          destroy = () => viewer.destroy()
-          await viewer.preview(request.buffer)
+          // PPTX 用自研解析渲染（pptxSlide.ts），无需第三方 DOM 操作
         }
       } catch {
         if (!cancelled) setFailed(true)
@@ -269,12 +264,11 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
 
     return () => {
       cancelled = true
-      try { destroy?.() } catch { /* 预览器已销毁 */ }
       host.innerHTML = ''
     }
   }, [request])
 
-  if (failed && request.fallback) return <>{request.fallback}</>
+  if (request.kind === 'pptx') return <PptxDocument buffer={request.buffer} fallback={request.fallback} />
   if (failed) {
     return (
       <div className="fr-unsupported">
@@ -285,6 +279,198 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
     )
   }
   return <div ref={hostRef} className={`fr-office fr-office-${request.kind}`} />
+}
+
+/** PPTX 原版式渲染：按幻灯片原始坐标绝对定位每个形状 */
+function PptxDocument({ buffer, fallback }: { buffer: ArrayBuffer; fallback?: ReactNode }) {
+  const [deck, setDeck] = useState<PptxDeck | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setDeck(null)
+    setFailed(false)
+    parsePptxDeck(buffer)
+      .then((d) => { if (!cancelled) setDeck(d) })
+      .catch(() => { if (!cancelled) setFailed(true) })
+    return () => { cancelled = true }
+  }, [buffer])
+
+  if (failed) return <>{fallback ?? null}</>
+  if (!deck) return <div className="fr-loading">正在解析幻灯片…</div>
+
+  const total = deck.slides.reduce((sum, s) => sum + (s.shapes.length ? 1 : 0), 0)
+  if (total === 0) return <>{fallback ?? null}</>
+
+  return (
+    <div className="fr-pptx">
+      <div className="fr-page-heading">幻灯片 · 共 {deck.slides.length} 页</div>
+      {deck.slides.map((slide, index) => (
+        <div className="fr-pptx-slide" key={index}
+          style={{
+            aspectRatio: `${deck.width} / ${deck.height}`,
+            ...(slide.bgImage ? { backgroundImage: `url(${slide.bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : slide.bg ? { background: slide.bg } : {}),
+          } as CSSProperties}>
+          {slide.shapes.map((shape, i) => <PptxShapeView key={i} shape={shape} deck={deck} />)}
+          <span className="fr-pptx-no">{index + 1}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const toPercent = (v: number, total: number) => `${((v / total) * 100).toFixed(3)}%`
+const toCqw = (v: number, total: number) => `${((v / total) * 100).toFixed(3)}cqw`
+
+/** 画布测宽：用于把制表符推进到下一个制表位（设计稿 px） */
+const measureCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null
+function measureText(text: string, fontPx: number, bold?: boolean): number {
+  if (!measureCanvas || !text) return 0
+  const ctx = measureCanvas.getContext('2d')
+  if (!ctx) return 0
+  ctx.font = `${bold ? '700 ' : ''}${fontPx}px "PingFang SC", "Microsoft YaHei", sans-serif`
+  return ctx.measureText(text).width
+}
+
+/** PPT 默认制表间隔：1 英寸 = 96 设计 px */
+const DEFAULT_TAB = 96
+
+function ParaView({ para, deck }: { para: PptxPara; deck: PptxDeck }) {
+  const style: CSSProperties = {
+    textAlign: para.align ?? 'left',
+    lineHeight: para.linePx ? toCqw(para.linePx, deck.width) : para.lineH ? String(para.lineH * 1.2) : 1.2,
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+  }
+  if (para.marL) style.paddingLeft = toCqw(para.marL, deck.width)
+  if (para.indent) style.textIndent = toCqw(para.indent, deck.width)
+  if (para.spaceBefore != null) style.marginTop = toCqw(para.spaceBefore, deck.width)
+  if (para.spaceAfter != null) style.marginBottom = toCqw(para.spaceAfter, deck.width)
+  const nodes: ReactNode[] = []
+
+  // 光标推进：渲染制表符时按文本实测宽度推进到下一个制表位
+  const buildRunStyle = (run: PptxRun): CSSProperties => {
+    const s: CSSProperties = {}
+    if (run.size != null) s.fontSize = toCqw(run.size, deck.width)
+    if (run.bold) s.fontWeight = 700
+    if (run.italic) s.fontStyle = 'italic'
+    if (run.color) s.color = run.color
+    if (run.font) s.fontFamily = `"${run.font}", "PingFang SC", "Microsoft YaHei", sans-serif`
+    return s
+  }
+  const pushRun = (run: PptxRun, i: number) => {
+    const runStyle = buildRunStyle(run)
+    const segs = run.text.split('\t')
+    segs.forEach((seg, k) => {
+      if (seg) {
+        nodes.push(<span key={`${i}-${k}`} style={runStyle}>{seg}</span>)
+        cursorX += measureText(seg, run.size ?? 24, run.bold)
+      }
+      if (k < segs.length - 1) {
+        const stops = para.tabStops ?? []
+        let next = stops.find((s) => s > cursorX + 1)
+        if (next == null) next = (Math.floor(cursorX / DEFAULT_TAB) + 1) * DEFAULT_TAB
+        const w = Math.max(0, next - cursorX)
+        nodes.push(<span key={`${i}-tab-${k}`} style={{ display: 'inline-block', width: toCqw(w, deck.width) }} />)
+        cursorX = next
+      }
+    })
+  }
+
+  let cursorX = (para.marL ?? 0) + Math.max(0, para.indent ?? 0)
+  if (para.bullet) {
+    nodes.push(<span key="bullet" style={{ marginRight: '0.35em', whiteSpace: 'pre' }}>{para.bullet}</span>)
+    cursorX += measureText(para.bullet, 24) + 8
+  } else if (para.number) {
+    nodes.push(<span key="bullet" style={{ marginRight: '0.35em', whiteSpace: 'pre' }}>{`${para.number}.`}</span>)
+    cursorX += measureText(`${para.number}.`, 24) + 8
+  }
+  para.runs.forEach((run, i) => {
+    if (run.br) {
+      nodes.push(<br key={i} />)
+      cursorX = para.marL ?? 0
+      return
+    }
+    if (run.text) pushRun(run, i)
+    else {
+      const s = buildRunStyle(run)
+      nodes.push(<span key={i} style={s}>&nbsp;</span>)
+      cursorX += measureText('\u00A0', run.size ?? 24)
+    }
+  })
+  // 空段落占位（保留空段落行高）
+  if (!nodes.length) {
+    const size = para.runs[0]?.size ?? 24
+    return <div style={{ ...style, fontSize: toCqw(size, deck.width) }}>&nbsp;</div>
+  }
+  return <div style={style}>{nodes}</div>
+}
+
+function PptxShapeView({ shape, deck }: { shape: PptxShape; deck: PptxDeck }) {
+  const box: CSSProperties = {
+    position: 'absolute',
+    left: toPercent(shape.x, deck.width),
+    top: toPercent(shape.y, deck.height),
+    width: toPercent(shape.w, deck.width),
+    height: toPercent(shape.h, deck.height),
+  }
+  if (shape.rot) box.transform = `rotate(${shape.rot}deg)`
+
+  if (shape.kind === 'image') {
+    return <img src={shape.src} alt="" style={{ ...box, objectFit: 'fill' }} draggable={false} />
+  }
+
+  if (shape.kind === 'table') {
+    return (
+      <div style={{
+        ...box, display: 'grid',
+        gridTemplateColumns: (shape.cols ?? []).map((w) => toPercent(w, shape.cols?.reduce((a, b) => a + b, 0) || 1)).join(' '),
+        gridTemplateRows: (shape.rows ?? []).map((r) => toPercent(r.h, shape.rows?.reduce((a, b) => a + b.h, 0) || 1)).join(' '),
+        background: '#FFFFFF',
+      }}>
+        {(shape.rows ?? []).flatMap((row, r) => row.cells.map((cell, c) => (
+          <div key={`${r}-${c}`} style={{
+            gridColumn: cell.span && cell.span > 1 ? `span ${cell.span}` : undefined,
+            background: cell.fill && cell.fill !== 'transparent' ? cell.fill : undefined,
+            border: '1px solid #d9d9d9',
+            padding: toCqw(4, deck.width),
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+          }}>
+            {cell.paragraphs.map((para, i) => <ParaView key={i} para={para} deck={deck} />)}
+          </div>
+        )))}
+      </div>
+    )
+  }
+
+  const style: CSSProperties = {
+    ...box,
+    background: shape.fill && shape.fill !== 'transparent' ? shape.fill : undefined,
+    borderRadius: shape.radius ? '0.6cqw' : undefined,
+    // PowerPoint 文字允许溢出文本框，不裁剪
+    overflow: shape.paragraphs?.length ? 'visible' : 'hidden',
+    boxSizing: 'border-box',
+  }
+  if (shape.nowrap) style.whiteSpace = 'nowrap'
+  if (shape.border) {
+    style.border = `${toCqw(shape.border.width, deck.width)} solid ${shape.border.color}`
+  }
+  if (shape.paragraphs?.length) {
+    style.display = 'flex'
+    style.flexDirection = 'column'
+    style.justifyContent = shape.anchor === 'center' ? 'center' : shape.anchor === 'bottom' ? 'flex-end' : 'flex-start'
+    style.padding = `${toCqw(shape.padTop ?? 4, deck.width)} ${toCqw(shape.padX ?? 9, deck.width)} ${toCqw(shape.padBottom ?? 4, deck.width)}`
+    style.wordBreak = 'break-word'
+    style.overflowWrap = 'anywhere'
+  }
+  return (
+    <div style={style}>
+      {shape.paragraphs?.map((para, i) => <ParaView key={i} para={para} deck={deck} />)}
+    </div>
+  )
 }
 
 export interface FileReaderProps {

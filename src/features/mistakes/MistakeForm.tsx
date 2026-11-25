@@ -46,6 +46,10 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   // 原始清晰图缓存：OCR 用原图（压缩会破坏圆圈标记），存储用压缩图
   const ocrSourcesRef = useRef<Record<number, string>>({})
   const [motherId, setMotherId] = useState(initial?.motherId ?? '')
+  // 下拉框默认选中第一个真实母题，提示词不再作为可选项
+  const effectiveMotherId = motherId && mothers.some((m) => m.id === motherId)
+    ? motherId
+    : (mothers[0]?.id ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -188,7 +192,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         lastReviewedAt: initial?.lastReviewedAt,
         reviewCount: initial?.reviewCount ?? 0,
         correctCount: initial?.correctCount ?? 0,
-        motherId: linkMother ? motherId || undefined : undefined,
+        motherId: linkMother ? effectiveMotherId || undefined : undefined,
         categoryId,
         subType: subType.trim() || undefined,
         point: linkMother ? point.trim() || undefined : undefined,
@@ -240,16 +244,15 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         }}
       />
 
-      {linkMother && (
+      {linkMother && mothers.length > 0 && (
         <div className="form-field">
-          <label className="form-label">指定母题（可选）</label>
-          <select className="select" value={motherId} onChange={(e) => setMotherId(e.target.value)}>
-            <option value="">{point.trim() ? `自动按考点「${point.trim()}」关联（可不选）` : '按考点自动关联，或手动选择'}</option>
+          <label className="form-label">指定母题</label>
+          <select className="select" value={effectiveMotherId} onChange={(e) => setMotherId(e.target.value)}>
             {mothers.map((item) => (
               <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
             ))}
           </select>
-          <span className="form-hint">未手动选择时，系统会自动关联考点相同的母题</span>
+          <span className="form-hint">默认选中第一个母题，可手动切换；保存后与该母题关联</span>
         </div>
       )}
 

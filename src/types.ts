@@ -139,6 +139,8 @@ export interface DocBlock {
   src?: string
   href?: string
   docId?: string
+  /** 图片块显示宽度百分比（10~300，默认 100），随文档保存 */
+  imgWidth?: number
   /** 附件列表（attachment 块） */
   attachments?: DocAttachment[]
 }

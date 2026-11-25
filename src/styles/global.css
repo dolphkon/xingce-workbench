@@ -803,9 +803,10 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 .kb-be-media img { max-width: 100%; border-radius: 6px; }
 .kb-be-media figcaption { font-size: 12px; color: var(--text-muted); margin-top: 6px; outline: 0; }
 .kb-be-media-empty { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; width: 100%; }
-.kb-be-image-stage { position: relative; display: inline-block; max-width: 100%; }
-.kb-be-image-stage > img { display: block; cursor: zoom-in; }
-.kb-be-image-tools { position: absolute; right: 8px; top: 8px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 8px; background: rgba(25, 25, 25, .78); color: #fff; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+.kb-be-image-stage { position: relative; display: block; max-width: none; }
+.kb-be-image-stage > img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.kb-be-image-resize { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 4px; background: var(--primary); box-shadow: 0 1px 5px rgba(0, 0, 0, .25); cursor: nwse-resize; z-index: 2; }
+.kb-be-image-tools { position: absolute; right: 8px; top: 8px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 8px; background: rgba(25, 25, 25, .78); color: #fff; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); z-index: 3; }
 .kb-be-image-tools button { min-width: 26px; height: 24px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #fff; font-size: 12px; cursor: pointer; }
 .kb-be-image-tools button:hover { background: rgba(255, 255, 255, .18); }
 .kb-be-image-tools button.primary { background: var(--primary); }
@@ -1046,8 +1047,11 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 /* Office 原版式阅读：去掉通用纸张内边距，让文档/幻灯片按自身版式铺开 */
 .fr-paper-office { width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .fr-office { width: 100%; min-height: 320px; }
-.fr-office-pptx .pptx-preview-wrapper { padding: 18px 0; background: #eef0f4 !important; box-sizing: border-box; }
-.fr-office-pptx .pptx-preview-slide-wrapper { box-shadow: 0 6px 24px rgba(15,23,42,.12); }
+/* 自研 PPTX 原版式渲染：每页按幻灯片比例铺开，形状绝对定位，字号用 cqw 随宽度缩放 */
+.fr-pptx { display: flex; flex-direction: column; gap: 18px; padding: 18px 0; }
+.fr-pptx-slide { position: relative; width: 100%; container-type: inline-size; background: #fff; box-shadow: 0 6px 24px rgba(15, 23, 42, .12); border-radius: 4px; overflow: hidden; flex: 0 0 auto; }
+.fr-pptx-slide img { pointer-events: none; }
+.fr-pptx-no { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: rgba(120, 120, 120, .7); font-variant-numeric: tabular-nums; }
 .fr-office-docx .fr-docx-wrapper, .fr-office-docx .docx-wrapper { padding: 0 !important; background: transparent !important; }
 .fr-office-docx .fr-docx, .fr-office-docx section.docx { margin: 0 auto 20px !important; box-shadow: 0 6px 24px rgba(15,23,42,.12) !important; border-radius: 4px; }
 
