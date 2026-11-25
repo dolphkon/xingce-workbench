@@ -85,8 +85,11 @@ export function blocksToMarkdown(blocks: DocBlock[]): string {
       case 'image': lines.push(`![${block.text || '图片'}](${block.src ?? ''})`); break
       case 'link': lines.push(`[${block.text || block.href || '链接'}](${block.href ?? ''})`); break
       case 'docref': lines.push(`[文档引用](#${block.docId ?? ''})`); break
-      // 附件数据只存于 blocks（避免 content 副本翻倍撑爆本地存储），Markdown 侧仅保留文件名标记
-      case 'attachment': (block.attachments ?? []).forEach((att) => lines.push(`📎 ${att.name}`)); break
+      // 附件数据只存于 blocks（避免 content 副本翻倍撑爆本地存储），Markdown 侧保留文件名标记与说明文字
+      case 'attachment':
+        (block.attachments ?? []).forEach((att) => lines.push(`📎 ${att.name}`))
+        if (md) lines.push(md)
+        break
       default: lines.push(md)
     }
   })
@@ -216,7 +219,7 @@ export function blocksToHtml(blocks: DocBlock[], title = ''): string {
       case 'link': return `<p><a href="${escapeHtml(safeUrl(block.href ?? ''))}">${escapeHtml(block.text)}</a></p>`
       case 'docref': return `<p><a href="#${escapeHtml(block.docId ?? '')}">文档引用</a></p>`
       case 'attachment': return (block.attachments ?? []).map((att: DocAttachment) =>
-        `<p>📎 <a href="${escapeHtml(att.fileData)}" download="${escapeHtml(att.name)}">${escapeHtml(att.name)}</a></p>`).join('')
+        `<p>📎 ${escapeHtml(att.name)}</p>`).join('') + (block.html ? `<p>${block.html}</p>` : '')
       default: return `<p>${block.html}</p>`
     }
   }).join('\n')

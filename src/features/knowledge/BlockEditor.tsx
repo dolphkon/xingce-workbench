@@ -177,7 +177,8 @@ function BlockItem({
 
   const addAttachments = (items: DocAttachment[]) => {
     if (!items.length) return
-    onUpdate({ attachments: [...(block.attachments ?? []), ...items], text: '', html: '' })
+    // 只更新附件列表，保留块内已输入的说明文字（html/text）
+    onUpdate({ attachments: [...(block.attachments ?? []), ...items] })
     setAttachError(null)
     setAttachOpen(false)
   }
@@ -208,7 +209,8 @@ function BlockItem({
 
   const removeAttachment = (id: string) => {
     const next = (block.attachments ?? []).filter((item) => item.id !== id)
-    onUpdate({ attachments: next, text: next.length ? `附件 · ${next.length} 个文件` : '' })
+    // 保留说明文字，仅更新附件列表
+    onUpdate({ attachments: next })
     setAttachMenu(null)
   }
 
@@ -259,19 +261,22 @@ function BlockItem({
       [/^\[\]\s*(.*)$/, 'todo'],
       [/^```$/, 'code'],
     ]
-    for (const [pattern, type] of rules) {
-      const match = pattern.exec(text)
-      if (!match) continue
-      const rest = match[1] ?? ''
-      el.innerHTML = escapeHtml(rest)
-      lastHtml.current = el.innerHTML
-      const patch: Partial<DocBlock> = { type, html: el.innerHTML, text: rest }
-      if (type === 'todo') patch.checked = false
-      if (type === 'code') patch.language = 'javascript'
-      onUpdate(patch)
-      setCaret(el, 0)
-      onSlash(null)
-      return
+    // 附件块内的文字是附件说明，不参与 markdown 快捷转换（否则输入「# 」会把附件块变成标题、丢失文件）
+    if (block.type !== 'attachment') {
+      for (const [pattern, type] of rules) {
+        const match = pattern.exec(text)
+        if (!match) continue
+        const rest = match[1] ?? ''
+        el.innerHTML = escapeHtml(rest)
+        lastHtml.current = el.innerHTML
+        const patch: Partial<DocBlock> = { type, html: el.innerHTML, text: rest }
+        if (type === 'todo') patch.checked = false
+        if (type === 'code') patch.language = 'javascript'
+        onUpdate(patch)
+        setCaret(el, 0)
+        onSlash(null)
+        return
+      }
     }
     const html = el.innerHTML
     lastHtml.current = html
@@ -307,6 +312,10 @@ function BlockItem({
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (slashActive || mentionActive) return
+    if (block.type === 'attachment') {
+      // 附件块内文字正常编辑：Enter 换行，允许通过「/」「@」唤出命令；不触发块级删除
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       onEnter()
@@ -390,20 +399,35 @@ function BlockItem({
                 return (
                   <div key={att.id} className="kb-be-attach-item" onContextMenu={(e) => onAttachContext(e, att.id)}>
                     <span className={`kb-be-attach-icon ${icon.cls}`}>{icon.label}</span>
-                    <a className="kb-be-attach-name" href={att.fileData} download={att.name} title={att.name}
-                      onClick={(e) => e.stopPropagation()}>{att.name}</a>
+                    {/* 文件名仅作展示，单击不再触发下载；右键仍可删除 */}
+                    <span className="kb-be-attach-name" title={att.name}>{att.name}</span>
                     <span className="kb-be-attach-size">{formatBytes(att.fileData) || `${Math.round(att.size / 1024)} KB`}</span>
                   </div>
                 )
               })}
             </div>
           )}
-          <button className="kb-be-attach-add" onClick={() => {
-            if (attachOpen) closeAttachPanel()
-            else { setAttachTab('upload'); setAttachError(null); setAttachOpen(true) }
-          }}>
-            📎 添加附件
-          </button>
+          {/* 附件说明文字：与文件共存的可编辑区，支持选中文字呼出格式工具栏 */}
+          <div
+            key={`content-${block.type}`}
+            ref={ref}
+            className="kb-be-content kb-be-content-attachment"
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={false}
+            data-placeholder={attachments.length ? '输入说明文字，选中可设置格式…' : placeholderOf(block.type)}
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+          />
+          {/* 已有文件时隐藏「添加附件」入口 */}
+          {attachments.length === 0 && (
+            <button className="kb-be-attach-add" onClick={() => {
+              if (attachOpen) closeAttachPanel()
+              else { setAttachTab('upload'); setAttachError(null); setAttachOpen(true) }
+            }}>
+              📎 添加附件
+            </button>
+          )}
 
           {attachOpen && (
             <div className="kb-be-attach-panel" onClick={(e) => e.stopPropagation()}>
