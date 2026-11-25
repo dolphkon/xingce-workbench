@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { put, readCachedById, remove } from '../../lib/db'
 import { folderPath } from '../../lib/folders'
-import { renderMarkdown } from '../../lib/markdown'
 import { blocksToMarkdown, markdownToBlocks } from '../../lib/blocks'
 import { formatDate } from '../../lib/utils'
 import { docFileKind, formatBytes } from '../../lib/docFile'
@@ -34,7 +33,6 @@ export default function DocWorkspace({
   const [savedAt, setSavedAt] = useState<number | null>(() => (docId ? readCachedById('docs', docId)?.updatedAt ?? null : null))
   const [saving, setSaving] = useState(false)
   const [tagsInput, setTagsInput] = useState(() => (docId ? readCachedById('docs', docId)?.tags.join(', ') ?? '' : ''))
-  const [fullView, setFullView] = useState(false)
   const [immersive, setImmersive] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -45,7 +43,6 @@ export default function DocWorkspace({
 
   const isFileDoc = doc?.kind === 'file' && Boolean(doc.fileData)
   const fileKind = useMemo(() => docFileKind(doc?.fileName, doc?.fileType), [doc?.fileName, doc?.fileType])
-  const html = useMemo(() => renderMarkdown(doc?.content ?? ''), [doc?.content])
   const refDocs = useMemo(() => docs.filter((item) => item.id !== doc?.id && item.kind !== 'file'), [docs, doc?.id])
 
   // 仅在切换文档时重建本地状态，列表刷新不应打断正在书写的内容
@@ -55,7 +52,6 @@ export default function DocWorkspace({
       setBlocks([])
       setSavedAt(null)
       setTagsInput('')
-      setFullView(false)
       setImmersive(false)
       setShowInfo(false)
       return
@@ -67,13 +63,13 @@ export default function DocWorkspace({
     setSavedAt(cached.updatedAt)
     setTagsInput(cached.tags.join(', '))
     setTencentInput(cached.tencentUrl ?? '')
-    setFullView(false)
     setImmersive(false)
     setShowInfo(false)
   }, [docId])
 
+  // 全屏入口统一进入沉浸模式（含 ?read=1 深链）
   useEffect(() => {
-    if (readMode && docId) setFullView(true)
+    if (readMode && docId) setImmersive(true)
   }, [readMode, docId])
 
   const saveNow = useCallback(async () => {
@@ -97,20 +93,16 @@ export default function DocWorkspace({
     return () => clearTimeout(timer)
   }, [docId, doc, blocks, tagsInput, isFileDoc, saveNow])
 
-  const closeRead = useCallback(() => {
-    setFullView(false)
+  const closeImmersive = useCallback(() => {
+    void saveNow()
+    setImmersive(false)
     onReadClosed?.()
-  }, [onReadClosed])
+  }, [saveNow, onReadClosed])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && immersive) {
-        void saveNow()
-        setImmersive(false)
-        return
-      }
-      if (event.key === 'Escape' && fullView) {
-        closeRead()
+        closeImmersive()
         return
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
@@ -120,14 +112,14 @@ export default function DocWorkspace({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [immersive, fullView, saveNow, closeRead])
+  }, [immersive, saveNow, closeImmersive])
 
   useEffect(() => {
-    if (!fullView && !immersive) return
+    if (!immersive) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
-  }, [fullView, immersive])
+  }, [immersive])
 
   const copyForTencent = async () => {
     if (!doc) return
@@ -220,12 +212,9 @@ export default function DocWorkspace({
           </div>
         </div>
         <div className="fw-doc-actions">
-          {!isFileDoc && (
-            <button className="fw-action" onClick={() => { setImmersive(true) }} title="沉浸式全屏书写">
-              <Icon name="expand" size={15} /> 沉浸
-            </button>
-          )}
-          <button className="fw-action" onClick={() => setFullView(true)} title="全屏阅读"><Icon name="eye" size={15} /> 阅读</button>
+          <button className="fw-action" onClick={() => { setImmersive(true) }} title="沉浸式全屏">
+            <Icon name="expand" size={15} /> 全屏沉浸
+          </button>
           {doc.tencentUrl && (
             <a className="fw-action" href={doc.tencentUrl} target="_blank" rel="noreferrer" title="打开腾讯文档"><Icon name="link" size={15} /> 腾讯文档</a>
           )}
@@ -328,50 +317,42 @@ export default function DocWorkspace({
       )}
 
       {immersive && (
-        <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="沉浸式写作">
+        <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="全屏沉浸">
           <div className="kb-immersive-bar">
-            <button className="kb-immersive-back" onClick={() => { void saveNow(); setImmersive(false) }}><Icon name="back" size={16} /> 返回工作台</button>
-            <span className="small light">{saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令'}</span>
+            <button className="kb-immersive-back" onClick={closeImmersive}><Icon name="back" size={16} /> 返回工作台</button>
+            <span className="small light">{isFileDoc
+              ? (doc.title || doc.fileName || '文档')
+              : (saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令')}</span>
             <div className="row" style={{ gap: 8 }}>
-              <button className="kb-immersive-save" onClick={() => { void saveNow(); setImmersive(false) }}><Icon name="save" size={15} /> 保存并退出</button>
-              <button className="kb-immersive-close" onClick={() => { void saveNow(); setImmersive(false) }} title="退出沉浸（Esc）"><Icon name="x" size={18} /></button>
+              {doc.fileData && (
+                <a className="fw-action" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={15} /></a>
+              )}
+              {!isFileDoc && (
+                <button className="kb-immersive-save" onClick={closeImmersive}><Icon name="save" size={15} /> 保存并退出</button>
+              )}
+              <button className="kb-immersive-close" onClick={closeImmersive} title="退出全屏（Esc）"><Icon name="x" size={18} /></button>
             </div>
           </div>
           <div className="kb-immersive-body">
-            <div className="kb-immersive-paper">
-              <input className="kb-immersive-title" value={doc.title}
-                onChange={(e) => update({ title: e.target.value })} placeholder="无标题" spellCheck={false} />
-              {editor}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {fullView && (
-        <div className="kb-fullscreen" role="dialog" aria-modal="true" aria-label="全屏阅读">
-          <div className="kb-fullscreen-bar">
-            <div className="kb-fullscreen-title"><Icon name="filetext" size={17} /> {doc.title || doc.fileName || '文档'}</div>
-            <div className="row" style={{ gap: 8 }}>
-              {!isFileDoc && (
-                <button className="kb-fullscreen-btn kb-fullscreen-text" onClick={closeRead} title="返回编辑"><Icon name="edit" size={16} /> 编辑</button>
-              )}
-              {doc.fileData && (
-                <a className="kb-fullscreen-btn" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={18} /></a>
-              )}
-              <button className="kb-fullscreen-btn" onClick={closeRead} title="退出全屏（Esc）"><Icon name="x" size={20} /></button>
-            </div>
-          </div>
-          <div className="kb-fullscreen-body">
-            {!isFileDoc ? (
-              <div className="kb-fullscreen-doc md-preview" dangerouslySetInnerHTML={{ __html: html }} />
-            ) : fileKind === 'pdf' ? (
-              <iframe src={doc.fileData ?? ''} title={doc.fileName} className="kb-fullscreen-frame" />
-            ) : fileKind === 'image' ? (
-              <img src={doc.fileData ?? ''} alt={doc.title} className="kb-fullscreen-img" />
+            {isFileDoc ? (
+              <div className="kb-immersive-file">
+                {fileKind === 'pdf' ? (
+                  <iframe src={doc.fileData ?? ''} title={doc.fileName} className="kb-immersive-frame" />
+                ) : fileKind === 'image' ? (
+                  <img src={doc.fileData ?? ''} alt={doc.title} className="kb-immersive-img" />
+                ) : (
+                  <div className="empty-state">
+                    <div className="empty-icon"><Icon name="file" size={24} /></div>
+                    <h3>此格式暂不支持在线预览</h3>
+                    <p>可点击右上角下载后用本地软件打开</p>
+                  </div>
+                )}
+              </div>
             ) : (
-              <div className="empty-state">
-                <h3>此格式暂不支持在线预览</h3>
-                <p>请点击右上角下载后用本地软件打开</p>
+              <div className="kb-immersive-paper">
+                <input className="kb-immersive-title" value={doc.title}
+                  onChange={(e) => update({ title: e.target.value })} placeholder="无标题" spellCheck={false} />
+                {editor}
               </div>
             )}
           </div>
