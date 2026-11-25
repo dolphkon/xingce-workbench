@@ -317,22 +317,17 @@ export default function DocWorkspace({
 
       {immersive && (
         <div className="kb-immersive" role="dialog" aria-modal="true" aria-label="全屏阅读">
-          <div className="kb-immersive-bar">
-            <button className="kb-immersive-back" onClick={closeImmersive}><Icon name="back" size={16} /> 返回工作台</button>
-            <span className="small light">{isFileDoc
-              ? (doc.title || doc.fileName || '文档')
-              : (saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令')}</span>
-            <div className="row" style={{ gap: 8 }}>
-              {doc.fileData && (
-                <a className="fw-action" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={15} /></a>
-              )}
-              {!isFileDoc && (
+          {!isFileDoc && (
+            <div className="kb-immersive-bar">
+              <button className="kb-immersive-back" onClick={closeImmersive}><Icon name="back" size={16} /> 返回工作台</button>
+              <span className="small light">{saving ? '保存中…' : '自动保存 · 输入「/」唤出块命令'}</span>
+              <div className="row" style={{ gap: 8 }}>
                 <button className="kb-immersive-save" onClick={closeImmersive}><Icon name="save" size={15} /> 保存并退出</button>
-              )}
-              <button className="kb-immersive-close" onClick={closeImmersive} title="退出全屏（Esc）"><Icon name="x" size={18} /></button>
+                <button className="kb-immersive-close" onClick={closeImmersive} title="退出全屏（Esc）"><Icon name="x" size={18} /></button>
+              </div>
             </div>
-          </div>
-          <div className="kb-immersive-body">
+          )}
+          <div className={`kb-immersive-body${isFileDoc ? ' kb-immersive-body-file' : ''}`}>
             {isFileDoc ? (
               <div className="kb-immersive-file">
                 <FileReader
