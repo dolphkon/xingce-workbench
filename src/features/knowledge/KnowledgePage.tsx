@@ -1,5 +1,5 @@
 /** FlowUs 式知识库单页工作台：左侧无限层级文件夹树 + 文档列表，右侧同屏块编辑器。 */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { put, remove } from '../../lib/db'
@@ -18,7 +18,7 @@ import {
   type TreeFolder,
 } from '../../lib/folders'
 import { formatDate, uid } from '../../lib/utils'
-import { docFileKind } from '../../lib/docFile'
+import { docFileKind, loadDocFile } from '../../lib/docFile'
 import DocWorkspace from './DocWorkspace'
 import type { KnowledgeDoc, KnowledgeFolder } from '../../types'
 
@@ -53,6 +53,8 @@ export default function KnowledgePage() {
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDoc | null>(null)
   const initExpanded = useRef(false)
   const migrating = useRef(false)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const uploadTargetRef = useRef<string | null>(null)
 
   const tree = useMemo(() => buildFolderTree(folders), [folders])
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders])
@@ -184,6 +186,59 @@ export default function KnowledgePage() {
     openDoc(created.id)
   }
 
+  // 文件夹菜单「上传本地文件」：记住目标文件夹并唤起文件选择框
+  const startFolderUpload = (folderId: string) => {
+    setFolderMenu(null)
+    uploadTargetRef.current = folderId
+    const input = uploadInputRef.current
+    if (!input) return
+    input.value = '' // 允许连续选择同一文件
+    input.click()
+  }
+
+  // 读取所选本地文件（支持多选），逐个创建文档并归入目标文件夹
+  const handleFolderUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    const target = uploadTargetRef.current
+    uploadTargetRef.current = null
+    if (!files.length) return
+    const folder = target ? folderById.get(target) : undefined
+    const now = Date.now()
+    const created: KnowledgeDoc[] = []
+    for (const file of files) {
+      try {
+        const loaded = await loadDocFile(file)
+        created.push({
+          id: uid(),
+          // 文件类保留完整文件名（含扩展名）便于识别，文本类用去扩展名标题
+          title: loaded.kind === 'file' ? loaded.fileName : (loaded.title || loaded.fileName),
+          content: loaded.content,
+          blocks: loaded.kind === 'md' ? undefined : [],
+          folderId: target ?? undefined,
+          category: folder?.name ?? '',
+          tags: [],
+          createdAt: now,
+          updatedAt: now,
+          kind: loaded.kind,
+          fileName: loaded.fileName,
+          fileType: loaded.fileType,
+          fileData: loaded.fileData,
+        })
+      } catch (err) {
+        console.error('读取本地文件失败', file.name, err)
+      }
+    }
+    if (!created.length) return
+    await Promise.all(created.map((doc) => put('docs', doc)))
+    if (target) {
+      setSelected(target)
+      setExpanded((prev) => new Set([...prev, target]))
+    }
+    refresh()
+    openDoc(created[0].id)
+  }
+
   const openCreateFolder = (parentId?: string | null) => {
     setFolderDialog({ mode: 'create', parentId: normalizeParentId(parentId) })
     setFolderNameInput('')
@@ -299,6 +354,7 @@ export default function KnowledgePage() {
             {folderMenu === folder.id && (
               <span className="fw-folder-menu" onClick={(event) => event.stopPropagation()}>
                 <button onClick={() => { setFolderMenu(null); void openNewDoc(folder.id) }}><Icon name="file" size={13} /> 新建文档</button>
+                <button onClick={() => startFolderUpload(folder.id)}><Icon name="upload" size={13} /> 上传本地文件</button>
                 <button onClick={() => { setFolderMenu(null); openCreateFolder(folder.id) }}><Icon name="plus" size={13} /> 新建子文件夹</button>
                 <button onClick={() => { setFolderMenu(null); openRenameFolder(folder) }}><Icon name="edit" size={13} /> 重命名</button>
                 <button className="danger" onClick={() => { setFolderMenu(null); setFolderDeleting(folder) }}><Icon name="trash" size={13} /> 删除文件夹</button>
@@ -322,6 +378,9 @@ export default function KnowledgePage() {
 
   return (
     <div className="fw-workspace">
+      {/* 隐藏文件选择框：由文件夹菜单「上传本地文件」唤起 */}
+      <input ref={uploadInputRef} type="file" multiple style={{ display: 'none' }}
+        onChange={(event) => { void handleFolderUpload(event) }} aria-label="上传本地文件到文件夹" />
       <aside className={`fw-sidebar${sidebarOpen ? '' : ' collapsed'}`}>
         <div className="fw-side-head">
           <div className="fw-brand"><Icon name="book" size={17} /> 知识库</div>
