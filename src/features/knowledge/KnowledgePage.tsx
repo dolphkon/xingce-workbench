@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
+/** FlowUs 式知识库单页工作台：左侧无限层级文件夹树 + 文档列表，右侧同屏块编辑器。 */
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { put, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import {
@@ -16,56 +17,76 @@ import {
   renameFolder,
   type TreeFolder,
 } from '../../lib/folders'
-import { formatDate } from '../../lib/utils'
-import { docFileKind, formatBytes } from '../../lib/docFile'
+import { formatDate, uid } from '../../lib/utils'
+import { docFileKind } from '../../lib/docFile'
+import DocWorkspace from './DocWorkspace'
 import type { KnowledgeDoc, KnowledgeFolder } from '../../types'
 
-function excerpt(content: string): string {
-  return content
-    .replace(/[#*`>\[\]()!_~|]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 110)
-}
+const KB_SIDEBAR_KEY = 'xingce-kb-sidebar'
 
 export default function KnowledgePage() {
   const { items: docs, loading, error, refresh } = useCollection('docs')
   const { items: folders, refresh: refreshFolders } = useCollection('folders')
-  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeDocId = searchParams.get('doc') || undefined
+  const readMode = searchParams.get('read') === '1'
+
   const [keyword, setKeyword] = useState('')
   const [selected, setSelected] = useState<string>(ALL_DOCS_ID)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>())
-  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDoc | null>(null)
-  const [renamingDoc, setRenamingDoc] = useState<KnowledgeDoc | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [moveTarget, setMoveTarget] = useState<string>(UNCATEGORIZED_ID)
-  const [folderDialog, setFolderDialog] = useState<{ mode: 'create' | 'rename'; folder?: KnowledgeFolder; parentId?: string | null } | null>(null)
-  const [folderNameInput, setFolderNameInput] = useState('')
-  const [folderError, setFolderError] = useState<string | null>(null)
-  const [folderDeleting, setFolderDeleting] = useState<KnowledgeFolder | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
-      const saved = window.localStorage.getItem('xingce-kb-sidebar')
+      const saved = window.localStorage.getItem(KB_SIDEBAR_KEY)
       return saved === null ? true : saved === '1'
     } catch {
       return true
     }
   })
+  const [folderDialog, setFolderDialog] = useState<{ mode: 'create' | 'rename'; folder?: KnowledgeFolder; parentId?: string | null } | null>(null)
+  const [folderNameInput, setFolderNameInput] = useState('')
+  const [folderError, setFolderError] = useState<string | null>(null)
+  const [folderDeleting, setFolderDeleting] = useState<KnowledgeFolder | null>(null)
   const [folderMenu, setFolderMenu] = useState<string | null>(null)
+  const [renamingDoc, setRenamingDoc] = useState<KnowledgeDoc | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [moveTarget, setMoveTarget] = useState<string>(UNCATEGORIZED_ID)
+  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDoc | null>(null)
   const initExpanded = useRef(false)
   const migrating = useRef(false)
 
   const tree = useMemo(() => buildFolderTree(folders), [folders])
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders])
+  const isFolderSelected = selected !== ALL_DOCS_ID && selected !== UNCATEGORIZED_ID && folderById.has(selected)
+  const activeDoc = docs.find((d) => d.id === activeDocId)
 
-  // 首次加载默认展开全部目录，方便看到层级结构
+  const { subtreeCounts, uncategorizedCount } = useMemo(() => {
+    const direct = new Map<string, number>()
+    let unc = 0
+    docs.forEach((doc) => {
+      if (doc.folderId && folderById.has(doc.folderId)) direct.set(doc.folderId, (direct.get(doc.folderId) ?? 0) + 1)
+      else unc += 1
+    })
+    const subtree = new Map<string, number>()
+    folders.forEach((folder) => {
+      const ids = descendantFolderIds(folder.id, folders)
+      subtree.set(folder.id, ids.reduce((sum, id) => sum + (direct.get(id) ?? 0), 0))
+    })
+    return { subtreeCounts: subtree, uncategorizedCount: unc }
+  }, [docs, folders, folderById])
+
+  const searchResults = useMemo(() => {
+    const q = keyword.trim().toLowerCase()
+    if (!q) return []
+    return docs.filter((doc) => `${doc.title} ${folderPath(doc.folderId, folders)} ${doc.content} ${doc.fileName ?? ''} ${doc.tags.join(' ')}`.toLowerCase().includes(q))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }, [docs, folders, keyword])
+
   useEffect(() => {
     if (initExpanded.current || folders.length === 0) return
     initExpanded.current = true
     setExpanded(new Set(folders.map((f) => f.id)))
   }, [folders])
 
-  // 旧数据只有 category 文件夹名：自动补建文件夹并回填 folderId（幂等）
   useEffect(() => {
     if (migrating.current || loading) return
     if (!docs.some((doc) => !doc.folderId && doc.category?.trim())) return
@@ -87,51 +108,13 @@ export default function KnowledgePage() {
     }
   }, [folderMenu])
 
-  const toggleKbSidebar = () => {
+  const toggleSidebar = () => {
     setSidebarOpen((prev) => {
       const next = !prev
-      try { window.localStorage.setItem('xingce-kb-sidebar', next ? '1' : '0') } catch { /* 忽略写失败 */ }
+      try { window.localStorage.setItem(KB_SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
       return next
     })
   }
-
-  const { subtreeCounts, uncategorizedCount } = useMemo(() => {
-    const direct = new Map<string, number>()
-    let unc = 0
-    docs.forEach((doc) => {
-      if (doc.folderId && folderById.has(doc.folderId)) {
-        direct.set(doc.folderId, (direct.get(doc.folderId) ?? 0) + 1)
-      } else {
-        unc += 1
-      }
-    })
-    const subtree = new Map<string, number>()
-    folders.forEach((folder) => {
-      const ids = descendantFolderIds(folder.id, folders)
-      subtree.set(folder.id, ids.reduce((sum, id) => sum + (direct.get(id) ?? 0), 0))
-    })
-    return { subtreeCounts: subtree, uncategorizedCount: unc }
-  }, [docs, folders, folderById])
-
-  const isFolderSelected = selected !== ALL_DOCS_ID && selected !== UNCATEGORIZED_ID && folderById.has(selected)
-
-  const filtered = docs
-    .filter((doc) => {
-      if (selected === UNCATEGORIZED_ID && doc.folderId && folderById.has(doc.folderId)) return false
-      if (isFolderSelected && doc.folderId !== selected) return false
-      if (keyword.trim()) {
-        const text = `${doc.title} ${folderPath(doc.folderId, folders)} ${doc.content} ${doc.fileName ?? ''} ${doc.tags.join(' ')}`.toLowerCase()
-        if (!text.includes(keyword.trim().toLowerCase())) return false
-      }
-      return true
-    })
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-
-  const currentLabel = selected === ALL_DOCS_ID
-    ? '全部文档'
-    : selected === UNCATEGORIZED_ID
-      ? '未分类'
-      : folderPath(selected, folders)
 
   const toggleFolder = (id: string) => {
     setExpanded((prev) => {
@@ -140,6 +123,65 @@ export default function KnowledgePage() {
       else next.add(id)
       return next
     })
+  }
+
+  const withParams = useCallback((mutate: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams)
+    mutate(next)
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  const openDoc = useCallback((id: string) => {
+    withParams((next) => { next.set('doc', id); next.delete('read') })
+    if (window.innerWidth <= 900) setSidebarOpen(false)
+  }, [withParams])
+
+  const closeDoc = useCallback(() => {
+    withParams((next) => { next.delete('doc'); next.delete('read') })
+  }, [withParams])
+
+  const onReadClosed = useCallback(() => {
+    withParams((next) => next.delete('read'))
+  }, [withParams])
+
+  const onDocSaved = useCallback(() => { refresh() }, [refresh])
+  const onDocDeleted = useCallback(() => { closeDoc(); refresh() }, [closeDoc, refresh])
+
+  // 兼容旧链接 /knowledge/new?folder=xxx
+  const pendingNewFolder = searchParams.get('new')
+  useEffect(() => {
+    if (pendingNewFolder === null) return
+    withParams((next) => next.delete('new'))
+    void openNewDoc(pendingNewFolder || null)
+    // 仅在新文档请求出现时触发一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewFolder])
+
+  const openNewDoc = async (folderId?: string | null) => {
+    const target = folderId === undefined
+      ? (isFolderSelected ? selected : null)
+      : normalizeParentId(folderId)
+    const folder = target ? folderById.get(target) : undefined
+    const now = Date.now()
+    const created: KnowledgeDoc = {
+      id: uid(),
+      title: '',
+      content: '',
+      blocks: [{ id: uid(), type: 'text', html: '', text: '' }],
+      folderId: target ?? undefined,
+      category: folder?.name ?? '',
+      tags: [],
+      createdAt: now,
+      updatedAt: now,
+      kind: 'md',
+    }
+    await put('docs', created)
+    if (target) {
+      setSelected(target)
+      setExpanded((prev) => new Set([...prev, target]))
+    }
+    refresh()
+    openDoc(created.id)
   }
 
   const openCreateFolder = (parentId?: string | null) => {
@@ -152,12 +194,6 @@ export default function KnowledgePage() {
     setFolderDialog({ mode: 'rename', folder })
     setFolderNameInput(folder.name)
     setFolderError(null)
-  }
-
-  const openNewNote = (folderId?: string) => {
-    const target = folderId ?? (isFolderSelected ? selected : '')
-    const param = target && folderById.has(target) ? `?folder=${encodeURIComponent(target)}` : ''
-    navigate(`/knowledge/new${param}`)
   }
 
   const handleFolderSubmit = async () => {
@@ -190,10 +226,17 @@ export default function KnowledgePage() {
     const affected = docs.filter((doc) => doc.folderId && idSet.has(doc.folderId))
     await Promise.all(affected.map((doc) => put('docs', { ...doc, folderId: undefined, category: '', updatedAt: Date.now() })))
     if (idSet.has(selected)) setSelected(ALL_DOCS_ID)
+    if (activeDocId && affected.some((doc) => doc.id === activeDocId)) closeDoc()
     setExpanded((prev) => new Set([...prev].filter((id) => !idSet.has(id))))
     setFolderDeleting(null)
     refreshFolders()
     refresh()
+  }
+
+  const openRenameDoc = (doc: KnowledgeDoc) => {
+    setRenamingDoc(doc)
+    setRenameValue(doc.title)
+    setMoveTarget(doc.folderId && folderById.has(doc.folderId) ? doc.folderId : UNCATEGORIZED_ID)
   }
 
   const handleRenameDoc = async () => {
@@ -214,35 +257,48 @@ export default function KnowledgePage() {
   const handleDeleteDoc = async () => {
     if (!deletingDoc) return
     await remove('docs', deletingDoc.id)
+    if (activeDocId === deletingDoc.id) closeDoc()
     setDeletingDoc(null)
     refresh()
   }
 
+  const renderDocRow = (doc: KnowledgeDoc, depth: number): ReactNode => {
+    const fk = doc.kind === 'file' ? docFileKind(doc.fileName, doc.fileType) : 'text'
+    return (
+      <div className={`fw-doc-row${activeDocId === doc.id ? ' active' : ''}`} key={doc.id}
+        style={{ paddingLeft: 20 + depth * 13 }}>
+        <button className="fw-doc-row-main" onClick={() => openDoc(doc.id)} title={doc.title || doc.fileName}>
+          <Icon name={fk === 'pdf' ? 'filetext' : fk === 'image' ? 'image' : 'file'} size={13} />
+          <span>{doc.title || doc.fileName || '未命名文档'}</span>
+        </button>
+        <span className="fw-row-ops">
+          <button title="重命名 / 移动" onClick={() => openRenameDoc(doc)}><Icon name="edit" size={12} /></button>
+          <button title="删除" onClick={() => setDeletingDoc(doc)}><Icon name="trash" size={12} /></button>
+        </span>
+      </div>
+    )
+  }
+
   const renderFolder = (folder: TreeFolder, depth: number): ReactNode => {
-    const count = subtreeCounts.get(folder.id) ?? 0
-    const active = selected === folder.id
+    const docsHere = docs.filter((doc) => doc.folderId === folder.id).sort((a, b) => b.updatedAt - a.updatedAt)
     const isOpen = expanded.has(folder.id)
     return (
-      <div key={folder.id} className="kb-tree-branch">
-        <div className={`kb-folder-row${active ? ' active' : ''}`} style={{ paddingLeft: 2 + depth * 13 }}>
-          {folder.children.length > 0 ? (
-            <button className={`kb-tree-caret${isOpen ? ' open' : ''}`} onClick={() => toggleFolder(folder.id)} title={isOpen ? '收起' : '展开'}>
-              <Icon name="chevron" size={13} />
-            </button>
-          ) : (
-            <span className="kb-tree-caret placeholder" />
-          )}
-          <button className="kb-folder" onClick={() => setSelected(folder.id)} title={folderPath(folder.id, folders)}>
-            <Icon name="folder" size={15} /> <span>{folder.name}</span><span className="kb-count">{count}</span>
+      <div className="fw-tree-branch" key={folder.id}>
+        <div className={`fw-folder-row${selected === folder.id ? ' active' : ''}`} style={{ paddingLeft: 4 + depth * 13 }}>
+          <button className={`fw-caret${isOpen ? ' open' : ''}`}
+            onClick={() => toggleFolder(folder.id)} title={isOpen ? '收起' : '展开'}>
+            {folder.children.length || docsHere.length ? <Icon name="chevron" size={12} /> : null}
           </button>
-          <span className={`kb-folder-ops${folderMenu === folder.id ? ' menu-open' : ''}`}>
-            <button title={`管理「${folder.name}」`} onClick={(event) => {
-              event.stopPropagation()
-              setFolderMenu((prev) => prev === folder.id ? null : folder.id)
-            }}><Icon name="more" size={14} /></button>
+          <button className="fw-folder-name" onClick={() => setSelected(folder.id)} title={folderPath(folder.id, folders)}>
+            <Icon name="folder" size={14} /> <span>{folder.name}</span>
+          </button>
+          <span className="fw-count">{subtreeCounts.get(folder.id) ?? 0}</span>
+          <span className={`fw-row-ops${folderMenu === folder.id ? ' menu-open' : ''}`}>
+            <button title={`在「${folder.name}」中新建文档`} onClick={(event) => { event.stopPropagation(); void openNewDoc(folder.id) }}><Icon name="file" size={12} /></button>
+            <button title="更多操作" onClick={(event) => { event.stopPropagation(); setFolderMenu((prev) => prev === folder.id ? null : folder.id) }}><Icon name="more" size={13} /></button>
             {folderMenu === folder.id && (
-              <span className="kb-folder-menu" onClick={(event) => event.stopPropagation()}>
-                <button onClick={() => { setFolderMenu(null); openNewNote(folder.id) }}><Icon name="filetext" size={13} /> 新建文档</button>
+              <span className="fw-folder-menu" onClick={(event) => event.stopPropagation()}>
+                <button onClick={() => { setFolderMenu(null); void openNewDoc(folder.id) }}><Icon name="file" size={13} /> 新建文档</button>
                 <button onClick={() => { setFolderMenu(null); openCreateFolder(folder.id) }}><Icon name="plus" size={13} /> 新建子文件夹</button>
                 <button onClick={() => { setFolderMenu(null); openRenameFolder(folder) }}><Icon name="edit" size={13} /> 重命名</button>
                 <button className="danger" onClick={() => { setFolderMenu(null); setFolderDeleting(folder) }}><Icon name="trash" size={13} /> 删除文件夹</button>
@@ -253,18 +309,7 @@ export default function KnowledgePage() {
         {isOpen && (
           <>
             {folder.children.map((child) => renderFolder(child, depth + 1))}
-            {docs.filter((doc) => doc.folderId === folder.id).map((doc) => {
-              const fk = doc.kind === 'file' ? docFileKind(doc.fileName, doc.fileType) : 'text'
-              return (
-                <div className="kb-tree-file-row" key={doc.id} style={{ paddingLeft: 18 + depth * 13 }}>
-                  <Icon name={fk === 'pdf' ? 'filetext' : fk === 'image' ? 'image' : 'file'} size={13} />
-                  <button className="kb-tree-file" onClick={() => navigate(`/knowledge/${doc.id}?read=1`)} title={doc.title || doc.fileName}>
-                    {doc.title || doc.fileName || '未命名文档'}
-                  </button>
-                  <button className="kb-tree-file-del" title="删除文件" onClick={() => setDeletingDoc(doc)}><Icon name="trash" size={12} /></button>
-                </div>
-              )
-            })}
+            {docsHere.map((doc) => renderDocRow(doc, depth + 1))}
           </>
         )}
       </div>
@@ -276,117 +321,89 @@ export default function KnowledgePage() {
     : (folderDialog?.parentId ? folderPath(folderDialog.parentId, folders) : '根目录')
 
   return (
-    <>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">知识库</h1>
-          <p className="page-subtitle">按文件夹整理资料，新建文档即可沉浸式书写，输入「/」快速插入各类内容块</p>
-        </div>
-        <div className="header-actions">
-          <button className="btn" onClick={toggleKbSidebar} title={sidebarOpen ? '收起文件管理栏' : '展开文件管理栏'}>
-            <Icon name={sidebarOpen ? 'back' : 'chevron'} size={16} /> {sidebarOpen ? '收起文件栏' : '展开文件栏'}
+    <div className="fw-workspace">
+      <aside className={`fw-sidebar${sidebarOpen ? '' : ' collapsed'}`}>
+        <div className="fw-side-head">
+          <div className="fw-brand"><Icon name="book" size={17} /> 知识库</div>
+          <button className="fw-side-toggle" onClick={toggleSidebar} title={sidebarOpen ? '收起文件栏' : '展开文件栏'}>
+            <Icon name={sidebarOpen ? 'back' : 'chevron'} size={15} />
           </button>
-          <button className="btn" onClick={() => openCreateFolder(isFolderSelected ? selected : null)}><Icon name="plus" size={16} /> 新建文件夹</button>
-          <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={16} /> 新建文档</button>
         </div>
-      </div>
+        <div className="fw-side-search">
+          <Icon name="search" size={14} />
+          <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索文档…" aria-label="搜索文档" />
+          {keyword && <button title="清空" onClick={() => setKeyword('')}><Icon name="x" size={13} /></button>}
+        </div>
+        <div className="fw-side-actions">
+          <button className="fw-new-doc" onClick={() => void openNewDoc()}><Icon name="plus" size={15} /> 新建文档</button>
+          <button className="fw-new-folder" onClick={() => openCreateFolder(isFolderSelected ? selected : null)} title="新建文件夹"><Icon name="folder" size={15} /></button>
+        </div>
+        <div className="fw-tree">
+          {keyword.trim() ? (
+            <>
+              <div className="fw-tree-section">搜索结果 · {searchResults.length}</div>
+              {searchResults.length === 0
+                ? <div className="fw-tree-empty">没有匹配的文档</div>
+                : searchResults.map((doc) => renderDocRow(doc, 0))}
+            </>
+          ) : (
+            <>
+              <div className={`fw-root-row${selected === ALL_DOCS_ID ? ' active' : ''}`}>
+                <button onClick={() => setSelected(ALL_DOCS_ID)}><Icon name="book" size={14} /> <span>全部文档</span></button>
+                <span className="fw-count">{docs.length}</span>
+              </div>
+              <div className={`fw-root-row${selected === UNCATEGORIZED_ID ? ' active' : ''}`}>
+                <button onClick={() => setSelected(UNCATEGORIZED_ID)}><Icon name="folder" size={14} /> <span>未分类</span></button>
+                <span className="fw-count">{uncategorizedCount}</span>
+                <span className="fw-row-ops">
+                  <button title="在未分类中新建文档" onClick={() => void openNewDoc(null)}><Icon name="file" size={12} /></button>
+                </span>
+              </div>
+              {selected === UNCATEGORIZED_ID && <div className="fw-tree-section">未分类文档</div>}
+              {selected === UNCATEGORIZED_ID
+                ? docs.filter((doc) => !doc.folderId || !folderById.has(doc.folderId)).sort((a, b) => b.updatedAt - a.updatedAt).map((doc) => renderDocRow(doc, 0))
+                : (
+                  <>
+                    <div className="fw-tree-section">文件夹</div>
+                    {tree.map((folder) => renderFolder(folder, 0))}
+                    {!loading && tree.length === 0 && <div className="fw-tree-empty">还没有文件夹，点击上方 + 新建</div>}
+                  </>
+                )}
+            </>
+          )}
+        </div>
+        <div className="fw-side-foot">
+          <span className="small light">{docs.length} 篇文档 · {folders.length} 个文件夹</span>
+        </div>
+      </aside>
 
-      {error && <div className="error-banner">{error}</div>}
+      {!sidebarOpen && (
+        <button className="fw-side-restore" onClick={toggleSidebar} title="展开文件栏"><Icon name="chevron" size={14} /></button>
+      )}
 
-      <div className={`kb-layout${sidebarOpen ? '' : ' kb-sidebar-hidden'}`}>
-        <aside className="kb-sidebar">
-          <div className="kb-side-title">
-            <Icon name="folder" size={15} /> 文件管理
-            <button className="kb-folder-add" title="新建根目录文件夹" onClick={() => openCreateFolder(null)}><Icon name="plus" size={14} /></button>
-          </div>
-          <button className={`kb-folder${selected === ALL_DOCS_ID ? ' active' : ''}`} onClick={() => setSelected(ALL_DOCS_ID)}>
-            <Icon name="book" size={15} /> <span>全部文档</span><span className="kb-count">{docs.length}</span>
-          </button>
-          <div className={`kb-folder-row${selected === UNCATEGORIZED_ID ? ' active' : ''}`}>
-            <span className="kb-tree-caret placeholder" />
-            <button className="kb-folder" onClick={() => setSelected(UNCATEGORIZED_ID)}>
-              <Icon name="folder" size={15} /> <span>未分类</span><span className="kb-count">{uncategorizedCount}</span>
-            </button>
-            <span className="kb-folder-ops">
-              <button title="在未分类中新建文档" onClick={() => openNewNote()}><Icon name="file" size={13} /></button>
-              <button title="新建根目录文件夹" onClick={() => openCreateFolder(null)}><Icon name="plus" size={13} /></button>
-            </span>
-          </div>
-          {tree.map((folder) => renderFolder(folder, 0))}
-          <div className="kb-hint">点击文件夹右侧「···」可新建文档/子文件夹、重命名或删除；文档可直接展开查看并单独删除。</div>
-        </aside>
-
-        <div className="kb-main">
-          <div className="filter-bar">
-            <div className="search-box">
-              <Icon name="search" size={15} />
-              <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题、内容、文件名、标签…" />
-            </div>
+      <main className="fw-main">
+        {error && <div className="error-banner">{error}</div>}
+        <DocWorkspace
+          docId={activeDocId}
+          readMode={readMode}
+          docs={docs}
+          folders={folders}
+          onDocSaved={onDocSaved}
+          onDocDeleted={onDocDeleted}
+          onReadClosed={onReadClosed}
+          onOpenDoc={openDoc}
+          onNewDoc={() => void openNewDoc()}
+        />
+        {activeDoc && (
+          <div className="fw-statusbar">
+            <span>{activeDoc.blocks?.length ?? 0} 个内容块</span>
+            <span className="fw-meta-dot" />
+            <span>更新于 {formatDate(activeDoc.updatedAt)}</span>
             <span className="spacer" />
-            <span className="small muted">{currentLabel} · {filtered.length} 篇</span>
+            <span>输入「/」插入块 · # 标题 · - 列表 · [] 待办</span>
           </div>
-
-          <div className="card">
-            <div className="card-body tight">
-              {loading ? (
-                <div className="loading">加载中…</div>
-              ) : filtered.length === 0 ? (
-                <EmptyState
-                  icon="folder"
-                  title={docs.length === 0 ? '知识库还是空的' : '这个文件夹还没有文档'}
-                  description={docs.length === 0 ? '新建一篇文档，用「/」命令快速组织你的笔记' : '可在这里新建文档，或在文档详情中移动到当前文件夹'}
-                  action={
-                    <button className="btn btn-primary" onClick={() => openNewNote()}><Icon name="plus" size={15} /> 新建文档</button>
-                  }
-                />
-              ) : (
-                <div className="list">
-                  {filtered.map((doc) => {
-                    const fk = doc.kind === 'file' ? docFileKind(doc.fileName, doc.fileType) : 'text'
-                    return (
-                      <div className="list-item" key={doc.id} style={{ alignItems: 'flex-start' }}>
-                        <span className={`kb-file-icon kb-file-${fk}`}>
-                          <Icon name={fk === 'pdf' ? 'filetext' : fk === 'image' ? 'image' : 'file'} size={19} />
-                        </span>
-                        <div className="list-item-main" onClick={() => navigate(`/knowledge/${doc.id}?read=1`)} style={{ cursor: 'pointer' }}>
-                          <div className="item-title">{doc.title || doc.fileName || '未命名文档'}</div>
-                          {doc.kind === 'file' ? (
-                            <div className="item-excerpt">{doc.fileName} · {formatBytes(doc.fileData)} · 点击全屏阅读</div>
-                          ) : (
-                            <div className="item-excerpt">{excerpt(doc.content) || '暂无内容'}</div>
-                          )}
-                          <div className="item-meta">
-                            <span className="chip chip-primary"><Icon name="folder" size={11} /> {folderPath(doc.folderId, folders)}</span>
-                            {doc.tencentUrl && <span className="chip chip-success">腾讯文档</span>}
-                            {doc.kind === 'file' && <span className="chip chip-warning">{fk.toUpperCase()}</span>}
-                            {doc.tags.slice(0, 3).map((tag) => <span className="chip" key={tag}>#{tag}</span>)}
-                            <span className="small light">更新于 {formatDate(doc.updatedAt)}</span>
-                          </div>
-                        </div>
-                        <div className="item-actions">
-                          {doc.tencentUrl && (
-                            <a className="icon-btn" title="打开腾讯文档" href={doc.tencentUrl} target="_blank" rel="noreferrer"><Icon name="link" size={16} /></a>
-                          )}
-                          <button className="icon-btn" title="全屏阅读" onClick={() => navigate(`/knowledge/${doc.id}?read=1`)}><Icon name="eye" size={16} /></button>
-                          {doc.fileData && (
-                            <a className="icon-btn" title="下载" href={doc.fileData} download={doc.fileName || doc.title}><Icon name="download" size={16} /></a>
-                          )}
-                          <button className="icon-btn" title="重命名 / 移动" onClick={() => {
-                            setRenamingDoc(doc)
-                            setRenameValue(doc.title)
-                            setMoveTarget(doc.folderId && folderById.has(doc.folderId) ? doc.folderId : UNCATEGORIZED_ID)
-                          }}><Icon name="edit" size={16} /></button>
-                          <button className="icon-btn danger" title="删除" onClick={() => setDeletingDoc(doc)}><Icon name="trash" size={16} /></button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+        )}
+      </main>
 
       {folderDialog && (
         <Modal title={folderDialog.mode === 'rename' ? '重命名文件夹' : '新建文件夹'} onClose={() => setFolderDialog(null)}
@@ -403,7 +420,6 @@ export default function KnowledgePage() {
             {folderDialog.mode === 'rename' ? '所在位置：' : '创建位置：'}<strong>{parentLabel}</strong>
           </p>
           {folderError && <p className="error-text" style={{ marginBottom: 0 }}>{folderError}</p>}
-          {folderDialog.mode === 'rename' && <p className="small muted" style={{ marginBottom: 0 }}>重命名后，该文件夹内文档的目录显示会自动更新。</p>}
         </Modal>
       )}
 
@@ -439,6 +455,6 @@ export default function KnowledgePage() {
           onConfirm={() => void handleDeleteFolder()}
         />
       )}
-    </>
+    </div>
   )
 }
