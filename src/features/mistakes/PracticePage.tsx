@@ -278,7 +278,7 @@ export default function PracticePage() {
 
       <div className="card">
         <div className="card-body">
-          <div className="question-text" style={{ fontSize: 15 }}>{formatQuestionText(current.title)}</div>
+          <div className="question-text" style={{ fontSize: 'calc(15px * var(--font-scale))' }}>{formatQuestionText(current.title)}</div>
           {current.source && (
             <div className="small muted" style={{ marginTop: 6 }}>来源：{current.source}</div>
           )}

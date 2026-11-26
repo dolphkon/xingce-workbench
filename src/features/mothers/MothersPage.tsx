@@ -58,7 +58,7 @@ export default function MothersPage() {
           <Icon name="search" size={15} />
           <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索题干、考点、解法…" />
         </div>
-        <select className="select" style={{ width: 140 }} value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
+        <select className="select" style={{ width: 'auto', minWidth: 150 }} value={type} onChange={(e) => setType(e.target.value as QuestionType | '全部')}>
           <option value="全部">全部模块</option>
           {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
         </select>
@@ -131,7 +131,7 @@ export default function MothersPage() {
                         {item.keyPoints.length > 0 && (
                           <>
                             <div className="form-label" style={{ marginTop: 14 }}>关键要点</div>
-                            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 'calc(13px * var(--font-scale))' }}>
                               {item.keyPoints.map((point, index) => <li key={index} style={{ margin: '3px 0' }}>{point}</li>)}
                             </ul>
                           </>

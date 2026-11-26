@@ -368,7 +368,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
               <button
                 type="button"
                 className="btn btn-sm"
-                style={{ padding: '3px 7px', fontSize: 11, background: 'rgba(255,255,255,.92)' }}
+                style={{ padding: '3px 7px', fontSize: 'calc(11px * var(--font-scale))', background: 'rgba(255,255,255,.92)' }}
                 disabled={ocrBusy}
                 onClick={() => handleOcr(index)}
               >

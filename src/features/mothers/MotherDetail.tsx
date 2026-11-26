@@ -131,7 +131,7 @@ export default function MotherDetail() {
             <>
               <div className="divider" />
               <div className="form-label">关键要点</div>
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: 13, lineHeight: 1.9 }}>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: 'calc(13px * var(--font-scale))', lineHeight: 1.9 }}>
                 {item.keyPoints.map((point, index) => <li key={index}>{point}</li>)}
               </ul>
             </>

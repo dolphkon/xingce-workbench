@@ -124,14 +124,14 @@ export default function MistakesPage() {
           <Icon name="search" size={15} />
           <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索题干、解析、标签…" />
         </div>
-        <select className="select" style={{ width: 140 }} value={subType} onChange={(e) => setSubType(e.target.value)} title="按题型筛选">
+        <select className="select" style={{ width: 'auto', minWidth: 140 }} value={subType} onChange={(e) => setSubType(e.target.value)} title="按题型筛选">
           <option value="全部">全部题型</option>
           {Array.from(new Set([
             ...(activeType === '全部' ? categories.flatMap((c) => c.types) : (categories.find((c) => c.name === activeType)?.types ?? [])),
             ...items.filter((i) => activeType === '全部' || i.type === activeType).map((i) => i.subType ?? '').filter(Boolean),
           ])).map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
-        <select className="select" style={{ width: 132 }} value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)} title="按正确率范围筛选（左闭右开，如 30%-50% 含 30% 不含 50%）">
+        <select className="select" style={{ width: 'auto', minWidth: 150 }} value={accuracy} onChange={(e) => setAccuracy(e.target.value as AccuracyRange)} title="按正确率范围筛选（左闭右开，如 30%-50% 含 30% 不含 50%）">
           <option value="all">全部正确率</option>
           {ACCURACY_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
         </select>

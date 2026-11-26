@@ -103,7 +103,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
         {showHelp ? '收起「如何获取令牌」' : '还没有令牌？如何获取令牌'}
       </button>
       {showHelp && (
-        <div className="notice" style={{ fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
+        <div className="notice" style={{ fontSize: 'calc(12px * var(--font-scale))', lineHeight: 1.8, marginTop: 8 }}>
           在你的账号下创建一个 Fine-grained token 即可，名称、有效期、权限都已预填好：
           <a href={tokenCreateUrl()} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 4 }}>
             <Icon name="github" size={13} /> 打开 GitHub 令牌创建页
@@ -155,7 +155,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
         </div>
       )}
 
-      <div className="notice" style={{ fontSize: 12, lineHeight: 1.7 }}>
+      <div className="notice" style={{ fontSize: 'calc(12px * var(--font-scale))', lineHeight: 1.7 }}>
         <strong>安全可靠：</strong>令牌只保存在本机浏览器、不会写进代码，仅申请 Contents（读写数据）与 Administration（自动建私有仓库）两项权限；只连接<strong>私有仓库</strong>，公开仓库会被拒绝。请勿在公用设备上使用。
       </div>
       {error && <p className="form-error">{error}</p>}
@@ -293,6 +293,48 @@ function GlobalGithubConfigModal() {
 
 const SIDEBAR_KEY = 'xingce-sidebar-collapsed'
 
+const FONT_SIZES = [
+  { key: 'standard', label: '标准' },
+  { key: 'large', label: '大' },
+  { key: 'xlarge', label: '超大' },
+] as const
+const FONT_SIZE_KEY = 'xingce-font-size'
+
+function initialFontIndex(): number {
+  try {
+    const saved = window.localStorage.getItem(FONT_SIZE_KEY)
+    const index = FONT_SIZES.findIndex((item) => item.key === saved)
+    return index >= 0 ? index : 1
+  } catch {
+    return 1
+  }
+}
+
+// 首帧即应用字号，避免页面先小后大的闪烁
+const INITIAL_FONT_INDEX = initialFontIndex()
+document.documentElement.dataset.fontSize = FONT_SIZES[INITIAL_FONT_INDEX].key
+
+function FontSizeControl() {
+  const [index, setIndex] = useState(INITIAL_FONT_INDEX)
+  const current = FONT_SIZES[index]
+
+  useEffect(() => {
+    document.documentElement.dataset.fontSize = current.key
+    try { window.localStorage.setItem(FONT_SIZE_KEY, current.key) } catch { /* 忽略写失败 */ }
+  }, [current.key])
+
+  return (
+    <button
+      className="font-size-btn"
+      onClick={() => setIndex((value) => (value + 1) % FONT_SIZES.length)}
+      title={`当前字号：${current.label}（点击切换 标准 / 大 / 超大）`}
+      aria-label={`切换字号，当前${current.label}`}
+    >
+      <b>Aa</b><small>{current.label}</small>
+    </button>
+  )
+}
+
 export default function Layout() {
   const location = useLocation()
   const isMobile = () => window.innerWidth <= 900
@@ -385,6 +427,7 @@ export default function Layout() {
           <span className="topbar-title">行测备考 · 一体化工作台</span>
           <span className="spacer" />
           <div className="topbar-right">
+            <FontSizeControl />
             <TopbarSync />
             <Icon name="clock" size={14} />
             <span className="topbar-date">{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</span>

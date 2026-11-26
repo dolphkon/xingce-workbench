@@ -198,7 +198,7 @@ export default function MotherForm({ initial, mistakePoints = [], onSaved, onCan
       />
 
       {relatedCount > 0 && (
-        <div className="notice" style={{ fontSize: 12 }}>
+        <div className="notice" style={{ fontSize: 'calc(12px * var(--font-scale))' }}>
           考点「{point.trim()}」当前关联 <strong>{relatedCount}</strong> 道错题，保存后可在母题详情查看。
         </div>
       )}
@@ -273,7 +273,7 @@ export default function MotherForm({ initial, mistakePoints = [], onSaved, onCan
           className="question-images-form"
           renderActions={(index) => (
             <>
-              <button type="button" className="btn btn-sm" style={{ padding: '3px 7px', fontSize: 11, background: 'rgba(255,255,255,.92)' }}
+              <button type="button" className="btn btn-sm" style={{ padding: '3px 7px', fontSize: 'calc(11px * var(--font-scale))', background: 'rgba(255,255,255,.92)' }}
                 disabled={ocrBusy} onClick={() => void runOcr(ocrSourcesRef.current[index] || images[index])}>
                 <Icon name="sparkle" size={12} /> OCR 识别
               </button>
