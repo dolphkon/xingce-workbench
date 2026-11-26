@@ -222,7 +222,7 @@ function GithubSyncPanel() {
 
 function WorkbuddySyncPanel() {
   const { available, user, ready, syncing, lastResult, signIn, signOut, sync } = useAuth()
-  if (!available) return <p className="sync-note">当前域名未启用云账户，请在 WorkBuddy 应用中打开以使用微信登录。</p>
+  if (!available) return null
   if (!ready) return <p className="small muted">正在检查登录状态…</p>
   if (!user) {
     return (
@@ -263,7 +263,7 @@ function TopbarSync() {
         title={syncing ? '正在同步到 GitHub' : '立即同步到 GitHub'}
         aria-label={syncing ? '正在同步到 GitHub' : '立即同步到 GitHub'}
       >
-        <Icon name={syncing ? 'refresh' : 'github'} size={17} />
+        <Icon name="github" size={17} />
         <span>{syncing ? '同步中' : 'GitHub 同步'}</span>
       </button>
     )
