@@ -91,6 +91,7 @@ export default function PracticePage() {
   const [results, setResults] = useState<PracticeResult[]>([])
   const [saving, setSaving] = useState(false)
   const [sketchId, setSketchId] = useState<string | null>(null)
+  const [sketchEditing, setSketchEditing] = useState(false)
   const restoredRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -195,6 +196,8 @@ export default function PracticePage() {
     setSettingsOpen(false)
     setResults([])
     setReportOpen(false)
+    setSketchId(null)
+    setSketchEditing(false)
     setStarted(true)
   }
 
@@ -225,6 +228,8 @@ export default function PracticePage() {
     setStarted(false)
     setPool([])
     setReportOpen(false)
+    setSketchId(null)
+    setSketchEditing(false)
     navigate('/mistakes')
   }
 
@@ -565,7 +570,7 @@ export default function PracticePage() {
                       <span className="pr-q-type">{item?.subType || '单选题'}</span>
                       <span className="pe-q-tools">
                         <button className={bookmarks[result.id] ? 'on' : ''} onClick={() => item && toggleBookmark(item)} title="收藏本题"><Icon name="bookmark" size={16} /></button>
-                        <button className={sketchId === result.id ? 'on' : ''} onClick={() => setSketchId(result.id)} title="在题目上写草稿" aria-label="在题目上写草稿"><Icon name="edit" size={16} /></button>
+                        <button className={sketchId === result.id ? 'on' : ''} onClick={() => { setSketchId(result.id); setSketchEditing(true) }} title="在题目上写草稿" aria-label="在题目上写草稿"><Icon name="edit" size={16} /></button>
                         <button className={marks[result.id] ? 'on' : ''} onClick={() => item && toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
                       </span>
                     </div>
@@ -592,7 +597,9 @@ export default function PracticePage() {
                       </div>
                     )}
                     <Link className="pe-report-link" to={`/mistakes/${result.id}`}>查看解析与复盘 <Icon name="chevron" size={13} /></Link>
-                    <QuestionSketch questionId={result.id} active={sketchId === result.id} onExit={() => setSketchId(null)} />
+                    {sketchId === result.id && (
+                      <QuestionSketch questionId={result.id} active={sketchEditing} onExit={() => setSketchEditing(false)} cardPrefix="pr-q-" />
+                    )}
                   </article>
                 )
               })}
@@ -652,7 +659,7 @@ export default function PracticePage() {
                 <span className="chip chip-primary">{item.subType || item.type}</span>
                 <span className="pe-q-tools">
                   <button className={bookmarks[item.id] ? 'on' : ''} onClick={() => toggleBookmark(item)} title="收藏本题" aria-label="收藏本题"><Icon name="bookmark" size={16} /></button>
-                  <button className={sketchId === item.id ? 'on' : ''} onClick={() => setSketchId(item.id)} title="在题目上写草稿" aria-label="在题目上写草稿"><Icon name="edit" size={16} /></button>
+                  <button className={sketchId === item.id ? 'on' : ''} onClick={() => { setSketchId(item.id); setSketchEditing(true) }} title="在题目上写草稿" aria-label="在题目上写草稿"><Icon name="edit" size={16} /></button>
                   <button className={marks[item.id] ? 'on' : ''} onClick={() => toggleMark(item)} title="标记本题" aria-label="标记本题"><Icon name="flag" size={16} /></button>
                 </span>
               </div>
@@ -688,7 +695,9 @@ export default function PracticePage() {
                   {notes[item.id] && <span className="pe-foot-note"><Icon name="note" size={13} /> {notes[item.id]}</span>}
                 </div>
               )}
-              <QuestionSketch questionId={item.id} active={sketchId === item.id} onExit={() => setSketchId(null)} />
+              {sketchId === item.id && (
+                <QuestionSketch questionId={item.id} active={sketchEditing} onExit={() => setSketchEditing(false)} cardPrefix="practice-q-" />
+              )}
             </article>
           )
         })}

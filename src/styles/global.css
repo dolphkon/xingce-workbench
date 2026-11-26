@@ -1453,7 +1453,7 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 /* ---------- 题目上的手写草稿 ---------- */
 .pe-question, .pr-question { position: relative; }
 .qs-layer {
-  position: absolute; inset: 0; z-index: 2;
+  position: absolute; left: 0; right: 0; top: 0; height: 100%; z-index: 3;
   border-radius: inherit; pointer-events: none;
 }
 .qs-layer.active { pointer-events: auto; cursor: crosshair; }

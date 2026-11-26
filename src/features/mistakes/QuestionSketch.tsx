@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Icon } from '../../components/ui'
 
 const PREFIX = 'xingce-sketch-v1-'
@@ -10,17 +10,22 @@ const COLORS = [
 type Tool = 'pen' | 'eraser'
 
 /**
- * 覆盖在题目卡片上的透明手写层：笔迹直接写在原题上，按题目 ID 保存。
- * active 时接收指针事件并显示右侧工具条；退出后笔迹保留但不再拦截点击。
+ * 题目手写草稿层。
+ * - 画布覆盖「锚点题 + 前后相邻各一题」共三张题目卡片的区域，书写空间更大；
+ * - 同一时刻只渲染锚点题这一层，避免多题画布互相叠加；
+ * - 笔迹按题目 ID 独立存入 sessionStorage，切换题目互不干扰；
+ * - active 时接收指针事件并显示工具条，退出后笔迹保留但不再拦截点击。
  */
 export default function QuestionSketch({
   questionId,
   active,
   onExit,
+  cardPrefix,
 }: {
   questionId: string
   active: boolean
   onExit: () => void
+  cardPrefix: string
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -29,6 +34,7 @@ export default function QuestionSketch({
   const initialRef = useRef(false)
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState(COLORS[0].value)
+  const [span, setSpan] = useState({ top: 0, height: 0 })
 
   const key = `${PREFIX}${questionId}`
 
@@ -59,6 +65,37 @@ export default function QuestionSketch({
     }
     image.src = data
   }
+
+  // 测量锚点题及相邻两题的合并区域（相对锚点题卡片）
+  useLayoutEffect(() => {
+    const measure = () => {
+      const card = wrapRef.current?.parentElement
+      if (!card) return
+      const cardRect = card.getBoundingClientRect()
+      const siblings = [...(card.parentElement?.children ?? [])].filter((node) => node.id.startsWith(cardPrefix))
+      const index = siblings.indexOf(card)
+      let start = Math.max(0, index - 1)
+      let end = Math.min(siblings.length - 1, index + 1)
+      // 边界题（首/尾）向可用方向再扩展一题，保证覆盖共三题
+      if (end - start < 2 && end < siblings.length - 1) end += 1
+      if (end - start < 2 && start > 0) start -= 1
+      const first = siblings[start]
+      const last = siblings[end]
+      const top = first ? first.getBoundingClientRect().top - cardRect.top : 0
+      const bottom = last ? last.getBoundingClientRect().bottom - cardRect.top : cardRect.height
+      setSpan({ top, height: Math.max(cardRect.height, bottom - top) })
+    }
+    measure()
+    const card = wrapRef.current?.parentElement
+    if (!card) return
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    const prev = card.previousElementSibling
+    const next = card.nextElementSibling
+    if (prev) observer.observe(prev)
+    if (next) observer.observe(next)
+    return () => observer.disconnect()
+  }, [questionId, cardPrefix])
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -162,7 +199,13 @@ export default function QuestionSketch({
 
   return (
     <>
-      <div className={`qs-layer${active ? ' active' : ''}`} ref={wrapRef} aria-hidden="true">
+      <div
+        className={`qs-layer${active ? ' active' : ''}`}
+        ref={wrapRef}
+        data-sketch-id={questionId}
+        style={{ top: span.top, height: span.height || '100%' }}
+        aria-hidden="true"
+      >
         <canvas
           ref={canvasRef}
           onPointerDown={onPointerDown}
