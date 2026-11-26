@@ -6,7 +6,7 @@ import { readCategories } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
 import { dateKey, formatQuestionText, pluralDays } from '../../lib/utils'
-import type { Mistake, QuestionType } from '../../types'
+import { reviewStatusChip, reviewStatusLabel, reviewStatusOf, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
 export default function MistakesPage() {
@@ -23,14 +23,18 @@ export default function MistakesPage() {
   const [editing, setEditing] = useState<Mistake | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Mistake | null>(null)
 
+  // 错题库只显示未掌握的题（已掌握移入掌握库）
+  const activeItems = useMemo(() => items.filter((i) => reviewStatusOf(i) !== 'mastered'), [items])
+  const masteredCount = useMemo(() => items.filter((i) => reviewStatusOf(i) === 'mastered').length, [items])
+
   // 仅展示错题库中实际有题的模块（按配置顺序），作为导航 tab
   const moduleTabs = useMemo(() => {
-    const present = new Set(items.map((i) => i.type))
+    const present = new Set(activeItems.map((i) => i.type))
     const order: string[] = []
     categories.forEach((c) => { if (present.has(c.name) && !order.includes(c.name)) order.push(c.name) })
     present.forEach((name) => { if (!order.includes(name)) order.push(name) })
     return order
-  }, [items, categories])
+  }, [activeItems, categories])
 
   // 默认选中「全部」；仅当所选模块被删空时才回退到「全部」
   const activeType: QuestionType | '全部' = type === '全部' || moduleTabs.includes(type)
@@ -42,8 +46,9 @@ export default function MistakesPage() {
     setSubType('全部')
   }
 
-  const filtered = items
+  const filtered = activeItems
     .filter((item) => {
+      if (reviewStatusOf(item) === 'mastered') return false
       if (activeType !== '全部' && item.type !== activeType) return false
       if (subType !== '全部' && item.subType !== subType) return false
       if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
@@ -91,6 +96,7 @@ export default function MistakesPage() {
           <p className="page-subtitle">沉淀每一道错题，按时间、题型与正确率进行专项突破</p>
         </div>
         <div className="header-actions">
+          <Link className="btn" to="/mastered"><Icon name="check" size={16} /> 掌握库{masteredCount > 0 ? ` ${masteredCount}` : ''}</Link>
           <Link className="btn" to={practiceHref}><Icon name="play" size={16} /> 专项刷题</Link>
           <button className="btn btn-primary" onClick={() => setEditing('new')}>
             <Icon name="plus" size={16} /> 录入错题
@@ -153,8 +159,8 @@ export default function MistakesPage() {
           ) : filtered.length === 0 ? (
             <EmptyState
               icon="target"
-              title={items.length === 0 ? '错题库还是空的' : '没有符合条件的错题'}
-              description={items.length === 0
+              title={activeItems.length === 0 ? '错题库还是空的' : '没有符合条件的错题'}
+              description={activeItems.length === 0
                 ? '上传题目截图用 OCR 识别录入，或直接手动填写'
                 : '试试调整搜索词或筛选条件，也可以直接录入一道新错题'}
               action={
@@ -163,7 +169,7 @@ export default function MistakesPage() {
                     <button className="btn" onClick={clearFilters}>清除筛选</button>
                   )}
                   <button className="btn btn-primary" onClick={() => setEditing('new')}>
-                    <Icon name="plus" size={15} /> {items.length === 0 ? '录入第一道错题' : '录入错题'}
+                    <Icon name="plus" size={15} /> {activeItems.length === 0 ? '录入第一道错题' : '录入错题'}
                   </button>
                 </div>
               }
@@ -177,6 +183,7 @@ export default function MistakesPage() {
                       {formatQuestionText(item.title).replace(/\n/g, ' ')}
                     </Link>
                     <div className="item-meta">
+                      <span className={`chip ${reviewStatusChip(reviewStatusOf(item))}`}>{reviewStatusLabel(reviewStatusOf(item))}</span>
                       <span className="chip chip-primary">{item.type}</span>
                       {item.subType && <span className="chip">{item.subType}</span>}
                       {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}

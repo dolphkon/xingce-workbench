@@ -754,10 +754,17 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
   box-shadow: var(--shadow-sm);
 }
 .sidebar-edge:hover { background: var(--primary-light); }
+/* 手机抽屉遮罩与关闭按钮 */
+.sidebar-backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(15, 23, 42, .38); display: none; }
+.sidebar-mobile-close { display: none; position: absolute; right: 8px; top: 14px; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.sidebar-logo { position: relative; }
 @media (max-width: 900px) {
+  .sidebar-backdrop { display: block; }
+  .sidebar-mobile-close { display: grid; }
   .app-shell:not(.sidebar-collapsed) .sidebar {
     position: fixed; left: 0; top: 0; width: 236px; flex-basis: 236px;
     box-shadow: 12px 0 32px rgba(15, 23, 42, .14);
+    z-index: 20;
   }
   .app-shell:not(.sidebar-collapsed) .sidebar-logo-text,
   .app-shell:not(.sidebar-collapsed) .nav-label,

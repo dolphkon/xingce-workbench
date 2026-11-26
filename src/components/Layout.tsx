@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useGitHubSync } from '../lib/useGitHubSync'
 import { GITHUB_DEFAULTS, tokenCreateUrl, type GitHubConfig } from '../lib/github'
@@ -294,23 +294,49 @@ function GlobalGithubConfigModal() {
 const SIDEBAR_KEY = 'xingce-sidebar-collapsed'
 
 export default function Layout() {
+  const location = useLocation()
+  const isMobile = () => window.innerWidth <= 900
   const [collapsed, setCollapsed] = useState(() => {
+    // 手机端默认收起抽屉，桌面端默认展开；用户手动开合后写入 localStorage
     try {
       const saved = window.localStorage.getItem(SIDEBAR_KEY)
       if (saved !== null) return saved === '1'
     } catch {
       // 存储不可用时按屏幕宽度决定
     }
-    return window.innerWidth <= 900
+    return isMobile()
   })
 
-  const toggleSidebar = () => {
-    setCollapsed((prev) => {
-      const next = !prev
-      try { window.localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
-      return next
-    })
+  const applyCollapsed = (next: boolean) => {
+    setCollapsed(next)
+    try { window.localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
   }
+  const toggleSidebar = () => applyCollapsed(!collapsed)
+
+  // 屏幕宽窄切换时自动适配：手机收起、桌面展开，避免抽屉卡在错误状态
+  useEffect(() => {
+    const onResize = () => applyCollapsed(isMobile())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // 导航切换后自动收起手机抽屉
+  useEffect(() => {
+    if (isMobile()) applyCollapsed(true)
+  }, [location.pathname])
+
+  // 手机抽屉展开时：Esc 关闭 + 锁定页面滚动
+  useEffect(() => {
+    if (collapsed || !isMobile()) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') applyCollapsed(true) }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [collapsed])
 
   return (
     <div className={`app-shell${collapsed ? ' sidebar-collapsed' : ''}`}>
@@ -320,8 +346,11 @@ export default function Layout() {
           <Icon name="chevron" size={14} />
         </button>
       )}
+      {/* 手机抽屉遮罩：点击关闭，避免 sidebar 覆盖时无法收起 */}
+      {!collapsed && <div className="sidebar-backdrop" onClick={() => applyCollapsed(true)} aria-hidden="true" />}
       <aside className="sidebar">
         <div className="sidebar-logo">
+          <button className="sidebar-mobile-close" onClick={() => applyCollapsed(true)} title="收起导航" aria-label="收起导航"><Icon name="x" size={16} /></button>
           <span className="logo-mark">行</span>
           <span className="sidebar-logo-text">
             行测工作台

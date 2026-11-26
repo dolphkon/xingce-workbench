@@ -83,6 +83,30 @@ export const QUESTION_TYPES: readonly string[] = DEFAULT_CATEGORIES.map((item) =
 /** 兼容旧类型：现在允许自定义模块名，故为字符串 */
 export type QuestionType = string
 
+/** 错题复盘状态：新录入 → 待复盘 → 已复盘 → 已掌握（已掌握移入掌握库） */
+export type ReviewStatus = 'new' | 'pending' | 'reviewed' | 'mastered'
+
+export const REVIEW_STATUSES: { value: ReviewStatus; label: string }[] = [
+  { value: 'new', label: '新录入' },
+  { value: 'pending', label: '待复盘' },
+  { value: 'reviewed', label: '已复盘' },
+  { value: 'mastered', label: '已掌握' },
+]
+
+/** 兼容旧数据：未设置状态视为新录入 */
+export function reviewStatusOf(item: { reviewStatus?: ReviewStatus }): ReviewStatus {
+  return item.reviewStatus ?? 'new'
+}
+
+export function reviewStatusLabel(status: ReviewStatus): string {
+  return REVIEW_STATUSES.find((s) => s.value === status)?.label ?? '新录入'
+}
+
+/** 状态对应的 chip 颜色类 */
+export function reviewStatusChip(status: ReviewStatus): string {
+  return { new: 'chip-primary', pending: 'chip-warning', reviewed: 'chip', mastered: 'chip-success' }[status]
+}
+
 export interface Mistake {
   id: string
   title: string
@@ -110,6 +134,8 @@ export interface Mistake {
   point?: string
   /** 是否关联母题：关闭后即使有历史考点也不参与自动关联 */
   linkMother?: boolean
+  /** 复盘状态：已掌握的题目进入掌握库、不再显示在错题库 */
+  reviewStatus?: ReviewStatus
 }
 
 /* ---------- FlowUs 式块文档 ---------- */

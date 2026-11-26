@@ -6,7 +6,7 @@ import { readCategories } from '../../lib/categories'
 import { compressImage, fileToDataUrl } from '../../lib/image'
 import { parseQuestionText, recognizeImage, warmupOcr } from '../../lib/ocr'
 import { formatQuestionText, parseTags, uid } from '../../lib/utils'
-import type { Mistake, MotherQuestion, QuestionType } from '../../types'
+import { REVIEW_STATUSES, reviewStatusOf, type Mistake, type MotherQuestion, type QuestionType, type ReviewStatus } from '../../types'
 import CategoryFields from '../categories/CategoryFields'
 import CategoryManager from '../categories/CategoryManager'
 
@@ -42,6 +42,8 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const [accuracyInput, setAccuracyInput] = useState(() =>
     initial?.accuracy != null ? String(initial.accuracy) : '',
   )
+  // 复盘状态：新建默认「新录入」，编辑时沿用已有状态
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>(() => reviewStatusOf(initial ?? {}))
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const imagesRef = useRef(images)
   // 原始清晰图缓存：OCR 用原图（压缩会破坏圆圈标记），存储用压缩图
@@ -188,6 +190,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         source: source.trim() || undefined,
         accuracy,
         images,
+        reviewStatus,
         createdAt: initial?.createdAt ?? now,
         updatedAt: now,
         lastReviewedAt: initial?.lastReviewedAt,
@@ -223,6 +226,14 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
           style={{ minHeight: 110 }}
         />
         <span className="form-hint">粘贴或识别后离开输入框，会自动清理多余空格并规整换行</span>
+      </div>
+
+      <div className="form-field">
+        <label className="form-label">复盘状态</label>
+        <select className="select" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as ReviewStatus)} data-field="review-status">
+          {REVIEW_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <span className="form-hint">新录入的题目默认为「新录入」；设为「已掌握」后将自动移入掌握库，不再显示在错题库</span>
       </div>
 
       <CategoryFields

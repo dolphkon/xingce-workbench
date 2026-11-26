@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import Dashboard from './features/dashboard/Dashboard'
 import MistakesPage from './features/mistakes/MistakesPage'
 import MistakeDetail from './features/mistakes/MistakeDetail'
+import MasteredPage from './features/mistakes/MasteredPage'
 import PracticePage from './features/mistakes/PracticePage'
 import KnowledgePage from './features/knowledge/KnowledgePage'
 import DocEditor from './features/knowledge/DocEditor'
@@ -21,6 +22,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/mistakes" element={<MistakesPage />} />
+        <Route path="/mastered" element={<MasteredPage />} />
         <Route path="/mistakes/practice" element={<PracticePage />} />
         <Route path="/mistakes/:id" element={<MistakeDetail />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
