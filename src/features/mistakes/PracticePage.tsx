@@ -581,7 +581,7 @@ export default function PracticePage() {
                         {options.map((option) => (
                           <div
                             key={option.letter}
-                            className={`pe-option pr-option${answer === option.letter ? ' correct' : ''}${chosen === option.letter && !result.correct ? ' wrong' : ''}`}
+                            className={`pe-option pr-option${answer === option.letter ? ` correct${result.correct ? ' hit' : ''}` : ''}${chosen === option.letter && !result.correct ? ' wrong' : ''}`}
                           >
                             <span className="pe-option-key">{option.letter}</span>
                             <span>{option.text}</span>
@@ -589,13 +589,15 @@ export default function PracticePage() {
                         ))}
                       </div>
                     )}
-                    {(!result.correct || result.note || result.marked) && (
-                      <div className="pr-q-foot">
-                        {!result.correct && <span>你的答案：{chosen || '未作答'} · 正确答案：{answer || '—'}</span>}
-                        {result.note && <span>笔记：{result.note}</span>}
-                        {result.marked && <span className="pe-foot-mark">已标记</span>}
-                      </div>
-                    )}
+                    <div className="pr-q-foot">
+                      <span className="pr-answer-line">
+                        我的答案：<b className={result.correct ? 'ans-ok' : 'ans-bad'}>{chosen || '未作答'}</b>
+                        <span className="pr-answer-sep">·</span>
+                        正确答案：<b className="ans-ok">{answer || '—'}</b>
+                      </span>
+                      {result.note && <span>笔记：{result.note}</span>}
+                      {result.marked && <span className="pe-foot-mark">已标记</span>}
+                    </div>
                     <Link className="pe-report-link" to={`/mistakes/${result.id}`}>查看解析与复盘 <Icon name="chevron" size={13} /></Link>
                     {sketchId === result.id && (
                       <QuestionSketch questionId={result.id} active={sketchEditing} onExit={() => setSketchEditing(false)} cardPrefix="pr-q-" />
