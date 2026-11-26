@@ -187,7 +187,7 @@ export default function DocWorkspace({
       <div className="fw-empty">
         <div className="fw-empty-icon"><Icon name="filetext" size={28} /></div>
         <h2>开始你的知识库</h2>
-        <p>从左侧选择一篇文档，或新建一个文件夹与文档。</p>
+        <p>从文档列表选择一篇文档，或新建一个文件夹与文档。</p>
         {onNewDoc && <button className="btn btn-primary" onClick={onNewDoc}><Icon name="plus" size={15} /> 新建文档</button>}
         <div className="fw-empty-tips">输入「/」唤出块命令 · 输入 # 转标题 · - 转列表 · [] 转待办</div>
       </div>
@@ -215,7 +215,7 @@ export default function DocWorkspace({
           </div>
         </div>
         <div className="fw-doc-actions">
-          <button className="fw-action" onClick={() => { setImmersive(true) }} title="全屏阅读">
+          <button className="fw-action desktop-only" onClick={() => { setImmersive(true) }} title="全屏阅读">
             <Icon name="expand" size={15} /> 全屏阅读
           </button>
           {doc.tencentUrl && (
@@ -224,8 +224,8 @@ export default function DocWorkspace({
           {doc.fileData && (
             <a className="fw-action" href={doc.fileData} download={doc.fileName || doc.title} title="下载"><Icon name="download" size={15} /></a>
           )}
-          <button className={`fw-action${showInfo ? ' active' : ''}`} onClick={() => setShowInfo((v) => !v)} title="文档信息"><Icon name="settings" size={15} /></button>
-          <button className="fw-action danger" onClick={() => setConfirmDelete(true)} title="删除文档"><Icon name="trash" size={15} /></button>
+          <button className={`fw-action desktop-only${showInfo ? ' active' : ''}`} onClick={() => setShowInfo((v) => !v)} title="文档信息"><Icon name="settings" size={15} /></button>
+          <button className="fw-action danger desktop-only" onClick={() => setConfirmDelete(true)} title="删除文档"><Icon name="trash" size={15} /></button>
         </div>
       </div>
 

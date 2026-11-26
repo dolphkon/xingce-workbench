@@ -35,6 +35,8 @@ export default function KnowledgePage() {
   const [selected, setSelected] = useState<string>(ALL_DOCS_ID)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>())
   const [sidebarOpen, setSidebarOpen] = useState(() => {
+    // 手机端每次进入默认展开文档列表（列表是唯一入口，收起后用户看不到文档）
+    if (window.innerWidth <= 900) return true
     try {
       const saved = window.localStorage.getItem(KB_SIDEBAR_KEY)
       return saved === null ? true : saved === '1'
@@ -113,10 +115,38 @@ export default function KnowledgePage() {
   const toggleSidebar = () => {
     setSidebarOpen((prev) => {
       const next = !prev
-      try { window.localStorage.setItem(KB_SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
+      // 手机端状态不持久化，避免与桌面偏好互相锁死
+      if (window.innerWidth > 900) {
+        try { window.localStorage.setItem(KB_SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
+      }
       return next
     })
   }
+
+  // 手机端：Esc 收起文档列表；跨断点切换时自动适配
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && window.innerWidth <= 900) setSidebarOpen(false)
+    }
+    let wasMobile = window.innerWidth <= 900
+    const onResize = () => {
+      const mobile = window.innerWidth <= 900
+      if (mobile === wasMobile) return
+      wasMobile = mobile
+      if (mobile) setSidebarOpen(true)
+      else {
+        let saved: string | null = null
+        try { saved = window.localStorage.getItem(KB_SIDEBAR_KEY) } catch { /* 忽略 */ }
+        setSidebarOpen(saved !== '0')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [])
 
   const toggleFolder = (id: string) => {
     setExpanded((prev) => {
@@ -140,6 +170,8 @@ export default function KnowledgePage() {
 
   const closeDoc = useCallback(() => {
     withParams((next) => { next.delete('doc'); next.delete('read') })
+    // 手机端关闭文档后回到文档列表，避免落到没有入口的空状态
+    if (window.innerWidth <= 900) setSidebarOpen(true)
   }, [withParams])
 
   const onReadClosed = useCallback(() => {
@@ -387,6 +419,9 @@ export default function KnowledgePage() {
           <button className="fw-side-toggle" onClick={toggleSidebar} title={sidebarOpen ? '收起文件栏' : '展开文件栏'}>
             <Icon name={sidebarOpen ? 'back' : 'chevron'} size={15} />
           </button>
+          <button className="fw-side-mobile-close" onClick={toggleSidebar} aria-label="关闭文档列表" title="关闭文档列表">
+            <Icon name="x" size={16} />
+          </button>
         </div>
         <div className="fw-side-search">
           <Icon name="search" size={14} />
@@ -436,11 +471,18 @@ export default function KnowledgePage() {
         </div>
       </aside>
 
+      {sidebarOpen && <div className="fw-side-backdrop" onClick={toggleSidebar} aria-hidden="true" />}
       {!sidebarOpen && (
         <button className="fw-side-restore" onClick={toggleSidebar} title="展开文件栏"><Icon name="chevron" size={14} /></button>
       )}
 
       <main className="fw-main">
+        <div className="fw-mobile-bar">
+          <button className="fw-mobile-list-btn" onClick={toggleSidebar} aria-label="打开文档列表">
+            <Icon name="book" size={16} /> 文档列表 <span className="fw-mobile-count">{docs.length}</span>
+          </button>
+          <span className="fw-mobile-bar-title">知识库</span>
+        </div>
         {error && <div className="error-banner">{error}</div>}
         <DocWorkspace
           docId={activeDocId}
