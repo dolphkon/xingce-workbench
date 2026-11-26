@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useGitHubSync } from '../lib/useGitHubSync'
-import { FONT_CHANGE_EVENT, FONT_SIZES, cycleFontSize, initFontSize } from '../lib/fontSize'
+import { FONT_CHANGE_EVENT, FONT_SIZES, initFontSize, setFontIndex } from '../lib/fontSize'
+import { THEME_CHANGE_EVENT, readTheme, setTheme, type ThemeKey } from '../lib/theme'
 import { GITHUB_DEFAULTS, tokenCreateUrl, type GitHubConfig } from '../lib/github'
 import { Icon, Modal } from './ui'
 
@@ -183,10 +184,10 @@ function GithubSyncPanel() {
             <Icon name="github" size={14} /> {syncing ? '同步中…' : '立即同步'}
           </button>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-sm" onClick={() => void pushAll()} disabled={syncing} style={{ flex: 1 }} title="用本机数据覆盖云端">
+            <button className="btn btn-sm" onClick={() => void pushAll()} disabled={syncing} style={{ flex: 1 }} aria-label="用本机数据覆盖云端">
               <Icon name="upload" size={13} /> 上传
             </button>
-            <button className="btn btn-sm" onClick={() => setConfirmPull(true)} disabled={syncing} style={{ flex: 1 }} title="用云端数据覆盖本机">
+            <button className="btn btn-sm" onClick={() => setConfirmPull(true)} disabled={syncing} style={{ flex: 1 }} aria-label="用云端数据覆盖本机">
               <Icon name="download" size={13} /> 恢复
             </button>
           </div>
@@ -297,29 +298,50 @@ function GlobalGithubConfigModal() {
 // 首帧即应用字号，避免页面先小后大的闪烁
 const INITIAL_FONT_INDEX = initFontSize()
 
-function FontSizeControl() {
-  const [index, setIndex] = useState(INITIAL_FONT_INDEX)
+function AppearanceSettings() {
+  const [fontIndex, setFontIndexState] = useState(INITIAL_FONT_INDEX)
+  const [theme, setThemeState] = useState<ThemeKey>(readTheme)
 
   useEffect(() => {
-    const onChange = (event: Event) => setIndex((event as CustomEvent<number>).detail)
-    window.addEventListener(FONT_CHANGE_EVENT, onChange)
-    return () => window.removeEventListener(FONT_CHANGE_EVENT, onChange)
+    const onFont = (event: Event) => setFontIndexState((event as CustomEvent<number>).detail)
+    const onTheme = (event: Event) => setThemeState((event as CustomEvent<ThemeKey>).detail)
+    window.addEventListener(FONT_CHANGE_EVENT, onFont)
+    window.addEventListener(THEME_CHANGE_EVENT, onTheme)
+    return () => {
+      window.removeEventListener(FONT_CHANGE_EVENT, onFont)
+      window.removeEventListener(THEME_CHANGE_EVENT, onTheme)
+    }
   }, [])
 
-  const current = FONT_SIZES[index]
   return (
-    <button
-      className="font-size-btn"
-      onClick={() => setIndex(cycleFontSize(index))}
-      title={`当前字号：${current.label}（点击切换 标准 / 大 / 超大）`}
-      aria-label={`切换字号，当前${current.label}`}
-    >
-      <b>Aa</b><small>{current.label}</small>
-    </button>
+    <div className="appearance-settings">
+      <div className="settings-row">
+        <span>主题</span>
+        <div className="segmented settings-segmented" aria-label="日间或夜间主题">
+          <button className={theme === 'light' ? 'active' : ''} onClick={() => setTheme('light')}>日间</button>
+          <button className={theme === 'dark' ? 'active' : ''} onClick={() => setTheme('dark')}>夜间</button>
+        </div>
+      </div>
+      <div className="settings-row">
+        <span>字号</span>
+        <div className="segmented settings-segmented" aria-label="字体大小">
+          {FONT_SIZES.map((font, index) => (
+            <button
+              key={font.key}
+              className={fontIndex === index ? 'active' : ''}
+              onClick={() => { setFontIndex(index); setFontIndexState(index) }}
+            >
+              {font.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
 function SettingsPanel({ onClose }: { onClose: () => void }) {
+  const { available } = useAuth()
   return (
     <>
       <div className="settings-backdrop" onClick={onClose} aria-hidden="true" />
@@ -329,9 +351,15 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
           <button className="icon-btn" onClick={onClose} title="关闭设置" aria-label="关闭设置"><Icon name="x" size={17} /></button>
         </div>
         <div className="settings-section">
-          <div className="settings-section-title">账户</div>
-          <WorkbuddySyncPanel />
+          <div className="settings-section-title">外观</div>
+          <AppearanceSettings />
         </div>
+        {available && (
+          <div className="settings-section">
+            <div className="settings-section-title">账户</div>
+            <WorkbuddySyncPanel />
+          </div>
+        )}
         <div className="settings-section">
           <div className="settings-section-title"><Icon name="github" size={15} /> GitHub 数据同步</div>
           <GithubSyncPanel />
@@ -381,12 +409,11 @@ export default function Layout() {
             ))}
           </nav>
           <div className="topbar-right">
-            <FontSizeControl />
             <TopbarSync />
             <button
               className={`topbar-settings${settingsOpen ? ' active' : ''}`}
               onClick={() => setSettingsOpen((value) => !value)}
-              title="设置（账户与 GitHub）"
+              title="设置（外观与同步）"
               aria-label="设置"
             >
               <Icon name="settings" size={18} />

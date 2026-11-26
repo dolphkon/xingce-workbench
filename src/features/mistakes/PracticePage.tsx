@@ -9,6 +9,7 @@ import {
   type AccuracyRange, type DateRange,
 } from '../../lib/filters'
 import { FONT_SIZES, readFontIndex, setFontIndex } from '../../lib/fontSize'
+import { THEME_CHANGE_EVENT, readTheme, setTheme, type ThemeKey } from '../../lib/theme'
 import { useCollection } from '../../lib/hooks'
 import { readCategories } from '../../lib/categories'
 import { dateKey, formatClock, formatQuestionText } from '../../lib/utils'
@@ -36,7 +37,6 @@ interface PracticeSession {
 }
 
 const SESSION_KEY = 'xingce-practice-session-v1'
-const DARK_KEY = 'xingce-practice-dark'
 
 function shuffle<T>(input: T[]): T[] {
   const copy = [...input]
@@ -80,9 +80,8 @@ export default function PracticePage() {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [paused, setPaused] = useState(false)
-  const [dark, setDark] = useState(() => {
-    try { return window.localStorage.getItem(DARK_KEY) === '1' } catch { return false }
-  })
+  const [theme, setThemeState] = useState(readTheme)
+  const dark = theme === 'dark'
   const [fontIndex, setFontIndexState] = useState(readFontIndex)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [confirmSubmit, setConfirmSubmit] = useState(false)
@@ -107,6 +106,12 @@ export default function PracticePage() {
   const answerFor = (item: Mistake) => (answers[item.id] ?? textAnswers[item.id] ?? '').trim()
   const answeredCount = pool.filter((item) => Boolean(answerFor(item))).length
   const markedCount = pool.filter((item) => marks[item.id]).length
+
+  useEffect(() => {
+    const onTheme = (event: Event) => setThemeState((event as CustomEvent<ThemeKey>).detail)
+    window.addEventListener(THEME_CHANGE_EVENT, onTheme)
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, onTheme)
+  }, [])
 
   // 刷新页面后恢复本轮答题进度（同一标签页有效）
   useEffect(() => {
@@ -458,14 +463,15 @@ export default function PracticePage() {
             <button
               className={`btn btn-sm${dark ? ' btn-primary' : ''}`}
               onClick={() => {
-                setDark((value) => !value)
-                try { window.localStorage.setItem(DARK_KEY, dark ? '0' : '1') } catch { /* 忽略写失败 */ }
+                const next: ThemeKey = dark ? 'light' : 'dark'
+                setTheme(next)
+                setThemeState(next)
               }}
             >
               {dark ? '已开启' : '已关闭'}
             </button>
           </div>
-          <div className="pe-settings-hint">字号设置与工作台顶栏 Aa 同步</div>
+          <div className="pe-settings-hint">字号与主题设置会同步到工作台设置</div>
         </div>
       )}
     </header>
