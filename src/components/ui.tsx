@@ -42,6 +42,8 @@ const paths: Record<string, ReactNode> = {
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
   bookmark: <><path d="M6 3h12v18l-6-4-6 4z" /></>,
   note: <><path d="M4 4h16v12H8l-4 4z" /><path d="M8 9h8M8 13h5" /></>,
+  undo: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></>,
+  eraser: <><path d="m7 21-4-4a2 2 0 0 1 0-2.8L14 3.2a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L11 20H7z" /><path d="M22 21H8" /></>,
 }
 
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {

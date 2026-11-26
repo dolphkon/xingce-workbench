@@ -1450,3 +1450,30 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
   .pe-draft-tools { gap: 5px; padding: 8px 10px; }
   .pe-draft-color, .pe-draft-tool { min-width: 30px; padding: 0 6px; }
 }
+
+/* ---------- 题目上的手写草稿 ---------- */
+.pe-question, .pr-question { position: relative; }
+.qs-layer {
+  position: absolute; inset: 0; z-index: 2;
+  border-radius: inherit; pointer-events: none;
+}
+.qs-layer.active { pointer-events: auto; cursor: crosshair; }
+.qs-layer canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.qs-tools {
+  position: absolute; top: 0; right: 4px; z-index: 4;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 4px; border-radius: 8px;
+  background: rgba(45, 45, 48, .95);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, .22);
+}
+.qs-tools button {
+  width: 38px; min-height: 42px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: none; border-radius: 6px; background: transparent;
+  color: #d8d8d8; font-size: calc(10px * var(--font-scale)); cursor: pointer;
+}
+.qs-tools button:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.qs-tools button.active { background: rgba(255, 255, 255, .1); color: #ff9a9a; }
+@media (min-width: 701px) {
+  .qs-tools { right: -46px; }
+}
