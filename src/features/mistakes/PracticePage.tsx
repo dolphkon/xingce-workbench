@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
-import DraftPad, { clearDraft } from './DraftPad'
 import QuestionSketch from './QuestionSketch'
 import { put } from '../../lib/db'
 import {
@@ -79,7 +78,6 @@ export default function PracticePage() {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [activeIndex, setActiveIndex] = useState(0)
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [draftOpen, setDraftOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [paused, setPaused] = useState(false)
   const [dark, setDark] = useState(() => {
@@ -184,7 +182,6 @@ export default function PracticePage() {
   const start = () => {
     const chosen = shuffle(eligible).slice(0, limit === 'all' ? undefined : Number(limit))
     window.sessionStorage.removeItem(SESSION_KEY)
-    clearDraft()
     setPool(chosen)
     setAnswers({})
     setTextAnswers({})
@@ -193,7 +190,6 @@ export default function PracticePage() {
     setNotes({})
     setActiveIndex(0)
     setSheetOpen(false)
-    setDraftOpen(false)
     setElapsed(0)
     setPaused(false)
     setSettingsOpen(false)
@@ -225,7 +221,6 @@ export default function PracticePage() {
 
   const exit = () => {
     window.sessionStorage.removeItem(SESSION_KEY)
-    clearDraft()
     setConfirmExit(false)
     setStarted(false)
     setPool([])
@@ -454,12 +449,6 @@ export default function PracticePage() {
             </div>
           </div>
           <div className="pe-settings-row">
-            <span>草稿纸</span>
-            <button className="btn btn-sm" onClick={() => { setSettingsOpen(false); setDraftOpen(true) }}>
-              <Icon name="edit" size={14} /> 打开空白草稿纸
-            </button>
-          </div>
-          <div className="pe-settings-row">
             <span>夜间模式</span>
             <button
               className={`btn btn-sm${dark ? ' btn-primary' : ''}`}
@@ -476,8 +465,6 @@ export default function PracticePage() {
       )}
     </header>
   )
-
-  const draftPanel = draftOpen ? <DraftPad onClose={() => setDraftOpen(false)} /> : null
 
   const dialogs = (
     <>
@@ -641,7 +628,6 @@ export default function PracticePage() {
           )}
         </div>
         {dialogs}
-        {draftPanel}
       </div>
     )
   }
@@ -738,7 +724,6 @@ export default function PracticePage() {
         )}
       </div>
       {dialogs}
-      {draftPanel}
     </div>
   )
 }
