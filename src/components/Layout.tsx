@@ -74,7 +74,7 @@ function GithubConfigModal({ initial, onClose, onSave, onConnect }: {
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={busy}>取消</button>
-          <button className="btn btn-primary" onClick={() => void submit()} disabled={busy}>
+          <button className="btn btn-github" onClick={() => void submit()} disabled={busy}>
             <Icon name="github" size={15} /> {busy ? '连接中…' : '连接并同步'}
           </button>
         </>
@@ -171,16 +171,16 @@ function GithubSyncPanel() {
   return (
     <div className="sync-panel">
       <div className="sync-user">
-        <span className="sync-avatar" style={{ background: '#24292f' }}><Icon name="github" size={15} /></span>
+        <span className="sync-avatar github"><Icon name="github" size={16} /></span>
         <span className="sync-user-name" title={config ? `${config.owner}/${config.repo}` : 'GitHub 存储'}>
-          {configured ? `${config!.repo}` : 'GitHub 存储'}
+          {configured ? `${config!.owner}/${config!.repo}` : 'GitHub 存储'}
         </span>
-        <button className="icon-btn" title="设置" onClick={openConfig}><Icon name="edit" size={14} /></button>
+        <button className="icon-btn" title="GitHub 设置" onClick={openConfig}><Icon name="settings" size={14} /></button>
       </div>
       {configured ? (
         <>
-          <button className="btn btn-sm" onClick={() => void sync(true)} disabled={syncing} style={{ width: '100%' }}>
-            <Icon name="refresh" size={14} /> {syncing ? '同步中…' : '立即同步'}
+          <button className="btn btn-github btn-sm" onClick={() => void sync(true)} disabled={syncing} style={{ width: '100%' }}>
+            <Icon name="github" size={14} /> {syncing ? '同步中…' : '立即同步'}
           </button>
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="btn btn-sm" onClick={() => void pushAll()} disabled={syncing} style={{ flex: 1 }} title="用本机数据覆盖云端">
@@ -196,7 +196,7 @@ function GithubSyncPanel() {
         </>
       ) : (
         <>
-          <button className="btn btn-sm" onClick={openConfig} style={{ width: '100%' }}>
+          <button className="btn btn-github btn-sm" onClick={openConfig} style={{ width: '100%' }}>
             <Icon name="github" size={14} /> 连接 GitHub 同步
           </button>
           <p className="sync-note">跨设备访问数据（含 GitHub Pages 站点）</p>
@@ -222,8 +222,8 @@ function GithubSyncPanel() {
 
 function WorkbuddySyncPanel() {
   const { available, user, ready, syncing, lastResult, signIn, signOut, sync } = useAuth()
-  if (!available) return null
-  if (!ready) return <p>正在检查登录状态…</p>
+  if (!available) return <p className="sync-note">当前域名未启用云账户，请在 WorkBuddy 应用中打开以使用微信登录。</p>
+  if (!ready) return <p className="small muted">正在检查登录状态…</p>
   if (!user) {
     return (
       <div className="sync-panel">
@@ -240,40 +240,42 @@ function WorkbuddySyncPanel() {
       <div className="sync-user">
         <span className="sync-avatar">{user.name.slice(0, 1)}</span>
         <span className="sync-user-name" title={user.name}>{user.name}</span>
-        <button className="icon-btn" title="退出登录" onClick={() => void signOut()}><Icon name="back" size={14} /></button>
       </div>
       <button className="btn btn-sm" onClick={() => void sync(true)} disabled={syncing} style={{ width: '100%' }}>
         <Icon name="refresh" size={14} /> {syncing ? '同步中…' : '立即同步'}
       </button>
       {lastResult && <span className="sync-hint">{lastResult}</span>}
-      <p className="sync-note">微信云同步已开启</p>
+      <button className="btn btn-sm btn-danger" onClick={() => void signOut()} style={{ width: '100%' }}>
+        <Icon name="back" size={14} /> 退出登录
+      </button>
     </div>
   )
 }
 
 function TopbarSync() {
   const { configured, syncing, sync, openConfig } = useGitHubSync()
-  // GitHub 存储优先：所有域名可用，未配置时也提供入口（移动端侧栏隐藏时的唯一入口）
   if (configured) {
     return (
       <button
-        className="topbar-sync signed"
+        className="topbar-sync github"
         onClick={() => void sync(true)}
         disabled={syncing}
-        title="立即同步到 GitHub"
+        title={syncing ? '正在同步到 GitHub' : '立即同步到 GitHub'}
+        aria-label={syncing ? '正在同步到 GitHub' : '立即同步到 GitHub'}
       >
-        <Icon name={syncing ? 'refresh' : 'github'} size={14} />
-        <span>{syncing ? '同步中' : 'GitHub 已同步'}</span>
+        <Icon name={syncing ? 'refresh' : 'github'} size={17} />
+        <span>{syncing ? '同步中' : 'GitHub 同步'}</span>
       </button>
     )
   }
   return (
     <button
-      className="topbar-sync"
+      className="topbar-sync github"
       onClick={openConfig}
       title="连接 GitHub 以跨设备同步数据"
+      aria-label="连接 GitHub"
     >
-      <Icon name="github" size={14} />
+      <Icon name="github" size={17} />
       <span>连接 GitHub</span>
     </button>
   )
@@ -291,8 +293,6 @@ function GlobalGithubConfigModal() {
     />
   )
 }
-
-const SIDEBAR_KEY = 'xingce-sidebar-collapsed'
 
 // 首帧即应用字号，避免页面先小后大的闪烁
 const INITIAL_FONT_INDEX = initFontSize()
@@ -319,106 +319,83 @@ function FontSizeControl() {
   )
 }
 
-export default function Layout() {
-  const location = useLocation()
-  const isMobile = () => window.innerWidth <= 900
-  const [collapsed, setCollapsed] = useState(() => {
-    // 手机端默认收起抽屉，桌面端默认展开；用户手动开合后写入 localStorage
-    try {
-      const saved = window.localStorage.getItem(SIDEBAR_KEY)
-      if (saved !== null) return saved === '1'
-    } catch {
-      // 存储不可用时按屏幕宽度决定
-    }
-    return isMobile()
-  })
-
-  const applyCollapsed = (next: boolean) => {
-    setCollapsed(next)
-    try { window.localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0') } catch { /* 忽略写失败 */ }
-  }
-  const toggleSidebar = () => applyCollapsed(!collapsed)
-
-  // 屏幕宽窄切换时自动适配：手机收起、桌面展开，避免抽屉卡在错误状态
-  useEffect(() => {
-    const onResize = () => applyCollapsed(isMobile())
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  // 导航切换后自动收起手机抽屉
-  useEffect(() => {
-    if (isMobile()) applyCollapsed(true)
-  }, [location.pathname])
-
-  // 手机抽屉展开时：Esc 关闭 + 锁定页面滚动
-  useEffect(() => {
-    if (collapsed || !isMobile()) return
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') applyCollapsed(true) }
-    window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-    }
-  }, [collapsed])
-
+function SettingsPanel({ onClose }: { onClose: () => void }) {
   return (
-    <div className={`app-shell${collapsed ? ' sidebar-collapsed' : ''}`}>
-      <GlobalGithubConfigModal />
-      {collapsed && (
-        <button className="sidebar-edge" onClick={toggleSidebar} title="展开左侧导航">
-          <Icon name="chevron" size={14} />
-        </button>
-      )}
-      {/* 手机抽屉遮罩：点击关闭，避免 sidebar 覆盖时无法收起 */}
-      {!collapsed && <div className="sidebar-backdrop" onClick={() => applyCollapsed(true)} aria-hidden="true" />}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <button className="sidebar-mobile-close" onClick={() => applyCollapsed(true)} title="收起导航" aria-label="收起导航"><Icon name="x" size={16} /></button>
-          <span className="logo-mark">行</span>
-          <span className="sidebar-logo-text">
-            行测工作台
-            <span className="logo-sub">XINGCE WORKBENCH</span>
-          </span>
+    <>
+      <div className="settings-backdrop" onClick={onClose} aria-hidden="true" />
+      <div className="settings-panel" role="dialog" aria-label="设置">
+        <div className="settings-panel-head">
+          <strong>设置</strong>
+          <button className="icon-btn" onClick={onClose} title="关闭设置" aria-label="关闭设置"><Icon name="x" size={17} /></button>
         </div>
-        <nav className="nav">
-          <div className="nav-label">工作区</div>
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-              title={item.label}
-            >
-              <Icon name={item.icon} size={19} />
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <GithubSyncPanel />
+        <div className="settings-section">
+          <div className="settings-section-title">账户</div>
           <WorkbuddySyncPanel />
         </div>
-      </aside>
-      <div className="main">
-        <header className="topbar">
-          <button className="topbar-nav-toggle" onClick={toggleSidebar} title={collapsed ? '展开左侧导航' : '收起左侧导航'}>
-            <Icon name={collapsed ? 'chevron' : 'back'} size={17} />
-          </button>
-          <span className="topbar-title">行测备考 · 一体化工作台</span>
-          <span className="spacer" />
+        <div className="settings-section">
+          <div className="settings-section-title"><Icon name="github" size={15} /> GitHub 数据同步</div>
+          <GithubSyncPanel />
+        </div>
+        <p className="settings-footnote">行测工作台 · 数据保存在本机与你的云端</p>
+      </div>
+    </>
+  )
+}
+
+export default function Layout() {
+  const location = useLocation()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // 导航切换后关闭设置面板
+  useEffect(() => { setSettingsOpen(false) }, [location.pathname])
+
+  // Esc 关闭设置面板
+  useEffect(() => {
+    if (!settingsOpen) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setSettingsOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [settingsOpen])
+
+  return (
+    <div className="app-shell">
+      <GlobalGithubConfigModal />
+      <header className="topbar">
+        <div className="topbar-inner">
+          <NavLink to="/" className="topbar-brand" title="行测工作台首页">
+            <span className="logo-mark">行</span>
+            <span className="topbar-brand-text">行测工作台<small>XINGCE WORKBENCH</small></span>
+          </NavLink>
+          <nav className="topnav" aria-label="工作区导航">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) => `topnav-item${isActive ? ' active' : ''}`}
+                title={item.label}
+              >
+                <Icon name={item.icon} size={17} />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
           <div className="topbar-right">
             <FontSizeControl />
             <TopbarSync />
-            <Icon name="clock" size={14} />
-            <span className="topbar-date">{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</span>
+            <button
+              className={`topbar-settings${settingsOpen ? ' active' : ''}`}
+              onClick={() => setSettingsOpen((value) => !value)}
+              title="设置（账户与 GitHub）"
+              aria-label="设置"
+            >
+              <Icon name="settings" size={18} />
+            </button>
           </div>
-        </header>
-        <main className="page"><Outlet /></main>
-      </div>
+        </div>
+      </header>
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      <main className="page"><Outlet /></main>
     </div>
   )
 }
