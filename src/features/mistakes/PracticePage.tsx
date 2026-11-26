@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
+import DraftPad, { clearDraft } from './DraftPad'
 import { put } from '../../lib/db'
 import {
   ACCURACY_RANGES, isAccuracyRange, isDateRange, matchesAccuracy, matchesDate,
@@ -77,6 +78,7 @@ export default function PracticePage() {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [activeIndex, setActiveIndex] = useState(0)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [draftOpen, setDraftOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [paused, setPaused] = useState(false)
   const [dark, setDark] = useState(() => {
@@ -182,6 +184,7 @@ export default function PracticePage() {
   const start = () => {
     const chosen = shuffle(eligible).slice(0, limit === 'all' ? undefined : Number(limit))
     window.sessionStorage.removeItem(SESSION_KEY)
+    clearDraft()
     setPool(chosen)
     setAnswers({})
     setTextAnswers({})
@@ -190,6 +193,7 @@ export default function PracticePage() {
     setNotes({})
     setActiveIndex(0)
     setSheetOpen(false)
+    setDraftOpen(false)
     setElapsed(0)
     setPaused(false)
     setSettingsOpen(false)
@@ -206,7 +210,8 @@ export default function PracticePage() {
     setActiveIndex(index)
     setSheetOpen(false)
     window.requestAnimationFrame(() => {
-      document.getElementById(`practice-q-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const target = document.getElementById(reportOpen ? `pr-q-${index}` : `practice-q-${index}`)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
   }
 
@@ -231,6 +236,7 @@ export default function PracticePage() {
 
   const exit = () => {
     window.sessionStorage.removeItem(SESSION_KEY)
+    clearDraft()
     setConfirmExit(false)
     setStarted(false)
     setPool([])
@@ -459,6 +465,12 @@ export default function PracticePage() {
             </div>
           </div>
           <div className="pe-settings-row">
+            <span>草稿纸</span>
+            <button className="btn btn-sm" onClick={() => { setSettingsOpen(false); setDraftOpen(true) }}>
+              <Icon name="edit" size={14} /> 打开手写草稿
+            </button>
+          </div>
+          <div className="pe-settings-row">
             <span>夜间模式</span>
             <button
               className={`btn btn-sm${dark ? ' btn-primary' : ''}`}
@@ -475,6 +487,8 @@ export default function PracticePage() {
       )}
     </header>
   )
+
+  const draftPanel = draftOpen ? <DraftPad onClose={() => setDraftOpen(false)} /> : null
 
   const dialogs = (
     <>
@@ -512,45 +526,146 @@ export default function PracticePage() {
 
   if (reportOpen) {
     const correctCount = results.filter((result) => result.correct).length
-    const rate = results.length ? Math.round((correctCount / results.length) * 100) : 0
+    const wrongCount = results.filter((result) => result.chosen && !result.correct).length
+    const skippedCount = results.length - correctCount - wrongCount
+    const accuracyItems = pool.filter((item) => typeof item.accuracy === 'number')
+    const difficulty = accuracyItems.length
+      ? Math.max(1, Math.min(5, 10 - accuracyItems.reduce((sum, item) => sum + (item.accuracy ?? 0), 0) / accuracyItems.length / 20)).toFixed(1)
+      : '—'
+    const modules = Array.from(new Set(pool.map((item) => item.type || '综合')))
+    const moduleStats = modules.map((name) => {
+      const indexes = pool.map((item, i) => (item.type || '综合') === name ? i : -1).filter((i) => i >= 0)
+      const correct = indexes.filter((i) => results[i]?.correct).length
+      const wrong = indexes.filter((i) => results[i]?.chosen && !results[i]?.correct).length
+      return { name, total: indexes.length, correct, wrong, skipped: indexes.length - correct - wrong }
+    })
     return (
       <div className={examClass}>
         {topbar}
         <div className="pe-scroll pe-report-scroll">
           <div className="pe-report">
-            <div className="pe-report-hero">
-              <div className="pe-report-score" style={{ color: rate >= 80 ? 'var(--success)' : rate >= 60 ? 'var(--warning)' : 'var(--danger)' }}>{rate}%</div>
-              <div className="pe-report-label">正确率 · 答对 {correctCount} / {results.length} 题</div>
-              <div className="pe-report-meta">用时 {formatClock(elapsed)} · 标记 {markedCount} 题 · 未作答 {pool.length - answeredCount} 题</div>
-            </div>
-            <div className="pe-report-actions">
-              <button className="btn" onClick={download}><Icon name="download" size={15} /> 下载练习报告</button>
-              <button className="btn" onClick={start}><Icon name="refresh" size={15} /> 再练一轮</button>
-              <button className="btn btn-primary" onClick={exit}><Icon name="back" size={15} /> 返回错题库</button>
-            </div>
-            <div className="pe-report-list">
-              {results.map((result, index) => (
-                <article key={result.id} className="pe-report-item">
-                  <div className="pe-report-item-head">
-                    <span className={`pe-report-chip ${result.correct ? 'ok' : result.chosen ? 'bad' : 'skip'}`}>
-                      {result.correct ? '正确' : result.chosen ? '错误' : '未答'}
-                    </span>
-                    <b>{index + 1}.</b>
-                    <span>{formatQuestionText(result.title)}</span>
-                    {result.marked && <span className="pe-report-mark">已标记</span>}
+            <section className="pr-section pr-score-section">
+              <div className="pr-section-head">
+                <h2><span className="pr-section-icon">▦</span>得分数据</h2>
+                <span className="pr-difficulty">◆ 难度 {difficulty}</span>
+              </div>
+              <div className="pr-score-grid">
+                <div className="pr-score-cell">
+                  <div className="pr-score-value blue">{correctCount}<span>/{results.length}</span></div>
+                  <div className="pr-score-label">答对题目数</div>
+                </div>
+                <div className="pr-score-cell">
+                  <div className="pr-score-value">{elapsed}s</div>
+                  <div className="pr-score-label">总用时</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="pr-section">
+              <div className="pr-section-head"><h2><span className="pr-section-icon">▤</span>考试情况</h2></div>
+              <div className="pr-module-row">
+                <span className="pr-module-icon pr-module-main">行</span>
+                <b className="pr-module-name">行测</b>
+                <div className="pr-module-stats">
+                  <span>共计 <b>{results.length}</b>题</span>
+                  <span>答对 <b className="blue">{correctCount}</b>题</span>
+                  <span>答错 <b className="red">{wrongCount}</b>题</span>
+                  <span>未答 <b>{skippedCount}</b>题</span>
+                  <span>用时 <b>{elapsed}</b>秒</span>
+                </div>
+              </div>
+              {moduleStats.map((module) => (
+                <div className="pr-module-row" key={module.name}>
+                  <span className="pr-module-icon pr-module-sub">✓</span>
+                  <b className="pr-module-name">{module.name}</b>
+                  <div className="pr-module-stats">
+                    <span>总题数 <b>{module.total}</b>题</span>
+                    <span>答对 <b className="blue">{module.correct}</b>道</span>
+                    <span>正确率 <b>{module.total ? Math.round((module.correct / module.total) * 100) : 0}%</b></span>
+                    <span>用时 <b>{elapsed}</b>秒</span>
                   </div>
-                  <div className="pe-report-item-body">
-                    <span>你的答案：{result.chosen || '—'}</span>
-                    {!result.correct && <span>正确答案：{result.answer || '—'}</span>}
-                    {result.note && <span>笔记：{result.note}</span>}
-                  </div>
-                  <Link className="pe-report-link" to={`/mistakes/${result.id}`}>查看解析与复盘 <Icon name="chevron" size={13} /></Link>
-                </article>
+                </div>
               ))}
+            </section>
+
+            <div className="pr-list">
+              {results.map((result, index) => {
+                const item = pool[index]
+                const options = (item?.options ?? [])
+                  .map((text, i) => ({ text, letter: String.fromCharCode(65 + i) }))
+                  .filter((option) => option.text.trim())
+                const answer = (result.answer || '').toUpperCase()
+                const chosen = result.chosen.toUpperCase()
+                return (
+                  <article id={`pr-q-${index}`} key={result.id} className={`pr-question ${result.correct ? 'ok' : 'bad'}`}>
+                    <div className="pr-q-head">
+                      <span className="pr-q-index">{index + 1}.</span>
+                      <span className="pr-q-type">{item?.subType || '单选题'}</span>
+                      <span className="pe-q-tools">
+                        <button className={bookmarks[result.id] ? 'on' : ''} onClick={() => item && toggleBookmark(item)} title="收藏本题"><Icon name="bookmark" size={16} /></button>
+                        <button onClick={() => item && openNote(item)} title="添加笔记"><Icon name="note" size={16} /></button>
+                        <button className={marks[result.id] ? 'on' : ''} onClick={() => item && toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
+                      </span>
+                    </div>
+                    <div className="question-text pr-q-text">{formatQuestionText(result.title)}</div>
+                    <QuestionImages images={item?.images ?? []} altPrefix="题目图片" className="question-images-section" />
+                    {options.length > 0 && (
+                      <div className="pe-options">
+                        {options.map((option) => (
+                          <div
+                            key={option.letter}
+                            className={`pe-option pr-option${answer === option.letter ? ' correct' : ''}${chosen === option.letter && !result.correct ? ' wrong' : ''}`}
+                          >
+                            <span className="pe-option-key">{option.letter}</span>
+                            <span>{option.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(!result.correct || result.note || result.marked) && (
+                      <div className="pr-q-foot">
+                        {!result.correct && <span>你的答案：{chosen || '未作答'} · 正确答案：{answer || '—'}</span>}
+                        {result.note && <span>笔记：{result.note}</span>}
+                        {result.marked && <span className="pe-foot-mark">已标记</span>}
+                      </div>
+                    )}
+                    <Link className="pe-report-link" to={`/mistakes/${result.id}`}>查看解析与复盘 <Icon name="chevron" size={13} /></Link>
+                  </article>
+                )
+              })}
+            </div>
+            <div className="pr-bottom-actions">
+              <button className="btn" onClick={start}><Icon name="refresh" size={15} /> 再练一轮</button>
+              <button className="btn" onClick={exit}><Icon name="back" size={15} /> 返回错题库</button>
             </div>
           </div>
         </div>
+        <div className="pe-sheet">
+          <button className="pe-sheet-tab" onClick={() => setSheetOpen((value) => !value)} aria-expanded={sheetOpen}>
+            <Icon name="list" size={15} />
+            <span>答题卡</span>
+            <b>{correctCount}/{results.length}</b>
+            <Icon name="chevron" size={14} style={{ transform: sheetOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }} />
+          </button>
+          {sheetOpen && (
+            <div className="pe-sheet-body">
+              <div className="pe-sheet-grid">
+                {results.map((result, index) => (
+                  <button key={result.id} className={`pe-sheet-num${result.correct ? ' answered' : ''}${result.marked ? ' marked' : ''}`} onClick={() => jumpTo(index)}>
+                    {index + 1}
+                  </button>
+                ))}
+              </div>
+              <div className="pe-sheet-legend">
+                <span><i className="legend-answered" /> 答对 {correctCount}</span>
+                <span><i className="legend-empty" /> 未答对 {results.length - correctCount}</span>
+                <span><i className="legend-marked" /> 标记 {markedCount}</span>
+              </div>
+            </div>
+          )}
+        </div>
         {dialogs}
+        {draftPanel}
       </div>
     )
   }
@@ -560,7 +675,6 @@ export default function PracticePage() {
       {topbar}
       {paused && <div className="pe-paused">已暂停 · 点击顶部播放按钮继续计时</div>}
       <div className="pe-scroll" ref={scrollRef}>
-        <div className="pe-progress"><div style={{ width: `${pool.length ? (answeredCount / pool.length) * 100 : 0}%` }} /></div>
         {pool.length === 0 ? (
           <div className="pe-empty">
             <h2>本轮没有题目</h2>
@@ -647,6 +761,7 @@ export default function PracticePage() {
         )}
       </div>
       {dialogs}
+      {draftPanel}
     </div>
   )
 }
