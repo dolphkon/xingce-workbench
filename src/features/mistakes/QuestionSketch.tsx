@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { Icon } from '../../components/ui'
 
 const PREFIX = 'xingce-sketch-v1-'
-const INK = '#e54545'
+const COLORS = [
+  { label: '红', value: '#e54545' },
+  { label: '黑', value: '#1f2937' },
+  { label: '蓝', value: '#1c7cff' },
+]
+type Tool = 'pen' | 'eraser'
 
 /**
  * 覆盖在题目卡片上的透明手写层：笔迹直接写在原题上，按题目 ID 保存。
@@ -22,7 +27,8 @@ export default function QuestionSketch({
   const drawingRef = useRef(false)
   const historyRef = useRef<string[]>([])
   const initialRef = useRef(false)
-  const [eraser, setEraser] = useState(false)
+  const [tool, setTool] = useState<Tool>('pen')
+  const [color, setColor] = useState(COLORS[0].value)
 
   const key = `${PREFIX}${questionId}`
 
@@ -35,6 +41,7 @@ export default function QuestionSketch({
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
     ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.restore()
@@ -45,6 +52,7 @@ export default function QuestionSketch({
       const context = target?.getContext('2d')
       if (!target || !context) return
       context.save()
+      context.globalCompositeOperation = 'source-over'
       context.setTransform(1, 0, 0, 1, 0, 0)
       context.drawImage(image, 0, 0, target.width, target.height)
       context.restore()
@@ -66,6 +74,7 @@ export default function QuestionSketch({
       canvas.height = Math.round(rect.height * ratio)
       const ctx = canvas.getContext('2d')
       if (!ctx) return
+      ctx.globalCompositeOperation = 'source-over'
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -101,9 +110,9 @@ export default function QuestionSketch({
     if (historyRef.current.length > 20) historyRef.current.shift()
     drawingRef.current = true
     const point = pointOf(event)
-    ctx.globalCompositeOperation = eraser ? 'destination-out' : 'source-over'
-    ctx.strokeStyle = INK
-    ctx.lineWidth = eraser ? 22 : 3
+    ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
+    ctx.strokeStyle = tool === 'eraser' ? '#000000' : color
+    ctx.lineWidth = tool === 'eraser' ? 22 : 3
     ctx.beginPath()
     ctx.moveTo(point.x, point.y)
     ctx.lineTo(point.x + 0.01, point.y + 0.01)
@@ -123,6 +132,8 @@ export default function QuestionSketch({
   const onPointerUp = () => {
     if (!drawingRef.current) return
     drawingRef.current = false
+    const ctx = canvasRef.current?.getContext('2d')
+    if (ctx) ctx.globalCompositeOperation = 'source-over'
     save(canvasRef.current?.toDataURL('image/png') ?? '')
   }
 
@@ -144,6 +155,11 @@ export default function QuestionSketch({
     save(previous)
   }
 
+  const pickColor = (value: string) => {
+    setColor(value)
+    setTool('pen')
+  }
+
   return (
     <>
       <div className={`qs-layer${active ? ' active' : ''}`} ref={wrapRef} aria-hidden="true">
@@ -161,9 +177,24 @@ export default function QuestionSketch({
           <button onClick={undo} title="撤销" aria-label="撤销">
             <Icon name="undo" size={17} /><span>撤销</span>
           </button>
-          <button className={eraser ? 'active' : ''} onClick={() => setEraser((value) => !value)} title="擦除" aria-label="擦除">
+          <button className={tool === 'pen' ? 'active' : ''} onClick={() => setTool('pen')} title="手写" aria-label="手写">
+            <Icon name="edit" size={17} /><span>手写</span>
+          </button>
+          <button className={tool === 'eraser' ? 'active' : ''} onClick={() => setTool('eraser')} title="擦除" aria-label="擦除">
             <Icon name="eraser" size={17} /><span>擦除</span>
           </button>
+          <div className="qs-color-row" role="group" aria-label="画笔颜色">
+            {COLORS.map((item) => (
+              <button
+                key={item.value}
+                className={`qs-swatch${tool === 'pen' && color === item.value ? ' active' : ''}`}
+                style={{ background: item.value }}
+                onClick={() => pickColor(item.value)}
+                title={`${item.label}色画笔`}
+                aria-label={`${item.label}色画笔`}
+              />
+            ))}
+          </div>
           <button onClick={clear} title="清空" aria-label="清空">
             <Icon name="trash" size={17} /><span>清空</span>
           </button>

@@ -32,6 +32,7 @@ export default function DraftPad({ onClose }: { onClose: () => void }) {
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
     ctx.save()
+    ctx.globalCompositeOperation = 'source-over'
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.restore()
@@ -45,6 +46,7 @@ export default function DraftPad({ onClose }: { onClose: () => void }) {
       const context = target?.getContext('2d')
       if (!target || !context) return
       context.save()
+      context.globalCompositeOperation = 'source-over'
       context.setTransform(1, 0, 0, 1, 0, 0)
       context.drawImage(image, 0, 0, target.width, target.height)
       context.restore()
@@ -169,7 +171,8 @@ export default function DraftPad({ onClose }: { onClose: () => void }) {
             </button>
           ))}
           <span className="pe-draft-sep" />
-          <button className={`pe-draft-tool${eraser ? ' active' : ''}`} onClick={() => setEraser((value) => !value)} title="橡皮擦">橡皮</button>
+          <button className={`pe-draft-tool${!eraser ? ' active' : ''}`} onClick={() => setEraser(false)} title="手写">手写</button>
+          <button className={`pe-draft-tool${eraser ? ' active' : ''}`} onClick={() => setEraser(true)} title="橡皮擦">橡皮</button>
           <button className="pe-draft-tool" onClick={undo} title="撤销">撤销</button>
           <button className="pe-draft-tool" onClick={clear} title="清空">清空</button>
         </div>

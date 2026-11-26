@@ -1474,6 +1474,19 @@ code { background: var(--surface-muted); border: 1px solid var(--border); border
 }
 .qs-tools button:hover { background: rgba(255, 255, 255, .12); color: #fff; }
 .qs-tools button.active { background: rgba(255, 255, 255, .1); color: #ff9a9a; }
+.qs-color-row {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 5px 0; margin: 1px 0;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+.qs-tools button.qs-swatch {
+  width: 15px; height: 15px; min-height: 15px; padding: 0;
+  border-radius: 50%; border: 1px solid rgba(255, 255, 255, .5);
+  flex: 0 0 auto;
+}
+.qs-tools button.qs-swatch:hover { transform: scale(1.15); }
+.qs-tools button.qs-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, .35); }
 @media (min-width: 701px) {
   .qs-tools { right: -46px; }
 }
