@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useGitHubSync } from '../lib/useGitHubSync'
+import { FONT_CHANGE_EVENT, FONT_SIZES, cycleFontSize, initFontSize } from '../lib/fontSize'
 import { GITHUB_DEFAULTS, tokenCreateUrl, type GitHubConfig } from '../lib/github'
 import { Icon, Modal } from './ui'
 
@@ -293,40 +294,23 @@ function GlobalGithubConfigModal() {
 
 const SIDEBAR_KEY = 'xingce-sidebar-collapsed'
 
-const FONT_SIZES = [
-  { key: 'standard', label: '标准' },
-  { key: 'large', label: '大' },
-  { key: 'xlarge', label: '超大' },
-] as const
-const FONT_SIZE_KEY = 'xingce-font-size'
-
-function initialFontIndex(): number {
-  try {
-    const saved = window.localStorage.getItem(FONT_SIZE_KEY)
-    const index = FONT_SIZES.findIndex((item) => item.key === saved)
-    return index >= 0 ? index : 1
-  } catch {
-    return 1
-  }
-}
-
 // 首帧即应用字号，避免页面先小后大的闪烁
-const INITIAL_FONT_INDEX = initialFontIndex()
-document.documentElement.dataset.fontSize = FONT_SIZES[INITIAL_FONT_INDEX].key
+const INITIAL_FONT_INDEX = initFontSize()
 
 function FontSizeControl() {
   const [index, setIndex] = useState(INITIAL_FONT_INDEX)
-  const current = FONT_SIZES[index]
 
   useEffect(() => {
-    document.documentElement.dataset.fontSize = current.key
-    try { window.localStorage.setItem(FONT_SIZE_KEY, current.key) } catch { /* 忽略写失败 */ }
-  }, [current.key])
+    const onChange = (event: Event) => setIndex((event as CustomEvent<number>).detail)
+    window.addEventListener(FONT_CHANGE_EVENT, onChange)
+    return () => window.removeEventListener(FONT_CHANGE_EVENT, onChange)
+  }, [])
 
+  const current = FONT_SIZES[index]
   return (
     <button
       className="font-size-btn"
-      onClick={() => setIndex((value) => (value + 1) % FONT_SIZES.length)}
+      onClick={() => setIndex(cycleFontSize(index))}
       title={`当前字号：${current.label}（点击切换 标准 / 大 / 超大）`}
       aria-label={`切换字号，当前${current.label}`}
     >

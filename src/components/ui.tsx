@@ -39,6 +39,9 @@ const paths: Record<string, ReactNode> = {
   eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>,
   link: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>,
   expand: <><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></>,
+  flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
+  bookmark: <><path d="M6 3h12v18l-6-4-6 4z" /></>,
+  note: <><path d="M4 4h16v12H8l-4 4z" /><path d="M8 9h8M8 13h5" /></>,
 }
 
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
