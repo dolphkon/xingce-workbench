@@ -212,7 +212,8 @@ src/
 │   ├── QuestionNavigator.tsx         # 详情/做题翻页导航（← → 键）
 │   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱（object-fit: contain）
 │   ├── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
-│   └── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入图片 + 拖拽缩放/删除
+│   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
+│   └── SymbolPicker.tsx              # 【新增】符号选择器：给选项插入 ①②③/⑴/Ⅰ/常用符号，光标处插入
 │
 ├── lib/                              # 核心库（23）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
@@ -233,7 +234,7 @@ src/
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（392 行）
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
-│   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、提取内嵌图片
+│   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
@@ -601,11 +602,13 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
 - **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR）→ `parseImagesToBank` → 实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
-- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
+- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项（支持 `SymbolPicker` 插入 ①②③ 等符号）、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
 - **材料富文本（适配图形推理/资料分析图表题）**：
-  - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。
-  - `richText.ts`：`sanitizeRichHtml`（放行 base64 图片）、`richHtmlForPreview`（预览专用二次清洗：删除 `.rt-handle`/`.rt-remove` 与 `contenteditable`，展开 `.rt-image` 包装，去掉 img 的 `width`/`height`/`style`/`data-w`，交由 CSS 等比缩放）、`richTextToPlain`（图片转 `[图]`、剔除编辑器控件字符）、`plainToRichText`（老题纯文本降级显示）、`extractImagesFromHtml`（推送错题时把内嵌图片并入 images）。
+  - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。`onPaste` 拦截剪贴板图片（`handlePaste`）走同一压缩+带控件插入逻辑（`insertImages`），使 Ctrl+V 粘贴的图片同样可拖拽缩放（纯文字粘贴保留浏览器默认行为）。
+  - `richText.ts`：`sanitizeRichHtml`（放行 base64 图片）、`richHtmlForPreview`（预览专用二次清洗：删除 `.rt-handle`/`.rt-remove` 与 `contenteditable`，展开 `.rt-image` 包装，去掉 img 的 `width`/`height`/`style`/`data-w`，交由 CSS 等比缩放）、`richTextToPlain`（图片转 `[图]`、剔除编辑器控件字符）、`plainToRichText`（老题纯文本降级显示）、`extractImagesFromHtml`（原始尺寸提取）、`extractImagesAtDisplaySize`（推送错题时按 `data-w`/`width`/`style.width` 用 canvas 把内嵌图重绘到用户缩放宽度，避免大图 dataURL 在详情里撑满失衡；不超过原图宽度以防糊，PNG 保无损）。
+  - `SymbolPicker.tsx`：可复用符号选择器（带圈数字 ①~⑳、括号数字 ⑴~⒑、罗马数字 Ⅰ~ⅹ、常用符号 30 个）；点击时 `onMouseDown` 阻止默认以保留输入框焦点，父组件（BankForm / MistakeForm）在 `onPick` 里按 `selectionStart/End` 在光标处插入并回填光标。题库与错题表单的选项区均已接入。
   - 数据兼容：`material` 继续存纯文本供搜索/拆题/推送，`materialHtml` 存排版与图片；老题无 `materialHtml` 时由 `material` 自动生成，不改变既有数据。列表卡片用 `.bank-item-material-rich` + `richHtmlForPreview` 渲染缩略内容与图片；预览容器 `max-height:150px`、图片 `max-height:88px` 且 `width:auto;height:auto`，不再压扁。编辑页仍从原始 `materialHtml` 读取，保留拖拽/删除控件。
+- **排版/字号对齐**：编辑器 `.rte-body` 与列表预览 `.bank-item-material-rich` 的字号/行高统一为错题详情 `.question-text` 的 `calc(16px * var(--font-scale))` / `1.75`，实现题库编辑、预览与错题详情所见即所得（缩放依赖 `--font-scale`，详情同步为 19.2px/33.6px @1.2 倍）。
   - 详情页/练习页统一图片组件 `QuestionImages`：`.question-image-view img` 改为 `width:auto;max-width:100%;height:auto;max-height:70vh`，原图小于容器时按原始尺寸居中显示，不再被 `width:100%` 拉伸放大；缩略图 variant 固定 160px 高并居中。
 - **bankParser.ts**：`parseImagesToBank(images, onProgress, signal)` —— 逐张 `recognizeImage` 提文本 → 优先 `structureQuestionsForBank`（LLM 输出 category/module/material/stem/options/answer/analysis）→ 能力不可用时 `ruleParse`（题号切分 + `parseQuestionText` + 关键词猜模块）兜底。每题 `uid()` 唯一 ID。
 - **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。题库拆题去重键为 `material(80)+stem+options(100)`，因矫正后 `stem` 只剩设问句，单独用 stem 去重会误删多道同设问题。
@@ -863,10 +866,20 @@ PORT=4179 npm run dev
 - 修复：`richText.ts` 新增 `richHtmlForPreview` 在预览时移除编辑器控件与 img 固定尺寸；预览 CSS 改为等比缩放（图片 `max-height:88px`，容器 `max-height:150px`）；详情页图片改为 `width:auto;max-width:100%`，小图不放大、大图等比缩小，thumb variant 固定 160px 居中。
 - 验证：E2E 用 300×200 测试图，拖到 500px 后保存 → 列表预览控件 0 个、渲染 132×88（比例 1.5 保持）、无 `width` 属性；编辑页仍保留 1 手柄 + 1 删除按钮；详情页渲染 300×200（原始尺寸，容器 1348px 不拉伸）；390px 手机端无横向溢出；`typecheck`/`test:refine`（4/4）/`build` 全通过。
 
+#### 粘贴图片缩放 + 图片尺寸失衡 + 排版对齐 + 选项符号（2026-11-27）
+- 需求：① 题库后台材料模块复制粘贴的图片要能拖拽调整大小；② 插入图片缩放后推送到错题详情尺寸失衡、显示很大；③ 材料排版（含字号）与错题详情一致；④ 选项支持插入 ① 等序号符号。
+- 修复：
+  - `RichTextEditor.tsx`：新增 `onPaste`(`handlePaste`) 拦截剪贴板图片，抽取 `insertImages(sources, collapseToEnd)` 供文件选择与粘贴共用，粘贴图片同样带缩放手柄/删除按钮。
+  - `richText.ts`：新增 `extractImagesAtDisplaySize`，按编辑器记录的 `data-w`/`width`/`style.width` 用 canvas 重绘内嵌图到用户缩放宽度（不超原图宽度），`MistakesPage` 推送错题改为异步调用它，消除详情大图失衡。
+  - `global.css`：`.rte-body` / `.bank-item-material-rich` 字号行高对齐 `.question-text`（16px/1.75）；新增 `.symbol-picker` / `.symbol-panel` / `.symbol-grid` / `.symbol-cell` 样式（移动端 8 列）。
+  - `SymbolPicker.tsx`（新增）：符号选择器，BankForm 与 MistakeForm 选项区均接入。
+- 验证：E2E（1200×800 测试图）粘贴后带 1 手柄 + 1 删除按钮、拖拽 360→240px 且 `data-w=240`；编辑器/预览/详情字号一致（19.2px/33.6px @scale1.2）；选项 A 插入「①」保存后 JSON 保留「第一项①」；推送错题图片自然宽度=240（按缩放重绘，非 1200）；90 个符号按钮、390px 手机端无横向溢出；`typecheck`/`test:refine`(4/4)/`build` 全通过。
+
 ### 16.3 最近提交历史
 
 ```
-f59a3dd fix: 修复题库材料预览图片压扁/红×控件外露及详情页图片被放大  ← HEAD
+（提交号将在提交后补充）
+f59a3dd fix: 修复题库材料预览图片压扁/红×控件外露及详情页图片被放大
 7d1a5ca feat: 题库材料富文本编辑器——文字排版、插入图片与拖拽缩放，适配图形推理/资料分析
 03200c2 docs: 固化题库编辑到拆题能力优化的闭环约定
 c1bb5d2 fix: 按人工矫正结果优化题库拆题准确度——文段/设问拆分、单行选项切分、答案回填与回归测试

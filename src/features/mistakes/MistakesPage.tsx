@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { readCachedById, remove } from '../../lib/db'
 import { readCategories } from '../../lib/categories'
-import { extractImagesFromHtml, richTextToPlain } from '../../lib/richText'
+import { extractImagesAtDisplaySize, richTextToPlain } from '../../lib/richText'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
 import { dateKey, formatQuestionText, pluralDays, uid } from '../../lib/utils'
@@ -22,22 +22,25 @@ export default function MistakesPage() {
     const q = readCachedById('bank', id) as BankQuestion | undefined
     if (q) {
       const now = Date.now()
-      setBankInitial({
-        id: uid(),
-        title: [richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n'),
-        type: q.module,
-        options: q.options,
-        answer: q.answer,
-        userAnswer: '',
-        analysis: q.analysis,
-        tags: [],
-        images: Array.from(new Set([...q.images, ...extractImagesFromHtml(q.materialHtml || '')])),
-        createdAt: now,
-        updatedAt: now,
-        reviewCount: 0,
-        correctCount: 0,
-        source: q.source || '题库管理',
-        reviewStatus: 'new',
+      // 关键：按编辑器里缩放后的显示宽度重绘图片，避免大图 dataURL 在详情里撑满失衡
+      void extractImagesAtDisplaySize(q.materialHtml || '').then((materialImages) => {
+        setBankInitial({
+          id: uid(),
+          title: [richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n'),
+          type: q.module,
+          options: q.options,
+          answer: q.answer,
+          userAnswer: '',
+          analysis: q.analysis,
+          tags: [],
+          images: Array.from(new Set([...q.images, ...materialImages])),
+          createdAt: now,
+          updatedAt: now,
+          reviewCount: 0,
+          correctCount: 0,
+          source: q.source || '题库管理',
+          reviewStatus: 'new',
+        })
       })
     }
     const next = new URLSearchParams(searchParams)

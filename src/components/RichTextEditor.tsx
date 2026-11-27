@@ -5,7 +5,7 @@
  * - 图片拖拽右下角手柄缩放，点击 × 删除
  * - 所有输出经 DOMPurify 白名单过滤，避免 XSS
  */
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from 'react'
 import { compressImage } from '../lib/image'
 import { sanitizeRichHtml } from '../lib/richText'
 import { Icon } from './ui'
@@ -103,16 +103,15 @@ export default function RichTextEditor({ value, onChange, placeholder = '可输�
     }
   }, [onChange])
 
-  const handleImages = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? [])
-    if (!files.length) return
-    setBusy(true)
-    try {
-      const sources = await Promise.all(files.map((f) => compressImage(f)))
-      const root = rootRef.current
-      if (!root) return
-      root.focus()
-      // 折叠选区到末尾，避免「先全选文字再插入图片」时误替换已有内容
+  /**
+   * 把压缩后的图片以内嵌 DataURL 插入编辑器，统一包装为带缩放手柄/删除按钮的控件。
+   * collapseToEnd=true 用于文件选择（避免全选文字后插入误替换）；粘贴时保留用户光标位置。
+   */
+  const insertImages = (sources: string[], collapseToEnd: boolean) => {
+    const root = rootRef.current
+    if (!root || !sources.length) return
+    root.focus()
+    if (collapseToEnd) {
       const selection = window.getSelection()
       if (selection) {
         const range = document.createRange()
@@ -121,17 +120,52 @@ export default function RichTextEditor({ value, onChange, placeholder = '可输�
         selection.removeAllRanges()
         selection.addRange(range)
       }
-      for (const src of sources) {
-        const markup = `<span class="rt-image" contenteditable="false"><img src="${src}" alt="材料图片" width="360" style="width:360px"><span class="rt-handle" title="拖拽调整大小"></span><span class="rt-remove" title="删除图片">×</span></span>`
-        document.execCommand('insertHTML', false, markup)
-      }
-      emit()
-      refreshActive()
+    }
+    for (const src of sources) {
+      const markup = `<span class="rt-image" contenteditable="false"><img src="${src}" alt="材料图片" width="360" style="width:360px"><span class="rt-handle" title="拖拽调整大小"></span><span class="rt-remove" title="删除图片">×</span></span>`
+      document.execCommand('insertHTML', false, markup)
+    }
+    emit()
+    refreshActive()
+  }
+
+  const handleImages = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    if (!files.length) return
+    setBusy(true)
+    try {
+      const sources = await Promise.all(files.map((f) => compressImage(f)))
+      insertImages(sources, true)
     } catch {
       // 图片处理失败时静默忽略，不阻断表单编辑
     } finally {
       setBusy(false)
       event.target.value = ''
+    }
+  }
+
+  /**
+   * 拦截剪贴板中的图片：浏览器默认会把裸 <img> 粘进 contentEditable，
+   * 没有缩放手柄和删除按钮，导致粘贴图片无法拖拽调整大小。
+   * 这里统一走 compressImage + 带控件包装的插入逻辑。
+   * 纯文字/富文本粘贴不拦截，保留浏览器默认行为。
+   */
+  const handlePaste = async (event: ClipboardEvent<HTMLDivElement>) => {
+    const items = Array.from(event.clipboardData?.items ?? [])
+    const files = items
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+    if (!files.length) return
+    event.preventDefault()
+    setBusy(true)
+    try {
+      const sources = await Promise.all(files.map((f) => compressImage(f)))
+      insertImages(sources, false)
+    } catch {
+      // 图片处理失败时静默忽略
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -166,7 +200,7 @@ export default function RichTextEditor({ value, onChange, placeholder = '可输�
           <Icon name="image" size={14} /> {busy ? '处理中…' : '插入图片'}
         </button>
         {tool('清除格式', '清除格式', 'removeFormat')}
-        <span className="rte-hint">图片可拖拽右下角调整大小</span>
+        <span className="rte-hint">粘贴/插入图片后可拖拽右下角调整大小</span>
       </div>
       <div
         ref={rootRef}
@@ -177,6 +211,7 @@ export default function RichTextEditor({ value, onChange, placeholder = '可输�
         aria-multiline="true"
         data-placeholder={placeholder}
         onInput={emit}
+        onPaste={(e) => void handlePaste(e)}
         onKeyUp={refreshActive}
         onMouseUp={refreshActive}
         onFocus={refreshActive}

@@ -1,4 +1,5 @@
-import { useState, type ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent } from 'react'
+import SymbolPicker from '../../components/SymbolPicker'
 import { Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
 import RichTextEditor from '../../components/RichTextEditor'
@@ -33,6 +34,26 @@ export default function BankForm({ initial, onSaved, onCancel }: Props) {
   const [source, setSource] = useState(initial?.source ?? '')
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const [error, setError] = useState('')
+  // 记录每个选项 input 的 DOM，符号选择器按当前聚焦项在光标处插入
+  const optionRefs = useRef<(HTMLInputElement | null)[]>([])
+  const lastFocusedOption = useRef(0)
+
+  const insertOptionSymbol = (symbol: string) => {
+    const index = lastFocusedOption.current
+    const el = optionRefs.current[index]
+    const current = options[index] ?? ''
+    const start = el?.selectionStart ?? current.length
+    const end = el?.selectionEnd ?? current.length
+    const next = [...options]
+    next[index] = current.slice(0, start) + symbol + current.slice(end)
+    setOptions(next)
+    // 恢复焦点并把光标放到插入符号之后
+    requestAnimationFrame(() => {
+      el?.focus()
+      const caret = start + symbol.length
+      el?.setSelectionRange(caret, caret)
+    })
+  }
 
   const handleImages = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
@@ -102,19 +123,24 @@ export default function BankForm({ initial, onSaved, onCancel }: Props) {
       </div>
 
       <div className="form-field">
-        <label className="form-label">选项</label>
+        <label className="form-label">选项 <span className="small light">（先点选输入框，再点「符号」即可在光标处插入 ①②③ 等）</span></label>
         <div className="form-row" style={{ gap: 8 }}>
           {OPTION_LETTERS.map((letter, index) => (
             <div className="row" key={letter} style={{ gap: 6 }}>
               <span className="chip" style={{ minWidth: 26, justifyContent: 'center' }}>{letter}</span>
               <input
+                ref={(el) => { optionRefs.current[index] = el }}
                 className="input"
                 value={options[index] ?? ''}
+                onFocus={() => { lastFocusedOption.current = index }}
                 onChange={(e) => { const next = [...options]; next[index] = e.target.value; setOptions(next) }}
                 placeholder={`选项 ${letter}`}
               />
             </div>
           ))}
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+          <SymbolPicker onPick={insertOptionSymbol} />
         </div>
       </div>
 

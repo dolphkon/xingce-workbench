@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import SymbolPicker from '../../components/SymbolPicker'
 import { Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
 import { put } from '../../lib/db'
@@ -34,6 +35,23 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
     while (base.length < 4) base.push('')
     return base.slice(0, 4)
   })
+  const optionRefs = useRef<(HTMLInputElement | null)[]>([])
+  const lastFocusedOption = useRef(0)
+  const insertOptionSymbol = (symbol: string) => {
+    const index = lastFocusedOption.current
+    const el = optionRefs.current[index]
+    const current = options[index] ?? ''
+    const start = el?.selectionStart ?? current.length
+    const end = el?.selectionEnd ?? current.length
+    const next = [...options]
+    next[index] = current.slice(0, start) + symbol + current.slice(end)
+    setOptions(next)
+    requestAnimationFrame(() => {
+      el?.focus()
+      const caret = start + symbol.length
+      el?.setSelectionRange(caret, caret)
+    })
+  }
   const [answer, setAnswer] = useState(initial?.answer ?? '')
   const [userAnswer, setUserAnswer] = useState(initial?.userAnswer ?? '')
   const [analysis, setAnalysis] = useState(initial?.analysis ?? '')
@@ -275,8 +293,10 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
             <div className="row" key={letter} style={{ gap: 6 }}>
               <span className="chip" style={{ minWidth: 26, justifyContent: 'center' }}>{letter}</span>
               <input
+                ref={(el) => { optionRefs.current[index] = el }}
                 className="input"
                 value={options[index] ?? ''}
+                onFocus={() => { lastFocusedOption.current = index }}
                 onChange={(e) => {
                   const next = [...options]
                   next[index] = e.target.value
@@ -286,6 +306,9 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
               />
             </div>
           ))}
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+          <SymbolPicker onPick={insertOptionSymbol} />
         </div>
       </div>
 
