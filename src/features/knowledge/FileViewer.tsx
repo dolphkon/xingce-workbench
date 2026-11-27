@@ -235,6 +235,7 @@ function useParsedFile(fileData: string, kind: PreviewKind) {
 function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
+  const [rendering, setRendering] = useState(request.kind === 'docx')
 
   useEffect(() => {
     const host = hostRef.current
@@ -242,6 +243,7 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
     let cancelled = false
     host.innerHTML = ''
     setFailed(false)
+    setRendering(request.kind === 'docx')
 
     void (async () => {
       try {
@@ -258,6 +260,7 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
         } else {
           // PPTX 用自研解析渲染（pptxSlide.ts），无需第三方 DOM 操作
         }
+        if (!cancelled) setRendering(false)
       } catch {
         if (!cancelled) setFailed(true)
       }
@@ -279,7 +282,12 @@ function OfficeRenderer({ request }: { request: NonNullable<NativeRender> }) {
       </div>
     )
   }
-  return <div ref={hostRef} className={`fr-office fr-office-${request.kind}`} />
+  return (
+    <>
+      {rendering && <div className="fr-frame-loading"><span className="fr-spinner" /> 正在还原文档版式…</div>}
+      <div ref={hostRef} className={`fr-office fr-office-${request.kind}${rendering ? ' loading' : ''}`} />
+    </>
+  )
 }
 
 /** PPTX 原版式渲染：按幻灯片原始坐标绝对定位每个形状 */
@@ -497,9 +505,14 @@ export function FileReader({
   const { content, native, loading, error } = useParsedFile(fileData, kind)
   const [zoom, setZoom] = useState(1)
   const [sketching, setSketching] = useState(false)
+  const [frameLoading, setFrameLoading] = useState(kind === 'pdf')
   const canSketch = Boolean(sketchKey) && (kind === 'pdf' || kind === 'docx')
 
-  useEffect(() => { setZoom(1); setSketching(false) }, [fileData, fileName])
+  useEffect(() => {
+    setZoom(1)
+    setSketching(false)
+    setFrameLoading(kind === 'pdf')
+  }, [fileData, fileName, kind])
 
   useEffect(() => {
     if (variant !== 'overlay') return
@@ -556,13 +569,21 @@ export function FileReader({
       {!loading && !error && (
         <div className={`fr-paper${native ? ' fr-paper-office' : ''}${sketching ? ' fr-paper-sketching' : ''}`} style={{ '--fr-zoom': zoom } as CSSProperties}>
           {kind === 'pdf' ? (
-            <iframe src={`${fileData}#toolbar=0&navpanes=0&view=FitH`} title={title} className="fr-frame" />
+            <>
+              {frameLoading && <div className="fr-frame-loading"><span className="fr-spinner" /> 正在加载 PDF…</div>}
+              <iframe
+                src={`${fileData}#toolbar=0&navpanes=0&view=FitH`}
+                title={title}
+                className={`fr-frame${frameLoading ? ' loading' : ''}`}
+                onLoad={() => setFrameLoading(false)}
+              />
+            </>
           ) : kind === 'image' ? (
             <img src={fileData} alt={title} className="fr-image" />
           ) : native ? (
             <OfficeRenderer request={native} />
           ) : content}
-          {canSketch && sketchKey && (
+          {canSketch && sketchKey && !frameLoading && (
             <DocSketch sketchKey={sketchKey} active={sketching} onExit={() => setSketching(false)} />
           )}
         </div>

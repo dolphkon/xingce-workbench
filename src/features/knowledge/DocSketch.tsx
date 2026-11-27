@@ -1,19 +1,57 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Icon } from '../../components/ui'
 
-const PREFIX = 'xingce-docsketch-v1-'
+const PREFIX = 'xingce-docsketch-v2-'
+const LEGACY_PREFIX = 'xingce-docsketch-v1-'
 const COLORS = [
   { label: '红', value: '#e54545' },
   { label: '黑', value: '#1f2937' },
   { label: '蓝', value: '#1c7cff' },
 ]
 type Tool = 'pen' | 'eraser'
+type Point = [number, number] // 归一化坐标 0-1，保证缩放/尺寸变化时笔迹跟随
+
+interface Stroke {
+  c: string      // color
+  t: Tool        // tool
+  w: number      // width（CSS px）
+  p: Point[]     // points
+  img?: string   // 旧版 PNG 底图（兼容迁移）
+}
+interface SketchData { v: 2; strokes: Stroke[] }
+
+const imageCache = new Map<string, HTMLImageElement>()
+function getImage(src: string, onChange: () => void): HTMLImageElement | null {
+  let img = imageCache.get(src)
+  if (!img) {
+    img = new Image()
+    img.onload = onChange
+    img.src = src
+    imageCache.set(src, img)
+  }
+  return img.complete && img.naturalWidth ? img : null
+}
+
+function loadData(key: string, legacy: string): SketchData {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw) {
+      const parsed = JSON.parse(raw) as SketchData
+      if (Array.isArray(parsed.strokes)) return parsed
+    }
+    // 兼容旧版整图 PNG：作为底图 stroke，仅加载一次
+    const old = window.localStorage.getItem(legacy)
+    if (old && old.startsWith('data:image')) {
+      return { v: 2, strokes: [{ c: '', t: 'pen', w: 0, p: [], img: old }] }
+    }
+  } catch { /* 忽略读取失败 */ }
+  return { v: 2, strokes: [] }
+}
 
 /**
- * 文档手写层：覆盖在 PDF/Word 阅读纸张上的透明画布。
- * - 按文档 ID 持久化笔迹到 localStorage，刷新后保留；
- * - active 时接收指针事件并显示工具栏，退出后笔迹仍可见但不拦截文档点击；
- * - 文档尺寸/缩放变化时按当前画布比例保留笔迹。
+ * 文档手写层：笔迹以「笔画点数组」存储（JSON，通常几 KB），不再对整张画布
+ * toDataURL（大文档可达数 MB，是之前书写卡顿的根因）。resize 时按归一化坐标
+ * 重绘，不做昂贵的图片编解码；pointermove 用 requestAnimationFrame 增量绘制。
  */
 export default function DocSketch({
   sketchKey,
@@ -26,132 +64,180 @@ export default function DocSketch({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const strokesRef = useRef<Stroke[]>([])
+  const currentRef = useRef<Stroke | null>(null)
   const drawingRef = useRef(false)
-  const historyRef = useRef<string[]>([])
-  const initialRef = useRef(false)
+  const drawnIndexRef = useRef(0)
+  const sizeRef = useRef({ w: 0, h: 0 })
+  const rafRef = useRef(0)
+  const resizeRafRef = useRef(0)
   const [tool, setTool] = useState<Tool>('pen')
+  const toolRef = useRef<Tool>(tool)
   const [color, setColor] = useState(COLORS[0].value)
+  const colorRef = useRef(color)
 
   const key = `${PREFIX}${sketchKey}`
+  const legacyKey = `${LEGACY_PREFIX}${sketchKey}`
 
-  const save = (data: string) => {
-    try { window.localStorage.setItem(key, data) } catch { /* 忽略存储失败 */ }
+  useEffect(() => { toolRef.current = tool }, [tool])
+  useEffect(() => { colorRef.current = color }, [color])
+
+  const save = () => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify({ v: 2, strokes: strokesRef.current }))
+    } catch { /* 忽略存储失败 */ }
   }
 
-  const restore = (data: string) => {
+  /** 全量重绘：尺寸变化、撤销、清空、笔迹加载时调用 */
+  const redraw = () => {
     const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !ctx) return
-    ctx.save()
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.restore()
-    if (!data) return
-    const image = new Image()
-    image.onload = () => {
-      const target = canvasRef.current
-      const context = target?.getContext('2d')
-      if (!target || !context) return
-      context.save()
-      context.globalCompositeOperation = 'source-over'
-      context.setTransform(1, 0, 0, 1, 0, 0)
-      context.drawImage(image, 0, 0, target.width, target.height)
-      context.restore()
+    if (!canvas) return
+    const { w, h } = sizeRef.current
+    if (!w || !h) return
+    const ratio = window.devicePixelRatio || 1
+    const declaredW = Math.round(w * ratio)
+    const declaredH = Math.round(h * ratio)
+    if (canvas.width !== declaredW || canvas.height !== declaredH) {
+      canvas.width = declaredW
+      canvas.height = declaredH
     }
-    image.src = data
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+    ctx.clearRect(0, 0, w, h)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    for (const stroke of strokesRef.current) paintStroke(ctx, stroke, w, h, 1)
+    drawnIndexRef.current = currentRef.current?.p.length ?? 0
   }
 
-  useEffect(() => {
-    const wrap = wrapRef.current
-    const canvas = canvasRef.current
-    if (!wrap || !canvas) return
+  /** 绘制一段笔画；from=1 表示整笔，>1 表示只画新增点（增量绘制） */
+  function paintStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, w: number, h: number, from: number) {
+    if (stroke.img) {
+      const image = getImage(stroke.img, () => scheduleRedraw())
+      if (image) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.drawImage(image, 0, 0, w, h)
+        ctx.restore()
+      }
+      return
+    }
+    const points = stroke.p
+    if (!points.length) return
+    ctx.save()
+    ctx.globalCompositeOperation = stroke.t === 'eraser' ? 'destination-out' : 'source-over'
+    ctx.strokeStyle = stroke.c
+    ctx.fillStyle = stroke.c
+    ctx.lineWidth = stroke.w
+    const start = Math.max(0, from - 1)
+    ctx.beginPath()
+    ctx.moveTo(points[start][0] * w, points[start][1] * h)
+    for (let i = start + 1; i < points.length; i += 1) ctx.lineTo(points[i][0] * w, points[i][1] * h)
+    if (points.length === 1) {
+      ctx.arc(points[0][0] * w, points[0][1] * h, stroke.w / 2, 0, Math.PI * 2)
+      ctx.fill()
+    } else {
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
 
+  const scheduleRedraw = () => {
+    if (resizeRafRef.current) return
+    resizeRafRef.current = window.requestAnimationFrame(() => {
+      resizeRafRef.current = 0
+      redraw()
+    })
+  }
+
+  // 初始化笔迹 + 尺寸监听（rAF 合并，尺寸未变则跳过，避免 docx 渲染时反复重建画布）
+  useEffect(() => {
+    strokesRef.current = loadData(key, legacyKey).strokes
+    const wrap = wrapRef.current
+    if (!wrap) return
     const resize = () => {
       const rect = wrap.getBoundingClientRect()
+      const { w, h } = sizeRef.current
       if (!rect.width || !rect.height) return
-      const ratio = window.devicePixelRatio || 1
-      const current = initialRef.current && canvas.width ? canvas.toDataURL('image/png') : ''
-      canvas.width = Math.round(rect.width * ratio)
-      canvas.height = Math.round(rect.height * ratio)
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      if (current) {
-        restore(current)
-      } else {
-        initialRef.current = true
-        let saved = ''
-        try { saved = window.localStorage.getItem(key) ?? '' } catch { /* 忽略读取失败 */ }
-        restore(saved)
-      }
+      if (Math.abs(rect.width - w) < 1 && Math.abs(rect.height - h) < 1) return
+      sizeRef.current = { w: rect.width, h: rect.height }
+      scheduleRedraw()
     }
-
     resize()
     const observer = new ResizeObserver(resize)
     observer.observe(wrap)
-    return () => observer.disconnect()
-  }, [key])
+    return () => {
+      observer.disconnect()
+      if (resizeRafRef.current) window.cancelAnimationFrame(resizeRafRef.current)
+    }
+  }, [key, legacyKey])
 
-  const pointOf = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+  // 卸载时取消未执行的绘制帧
+  useEffect(() => () => { if (rafRef.current) window.cancelAnimationFrame(rafRef.current) }, [])
+
+  const pointOf = (event: ReactPointerEvent<HTMLCanvasElement>): Point => {
     const rect = event.currentTarget.getBoundingClientRect()
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    return [(event.clientX - rect.left) / (rect.width || 1), (event.clientY - rect.top) / (rect.height || 1)]
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!active) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !ctx) return
-    historyRef.current.push(canvas.toDataURL('image/png'))
-    if (historyRef.current.length > 20) historyRef.current.shift()
+    const stroke: Stroke = {
+      c: toolRef.current === 'eraser' ? '#000000' : colorRef.current,
+      t: toolRef.current,
+      w: toolRef.current === 'eraser' ? 24 : 3,
+      p: [pointOf(event)],
+    }
+    strokesRef.current.push(stroke)
+    currentRef.current = stroke
+    drawnIndexRef.current = 1
     drawingRef.current = true
-    const point = pointOf(event)
-    ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
-    ctx.strokeStyle = tool === 'eraser' ? '#000000' : color
-    ctx.lineWidth = tool === 'eraser' ? 24 : 3
-    ctx.beginPath()
-    ctx.moveTo(point.x, point.y)
-    ctx.lineTo(point.x + 0.01, point.y + 0.01)
-    ctx.stroke()
+    const ctx = canvasRef.current?.getContext('2d')
+    if (ctx) paintStroke(ctx, stroke, sizeRef.current.w, sizeRef.current.h, 1)
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!active || !drawingRef.current) return
+    if (!active || !drawingRef.current || !currentRef.current) return
     event.preventDefault()
-    const ctx = canvasRef.current?.getContext('2d')
-    if (!ctx) return
-    const point = pointOf(event)
-    ctx.lineTo(point.x, point.y)
-    ctx.stroke()
+    currentRef.current.p.push(pointOf(event))
+    if (rafRef.current) return
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = 0
+      const stroke = currentRef.current
+      const ctx = canvasRef.current?.getContext('2d')
+      if (!stroke || !ctx || !drawingRef.current) return
+      paintStroke(ctx, stroke, sizeRef.current.w, sizeRef.current.h, drawnIndexRef.current)
+      drawnIndexRef.current = stroke.p.length
+    })
   }
 
   const onPointerUp = () => {
     if (!drawingRef.current) return
     drawingRef.current = false
-    const ctx = canvasRef.current?.getContext('2d')
-    if (ctx) ctx.globalCompositeOperation = 'source-over'
-    save(canvasRef.current?.toDataURL('image/png') ?? '')
+    currentRef.current = null
+    if (rafRef.current) {
+      window.cancelAnimationFrame(rafRef.current)
+      rafRef.current = 0
+      redraw()
+    }
+    save()
   }
 
   const clear = () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    historyRef.current.push(canvas.toDataURL('image/png'))
-    restore('')
-    save('')
+    strokesRef.current = []
+    currentRef.current = null
+    save()
+    redraw()
   }
 
   const undo = () => {
-    const previous = historyRef.current.pop()
-    if (!previous) { clear(); return }
-    restore(previous)
-    save(previous)
+    strokesRef.current.pop()
+    currentRef.current = null
+    save()
+    redraw()
   }
 
   const pickColor = (value: string) => { setColor(value); setTool('pen') }
@@ -174,7 +260,7 @@ export default function DocSketch({
         />
       </div>
       {active && (
-        <div className="ds-tools">
+        <div className="ds-tools" onPointerDown={(event) => event.stopPropagation()}>
           <button onClick={undo} title="撤销" aria-label="撤销"><Icon name="undo" size={17} /><span>撤销</span></button>
           <button className={tool === 'pen' ? 'active' : ''} onClick={() => setTool('pen')} title="手写" aria-label="手写"><Icon name="edit" size={17} /><span>手写</span></button>
           <button className={tool === 'eraser' ? 'active' : ''} onClick={() => setTool('eraser')} title="擦除" aria-label="擦除"><Icon name="eraser" size={17} /><span>擦除</span></button>

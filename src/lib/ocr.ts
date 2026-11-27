@@ -213,8 +213,9 @@ function findOptionMarks(line: string): OptionMark[] {
   }
   if (marks.length) return marks.sort((a, b) => a.start - b.start)
 
-  // 标准 "A." / "B、" / "C：" / "A)" ，允许出现在行中任意位置
-  const withPunct = /(?:^|[\s])([A-Da-dＡ-Ｄ])\s*(?:[.．、:：,，]|[）)])\s*/g
+  // 标准 "A." / "B、" / "C：" / "A)" ，允许出现在行中任意位置；
+  // 也支持同行紧凑排版 "A.稻B.小麦C.燃料D.棉花"（题号切分后的一行内多个选项）。
+  const withPunct = /(?:^|[\s\u4e00-\u9fff，。；：？！、）)])([A-Da-dＡ-Ｄ])\s*(?:[.．、:：,，]|[）)])\s*/g
   while ((match = withPunct.exec(line)) !== null) {
     push(match.index, withPunct.lastIndex, match[1])
   }
@@ -243,8 +244,9 @@ export function parseQuestionText(raw: string): ParsedQuestionText {
 
   for (const line of lines) {
     if (!line) continue
-    // 答案行单独提取，不混入题干
+    // 答案行/答案表单独提取，不混入题干
     if (ANSWER_LINE_RE.test(line)) continue
+    if (/^\s*(?:参考|正确|标准)?\s*答案\s*[:：]?\s*(?:\d+\s*[.．、]\s*[A-D])/i.test(line)) continue
     const marks = findOptionMarks(line)
     if (marks.length === 0) {
       stemLines.push(line)
@@ -278,6 +280,7 @@ export function parseQuestionText(raw: string): ParsedQuestionText {
   const answerMatch = text.match(
     /(?:正确|参考|标准)?答案(?:是|为)?\s*[:：]?\s*([A-Da-dＡ-Ｄ](?:\s*[、,，]\s*[A-Da-dＡ-Ｄ])*)/i,
   )
+  // 答案表："答案：1.D 2.B 3.C" —— 这里解析函数作用于单题块，取该块题号对应字母的兜底由 paperParser 处理
   const answer = answerMatch
     ? answerMatch[1].replace(/[^A-Da-dＡ-Ｄ]/g, '').toUpperCase()
     : ''

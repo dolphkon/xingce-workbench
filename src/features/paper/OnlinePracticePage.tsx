@@ -1,15 +1,105 @@
 import { useEffect, useRef, useState } from 'react'
-import { ConfirmDialog, Icon } from '../../components/ui'
+import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { useCollection } from '../../lib/hooks'
 import { put, readCachedAll, remove } from '../../lib/db'
 import { loadDocFile } from '../../lib/docFile'
 import { LLM_AVAILABLE } from '../../lib/llm'
-import { parseDocumentToQuestions, parseFileKind, type ParseProgress } from '../../lib/paperParser'
+import {
+  formatStem, inspectQuestion, parseDocumentToQuestions, parseFileKind, type ParseProgress,
+} from '../../lib/paperParser'
 import { dateKey, formatClock, uid } from '../../lib/utils'
 import type { KnowledgeDoc, Mistake, Paper, PracticeRecord, QuizQuestion } from '../../types'
 import PaperExamRunner, { type ExamResult } from './PaperExamRunner'
 
 type View = 'list' | 'upload' | 'exam'
+
+/** 把题干拆成「共用材料 / 题目正文」两段，便于清晰排版 */
+function splitStem(title: string): { material: string; stem: string } {
+  const parts = title.split('【题目】')
+  if (parts.length === 2) {
+    return { material: parts[0].replace(/^【共用材料】/, '').trim(), stem: parts[1].trim() }
+  }
+  return { material: '', stem: title.trim() }
+}
+
+/** 单题人工审核弹窗：题干、选项、答案均可编辑并即时校验 */
+function QuestionReviewModal({
+  question, index, onSave, onDelete, onClose,
+}: {
+  question: QuizQuestion
+  index: number
+  onSave: (next: QuizQuestion) => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const [title, setTitle] = useState(question.title)
+  const [options, setOptions] = useState<string[]>(() => [0, 1, 2, 3].map((i) => question.options[i] ?? ''))
+  const [answer, setAnswer] = useState(question.answer)
+  const [analysis, setAnalysis] = useState(question.analysis)
+  const [type, setType] = useState(question.type)
+  const confidence = inspectQuestion(question)
+
+  const answerValid = answer.trim() === '' || /^[A-Da-d]{1,4}$/.test(answer.replace(/[\s、,，]/g, '').toUpperCase())
+  const canSave = title.trim().length > 0 && answerValid
+
+  const save = () => {
+    if (!canSave) return
+    onSave({
+      ...question,
+      title: formatStem(title),
+      options: options.map((option) => option.trim()),
+      answer: answer.replace(/[\s、,，]/g, '').toUpperCase(),
+      analysis: analysis.trim(),
+      type: type.trim() || '其他',
+    })
+  }
+
+  return (
+    <Modal
+      title={`审核第 ${index + 1} 题`}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button className="btn op-delete" onClick={onDelete} style={{ marginRight: 'auto' }}><Icon name="trash" size={14} /> 删除此题</button>
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={save} disabled={!canSave}><Icon name="save" size={15} /> 保存修改</button>
+        </>
+      }
+    >
+      <div className="op-review-form">
+        {confidence.needsReview && (
+          <div className="op-flag">
+            <Icon name="info" size={14} />
+            {confidence.tooLongStem ? '题干过长，疑似多题粘连，请拆分确认' : confidence.missingAnswer ? '答案未识别，请人工填写' : '选项识别不完整，请核对'}
+          </div>
+        )}
+        <label className="form-label">题干 / 材料（换行会保留）</label>
+        <textarea className="input op-textarea" rows={6} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <label className="form-label">选项</label>
+        {options.map((option, i) => (
+          <div className="op-option-edit" key={i}>
+            <span className="op-option-key">{String.fromCharCode(65 + i)}</span>
+            <input className="input" value={option} onChange={(e) => setOptions((prev) => prev.map((v, j) => j === i ? e.target.value : v))} placeholder={`选项 ${String.fromCharCode(65 + i)}`} />
+          </div>
+        ))}
+        <div className="op-form-row">
+          <div>
+            <label className="form-label">正确答案（A-D，多选如 AB）</label>
+            <input className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="如 A / AB" />
+            {!answerValid && <p className="op-field-error">答案只能是 A-D 字母</p>}
+          </div>
+          <div>
+            <label className="form-label">题型 / 模块</label>
+            <input className="input" value={type} onChange={(e) => setType(e.target.value)} placeholder="如 言语理解" />
+          </div>
+        </div>
+        <label className="form-label">解析（可选）</label>
+        <textarea className="input op-textarea" rows={3} value={analysis} onChange={(e) => setAnalysis(e.target.value)} />
+      </div>
+    </Modal>
+  )
+}
 
 /** 在线刷题：上传 PDF/Word → 多方式识别成卷 → 类专项刷题 → 错题入库 → 历史记录 */
 export default function OnlinePracticePage() {
@@ -27,6 +117,7 @@ export default function OnlinePracticePage() {
   const [draft, setDraft] = useState<{ questions: QuizQuestion[]; method: string; fileName: string; fileType: string; fileData: string } | null>(null)
   const [parseError, setParseError] = useState('')
   const [titleInput, setTitleInput] = useState('')
+  const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null)
@@ -36,6 +127,7 @@ export default function OnlinePracticePage() {
   const handleFile = async (file: File) => {
     setParseError('')
     setDraft(null)
+    setReviewIndex(null)
     if (parseFileKind(file.name, file.type) === 'unsupported') {
       setParseError('仅支持 PDF 或 Word（.docx）文档，请选择对应格式的文件。')
       return
@@ -253,20 +345,58 @@ export default function OnlinePracticePage() {
             <label className="form-label">试卷名称</label>
             <input className="input" value={titleInput} onChange={(e) => setTitleInput(e.target.value)} placeholder="给这份试卷起个名字" />
           </div>
-          <div className="op-review-list">
-            {draft.questions.map((question, index) => (
-              <div className="op-review-item" key={question.id}>
-                <div className="op-review-q"><b>{index + 1}.</b> {question.title}</div>
-                <div className="op-review-opts">
-                  {question.options.filter((o) => o.trim()).map((option, i) => (
-                    <span key={i}>{String.fromCharCode(65 + i)}. {option}</span>
-                  ))}
-                </div>
-                <div className="op-review-answer">答案：{question.answer || '未识别'}</div>
+          {(() => {
+            const pending = draft.questions
+              .map((q, i) => ({ q, i, c: inspectQuestion(q) }))
+              .filter((item) => item.c.needsReview)
+            return pending.length > 0 ? (
+              <div className="op-review-tip">
+                <Icon name="info" size={15} />
+                <span>有 <b>{pending.length}</b> 道题识别结果不确定（答案未识别 / 选项不全 / 题干疑似粘连），建议逐题审核后再保存。</span>
+                <button className="btn btn-sm" onClick={() => setReviewIndex(pending[0].i)}>审核第 {pending[0].i + 1} 题</button>
               </div>
-            ))}
+            ) : (
+              <div className="op-review-tip ok"><Icon name="check" size={15} /> 所有题目识别完整，可直接保存；也可以点每道题的「编辑」微调。</div>
+            )
+          })()}
+          <div className="op-review-list">
+            {draft.questions.map((question, index) => {
+              const confidence = inspectQuestion(question)
+              const parsed = splitStem(question.title)
+              const filled = question.options.map((option, i) => ({ option, i })).filter((item) => item.option.trim())
+              return (
+                <div className={`op-review-item${confidence.needsReview ? ' pending' : ''}`} key={question.id}>
+                  <div className="op-review-item-head">
+                    <span className="op-q-index">第 {index + 1} 题</span>
+                    {confidence.needsReview && <span className="op-pending-flag">待审核</span>}
+                    <button className="btn btn-sm" onClick={() => setReviewIndex(index)}><Icon name="edit" size={14} /> 编辑</button>
+                  </div>
+                  {parsed.material && (
+                    <div className="op-review-material">
+                      <div className="op-material-label">共用材料</div>
+                      <div className="op-preserve">{parsed.material}</div>
+                    </div>
+                  )}
+                  <div className="op-review-q op-preserve">
+                    <b>{index + 1}.</b> {parsed.stem}
+                  </div>
+                  <div className="op-review-opts">
+                    {filled.length > 0 ? filled.map(({ option, i }) => (
+                      <div className="op-review-opt" key={i}>
+                        <span className="op-option-key">{String.fromCharCode(65 + i)}</span>
+                        <span className="op-preserve">{option}</span>
+                      </div>
+                    )) : <span className="muted">（未识别到选项，请编辑补充）</span>}
+                  </div>
+                  <div className={`op-review-answer${confidence.missingAnswer ? ' missing' : ''}`}>
+                    正确答案：<b>{question.answer || '未识别 · 请编辑填写'}</b>
+                  </div>
+                </div>
+              )
+            })}
           </div>
           <div className="op-review-actions">
+            <button className="btn" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={15} /> 重新上传</button>
             <button className="btn btn-primary" onClick={() => void savePaper()}><Icon name="save" size={16} /> 保存为试卷</button>
           </div>
         </div>
@@ -356,6 +486,25 @@ export default function OnlinePracticePage() {
             )}
           </div>
         </div>
+      )}
+
+      {reviewIndex !== null && draft && draft.questions[reviewIndex] && (
+        <QuestionReviewModal
+          question={draft.questions[reviewIndex]}
+          index={reviewIndex}
+          onClose={() => setReviewIndex(null)}
+          onDelete={() => {
+            setDraft((current) => current ? { ...current, questions: current.questions.filter((_, i) => i !== reviewIndex) } : current)
+            setReviewIndex(null)
+          }}
+          onSave={(next) => {
+            setDraft((current) => current ? {
+              ...current,
+              questions: current.questions.map((q, i) => i === reviewIndex ? next : q),
+            } : current)
+            setReviewIndex(null)
+          }}
+        />
       )}
 
       {confirmDeletePaper && (

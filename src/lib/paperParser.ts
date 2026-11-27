@@ -34,6 +34,57 @@ export interface ParseResult {
   rawText: string
 }
 
+/** 单题的识别置信信息，供人工审核时优先关注 */
+export interface QuestionConfidence {
+  /** 答案是否未识别 */
+  missingAnswer: boolean
+  /** 选项是否不足四个 */
+  incompleteOptions: boolean
+  /** 题干是否过长（疑似多题粘连未切开） */
+  tooLongStem: boolean
+  /** 是否需要人工确认 */
+  needsReview: boolean
+}
+
+/** 判断一道题哪些字段不确定，需要人工审核 */
+export function inspectQuestion(question: QuizQuestion): QuestionConfidence {
+  const missingAnswer = !question.answer.trim()
+  const filled = question.options.filter((option) => option.trim()).length
+  const incompleteOptions = filled > 0 && filled < 4
+  // 题干超过 280 字且选项不完整，多半是题号漏切导致多题粘连
+  const tooLongStem = question.title.length > 280 && (incompleteOptions || missingAnswer)
+  return {
+    missingAnswer,
+    incompleteOptions,
+    tooLongStem,
+    needsReview: missingAnswer || incompleteOptions || tooLongStem,
+  }
+}
+
+/** 规整题干排版：把挤在一起的 (一)(二) 分段、题内换行、选项串拆开后重新分行 */
+export function formatStem(stem: string): string {
+  const lines = stem
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  // 长段中把「（一）」「(四)」等小标题提前换行，避免整段挤成一行
+  const expanded = lines.flatMap((line) => line
+    .replace(/([。！？；])\s*(?=[（(][一二三四五六七八九十\d]+[）)])/g, '$1\n')
+    .split('\n'))
+  // 合并被 PDF 提取拆碎的短行（上一行不以句末标点结尾则拼接）
+  const merged: string[] = []
+  for (const line of expanded) {
+    const prev = merged[merged.length - 1]
+    if (prev && !/[。！？；：.!?;:]$/.test(prev) && line.length < 26 && !/^[（(]/.test(line)) {
+      merged[merged.length - 1] = prev + line
+    } else {
+      merged.push(line)
+    }
+  }
+  return merged.join('\n').trim()
+}
+
 type ProgressFn = (progress: ParseProgress) => void
 const noop: ProgressFn = () => undefined
 
@@ -76,21 +127,76 @@ async function extractDocxText(dataUrl: string): Promise<string> {
 /* 规则切题：按题号把全文拆成单题块                                            */
 /* -------------------------------------------------------------------------- */
 
-/** 题号起始行：支持 "1." "1、" "第1题" "（1）" "1 " 等常见排版 */
+/** 行首题号：支持 "1." "1、" "第1题" "（1）" "1 " 等常见排版 */
 const QUESTION_START_RE = /^\s*(?:第\s*)?(\d{1,3})\s*(?:[.．、,，)）]|[ 　]+题|题)?\s*(?=[^\d\s]|$)/
 
 interface TextBlock { no: number; text: string }
+interface Anchor { no: number; start: number; end: number }
+
+/**
+ * 在全文中寻找题号锚点。常见 PDF/网页提取会把题号挤在句中，例如
+ * "…127.2020年夏粮产量…128.2020年小麦产量…"，单纯按行首切分会整篇粘连。
+ * 这里收集「题号+标点」候选（如 127.），再用最长递增子序列排除年份、小数、
+ * 材料序号等噪声（年份后跟"年"、小数后跟数字，都不匹配本正则）。
+ */
+function findQuestionAnchors(text: string): Anchor[] {
+  const candidates: Anchor[] = []
+  const re = /(\d{1,3})\s*[.．、,，)）](?=\S)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) {
+    candidates.push({ no: Number(match[1]), start: match.index, end: match.index + match[0].length })
+  }
+  if (candidates.length < 2) return []
+
+  const n = candidates.length
+  const dp = new Array<number>(n).fill(1)
+  const prev = new Array<number>(n).fill(-1)
+  for (let i = 1; i < n; i += 1) {
+    for (let j = 0; j < i; j += 1) {
+      const from = candidates[j]
+      const to = candidates[i]
+      const gap = to.start - from.end
+      // 题号递增、位置递增、间隔合理，避免把小数/年份串成伪序列
+      if (from.no < to.no && to.no - from.no <= 12 && gap >= 0 && gap <= 1600 && dp[j] + 1 > dp[i]) {
+        dp[i] = dp[j] + 1
+        prev[i] = j
+      }
+    }
+  }
+  let best = 0
+  for (let i = 1; i < n; i += 1) if (dp[i] > dp[best]) best = i
+  if (dp[best] < 2) return []
+  const chain: number[] = []
+  for (let k = best; k >= 0; k = prev[k]) chain.unshift(k)
+  return chain.map((i) => candidates[i])
+}
 
 function splitByQuestionNumbers(text: string): TextBlock[] {
-  const lines = text.replace(/\r/g, '').split('\n')
+  const normalized = text.replace(/\r/g, '')
+  const anchors = findQuestionAnchors(normalized)
+
+  if (anchors.length >= 2) {
+    // 锚点切片：第一个锚点前的文本视为共用材料，并入第一题，排版时单列展示
+    const blocks: TextBlock[] = []
+    const material = normalized.slice(0, anchors[0].start).trim()
+    for (let i = 0; i < anchors.length; i += 1) {
+      const start = anchors[i].end
+      const end = i + 1 < anchors.length ? anchors[i + 1].start : normalized.length
+      let body = normalized.slice(start, end).trim()
+      if (i === 0 && material) body = `【共用材料】${material}\n\n【题目】${body}`
+      if (body) blocks.push({ no: anchors[i].no, text: body })
+    }
+    return blocks
+  }
+
+  // 回退：按行首题号切分
+  const lines = normalized.split('\n')
   const blocks: TextBlock[] = []
   let current: TextBlock | null = null
   let expected = 1
-
   for (const line of lines) {
     const match = line.match(QUESTION_START_RE)
     const no = match ? Number(match[1]) : 0
-    // 接受与预期接近的递增题号，避免把选项编号/年份误判为新题
     const looksLikeQuestion = no > 0 && no <= expected + 2 && line.trim().length > 3
     if (looksLikeQuestion) {
       if (current) blocks.push(current)
@@ -104,26 +210,50 @@ function splitByQuestionNumbers(text: string): TextBlock[] {
   return blocks.filter((block) => block.text.trim().length > 0)
 }
 
+/** 提取答案表：如 "答案：1.D 2.B 3.C" 或末尾 "1.D 2.B"，按题号回填 */
+function extractAnswerKey(text: string): Map<number, string> {
+  const map = new Map<number, string>()
+  const tail = text.match(/(?:参考)?答案\s*[:：]?\s*([\s\S]{0,800})$/i)
+  const scope = tail ? tail[1] : text
+  const re = /(?:^|[^\d])(\d{1,3})\s*[.．、]\s*([A-Da-dＡ-Ｄ])(?=$|[^\u4e00-\u9fa5\w])/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(scope)) !== null) {
+    const no = Number(match[1])
+    if (no >= 1 && no <= 300) map.set(no, match[2].toUpperCase())
+  }
+  return map
+}
+
 /** 用规则把单题文本解析为 QuizQuestion */
-function ruleParseBlock(block: TextBlock): QuizQuestion | null {
-  const parsed = parseQuestionText(block.text)
+function ruleParseBlock(block: TextBlock, answerKey: Map<number, string>): QuizQuestion | null {
+  // 共用材料段与题目段分开解析：材料里的 "D." "（四）" 等不应被当作选项
+  const materialSplit = block.text.indexOf('【题目】')
+  const material = materialSplit >= 0 ? block.text.slice(0, materialSplit).replace('【共用材料】', '').trim() : ''
+  const body = materialSplit >= 0 ? block.text.slice(materialSplit + '【题目】'.length).trim() : block.text
+  const parsed = parseQuestionText(body)
+  let answer = parsed.answer
+  if (!answer) answer = answerKey.get(block.no) ?? ''
   if (!parsed.stem || parsed.stem.length < 4) return null
+  const stem = material ? `【共用材料】${material}\n\n【题目】${parsed.stem}` : parsed.stem
   return {
     id: uid(),
-    title: parsed.stem.replace(/^\d+[.．、]\s*/, '').trim(),
+    title: formatStem(stem),
     options: parsed.options,
-    answer: parsed.answer,
+    answer,
     analysis: '',
     type: '其他',
   }
 }
 
 function ruleParseAll(text: string): QuizQuestion[] {
+  const answerKey = extractAnswerKey(text)
   const blocks = splitByQuestionNumbers(text)
-  const questions = blocks.map(ruleParseBlock).filter((item): item is QuizQuestion => Boolean(item))
+  const questions = blocks
+    .map((block) => ruleParseBlock(block, answerKey))
+    .filter((item): item is QuizQuestion => Boolean(item))
   // 若题号切分失败，退化为「整篇当作一道题」并去掉空选项
   if (questions.length === 0 && text.trim()) {
-    const single = ruleParseBlock({ no: 1, text })
+    const single = ruleParseBlock({ no: 1, text }, answerKey)
     if (single) questions.push(single)
   }
   return questions
@@ -147,7 +277,7 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
     const answer = question.answer || rule.answer || ''
     // 题干明显过短时以规则题干为准（规则保留原文更完整）
     const title = question.title.length < 8 && rule.title.length > question.title.length ? rule.title : question.title
-    return { ...question, title, options, answer }
+    return { ...question, title: formatStem(title), options, answer }
   }).filter((question) => question.title.trim().length > 0)
 }
 
