@@ -206,12 +206,13 @@ src/
 ├── styles/
 │   └── global.css                    # 唯一样式文件（1781 行），含全部组件样式与主题变量
 │
-├── components/                       # 公共组件（5）
+├── components/                       # 公共组件（6）
 │   ├── ui.tsx                        # Icon（内联 SVG path 表）、Modal、ConfirmDialog、EmptyState
 │   ├── Layout.tsx                    # 顶部导航 + 设置面板 + GitHub/WorkBuddy 同步面板（429 行）
 │   ├── QuestionNavigator.tsx         # 详情/做题翻页导航（← → 键）
 │   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱（object-fit: contain）
-│   └── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
+│   ├── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
+│   └── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入图片 + 拖拽缩放/删除
 │
 ├── lib/                              # 核心库（23）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
@@ -232,7 +233,8 @@ src/
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（392 行）
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
-│   ├── questionRefine.ts             # 【新增】拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
+│   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、提取内嵌图片
+│   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
 │   ├── markdown.ts                   # marked + DOMPurify 渲染
@@ -351,7 +353,8 @@ interface BankQuestion {
   id: string;                 // 唯一 ID（uid()）
   category: BankCategory;     // 单选题 / 多选题
   module: string;             // 六大模块之一
-  material: string;           // 材料（资料分析数据段/言语文段）
+  material: string;           // 材料纯文本（供搜索/拆题/推送错题）
+  materialHtml?: string;      // 【新增】材料富文本 HTML（排版 + 内嵌图片）；老题为空，由 material 生成
   stem: string;               // 题干
   options: string[];          // A-D 选项
   answer: string;             // 正确答案字母（多选含多个字母）
@@ -598,12 +601,16 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
 - **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR）→ `parseImagesToBank` → 实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
-- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料、题干、4 选项、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
+- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
+- **材料富文本（适配图形推理/资料分析图表题）**：
+  - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。
+  - `richText.ts`：`sanitizeRichHtml`（放行 base64 图片）、`richTextToPlain`（图片转 `[图]`、剔除编辑器控件字符）、`plainToRichText`（老题纯文本降级显示）、`extractImagesFromHtml`（推送错题时把内嵌图片并入 images）。
+  - 数据兼容：`material` 继续存纯文本供搜索/拆题/推送，`materialHtml` 存排版与图片；老题无 `materialHtml` 时由 `material` 自动生成，不改变既有数据。列表卡片用 `.bank-item-material-rich` 渲染缩略内容与图片。
 - **bankParser.ts**：`parseImagesToBank(images, onProgress, signal)` —— 逐张 `recognizeImage` 提文本 → 优先 `structureQuestionsForBank`（LLM 输出 category/module/material/stem/options/answer/analysis）→ 能力不可用时 `ruleParse`（题号切分 + `parseQuestionText` + 关键词猜模块）兜底。每题 `uid()` 唯一 ID。
 - **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。题库拆题去重键为 `material(80)+stem+options(100)`，因矫正后 `stem` 只剩设问句，单独用 stem 去重会误删多道同设问题。
 - **questionRefine.ts**：拆题结果确定性后处理（LLM 与规则兜底均调用）——① 从单行 `A.… B.… C.… D.…` 抽出 4 个独立选项并保留行内「答案：X」；② 将「文段 + 设问」拆成 `material`/`stem`（识别「对上述文段…」「根据上述材料…」「填入画横线…」等设问句型）；③ 答案字母去重/过滤非法字母、回填并清除残留标注；④ 答案 >1 字母自动改「多选题」；⑤ 模块填「常识」但内容有明确关键词时按内容纠正（片段阅读→言语理解、数据段落→资料分析等）。纯函数无副作用。
 - **BANK_SYSTEM_PROMPT 人工矫正锚点**：把用户人工校正后的「免密支付」言语理解题完整写入提示词作为 few-shot 示例，明确 material/stem 边界、4 条独立选项、答案只按原文回填不臆测。
-- **推送到错题**：`pushToMistake` 跳 `/mistakes?fromBank=<id>`；MistakesPage 的 `useEffect` 读参数 → `readCachedById('bank', id)` → 构造 Mistake（material+stem 合并为题干、module→type、options/answer/analysis/images/source 带入，新 `uid()`）→ 打开预填 MistakeForm → 用 `replace` 移除 URL 参数防重复。
+- **推送到错题**：`pushToMistake` 跳 `/mistakes?fromBank=<id>`；MistakesPage 的 `useEffect` 读参数 → `readCachedById('bank', id)` → 构造 Mistake（materialHtml 先转纯文本再与 stem 合并为题干、module→type、options/answer/analysis/images/source 带入；内嵌图片经 `extractImagesFromHtml` 并入 images，新 `uid()`）→ 打开预填 MistakeForm → 用 `replace` 移除 URL 参数防重复。
 - E2E 验证：导航/入库/JSON 字段（id/category/module/material/stem/options/answer/images 全在）/推送预填（答案 AB、选项、来源正确带入）/LLM 拆题（单选 C、多选 AD 正确判定）/手机端无溢出，均无报错。矫正后处理有 4 项回归测试（`npm run test:refine`，见 14）。
 
 ### 9.3 错题库与专项刷题（mistakes/）
@@ -845,10 +852,17 @@ PORT=4179 npm run dev
   - `scripts/test-refine.mjs` + `package.json` 的 `test:refine`：4 项回归测试全部通过。
 - **验证**：`npm run test:refine` 4/4 通过；`npm run typecheck`、`npm run build` 通过；1440×900 Chrome 冒烟测试题库页无 pageerror。
 
+#### 材料富文本升级：支持插入图片与文字排版（2026-11-27）
+- 需求：题库编辑页的材料输入支持插入图片、拖拽调整大小、文字排版，以适配图形推理/资料分析图表题。
+- 实现：新增 `RichTextEditor.tsx` + `richText.ts`，`BankQuestion` 增加可选 `materialHtml`，`material` 保持纯文本兼容；列表渲染缩略图、关键词搜索走纯文本、推送错题把内嵌图片并入 images。
+- 验证：E2E 覆盖加粗、插入图片、拖拽缩放（360→440px）、保存后 JSON 字段（material/materialHtml/尺寸）、列表缩略图、旧题纯文本降级、390px 手机端无溢出、暗色主题文字色；`typecheck`/`test:refine`/`build` 全通过。
+
 ### 16.3 最近提交历史
 
 ```
-c1bb5d2 fix: 按人工矫正结果优化题库拆题准确度——文段/设问拆分、单行选项切分、答案回填与回归测试  ← HEAD
+（提交号将在提交后补充）
+
+c1bb5d2 fix: 按人工矫正结果优化题库拆题准确度——文段/设问拆分、单行选项切分、答案回填与回归测试
 5b46723 feat: 新增题库后台管理（顶部）——图片识别按JSON结构化入库并推送错题编辑页
 5cffc58 perf: 优化大模型拆题速度与进度反馈，修复卡在76%无响应
 c990164 feat: 接入大模型智能拆题——重建应用开通 AI 能力并切换到新域名

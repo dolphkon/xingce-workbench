@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { readCachedById, remove } from '../../lib/db'
 import { readCategories } from '../../lib/categories'
+import { extractImagesFromHtml, richTextToPlain } from '../../lib/richText'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
 import { dateKey, formatQuestionText, pluralDays, uid } from '../../lib/utils'
@@ -23,14 +24,14 @@ export default function MistakesPage() {
       const now = Date.now()
       setBankInitial({
         id: uid(),
-        title: [q.material, q.stem].filter(Boolean).join('\n'),
+        title: [richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n'),
         type: q.module,
         options: q.options,
         answer: q.answer,
         userAnswer: '',
         analysis: q.analysis,
         tags: [],
-        images: q.images,
+        images: Array.from(new Set([...q.images, ...extractImagesFromHtml(q.materialHtml || '')])),
         createdAt: now,
         updatedAt: now,
         reviewCount: 0,

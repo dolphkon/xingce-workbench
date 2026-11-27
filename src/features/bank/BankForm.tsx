@@ -1,7 +1,9 @@
 import { useState, type ChangeEvent } from 'react'
 import { Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
+import RichTextEditor from '../../components/RichTextEditor'
 import { compressImage } from '../../lib/image'
+import { plainToRichText, richTextToPlain, sanitizeRichHtml } from '../../lib/richText'
 import { formatQuestionText, uid } from '../../lib/utils'
 import { BANK_CATEGORIES, BANK_MODULES, type BankCategory, type BankQuestion } from '../../types'
 
@@ -17,7 +19,9 @@ const OPTION_LETTERS = ['A', 'B', 'C', 'D']
 export default function BankForm({ initial, onSaved, onCancel }: Props) {
   const [category, setCategory] = useState<BankCategory>(initial?.category ?? '单选题')
   const [module, setModule] = useState(initial?.module ?? BANK_MODULES[0])
-  const [material, setMaterial] = useState(formatQuestionText(initial?.material ?? ''))
+  const [materialHtml, setMaterialHtml] = useState(() =>
+    initial?.materialHtml || plainToRichText(formatQuestionText(initial?.material ?? '')),
+  )
   const [stem, setStem] = useState(formatQuestionText(initial?.stem ?? ''))
   const [options, setOptions] = useState<string[]>(() => {
     const base = [...(initial?.options ?? [])]
@@ -49,11 +53,14 @@ export default function BankForm({ initial, onSaved, onCancel }: Props) {
     }
     const cleanAnswer = answer.trim().toUpperCase().replace(/[^A-D]/g, '')
     const now = Date.now()
+    const safeHtml = sanitizeRichHtml(materialHtml)
+    const materialText = formatQuestionText(richTextToPlain(safeHtml))
     onSaved({
       id: initial?.id ?? uid(),
       category: cleanAnswer.length > 1 ? '多选题' : category,
       module,
-      material: formatQuestionText(material),
+      material: materialText,
+      materialHtml: safeHtml || undefined,
       stem: formatQuestionText(stem),
       options: options.map((o) => formatQuestionText(o)),
       answer: cleanAnswer,
@@ -85,8 +92,8 @@ export default function BankForm({ initial, onSaved, onCancel }: Props) {
       </div>
 
       <div className="form-field">
-        <label className="form-label">材料（资料分析/言语文段等，可选）</label>
-        <textarea className="textarea" value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="共用材料原文，无则留空" style={{ minHeight: 80 }} />
+        <label className="form-label">材料（资料分析图表/言语文段等，可选）</label>
+        <RichTextEditor value={materialHtml} onChange={setMaterialHtml} placeholder="可粘贴文字、插入图表并拖拽调整大小" />
       </div>
 
       <div className="form-field">

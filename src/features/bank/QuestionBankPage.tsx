@@ -6,6 +6,7 @@ import { put, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { parseImagesToBank, type BankParseProgress } from '../../lib/bankParser'
 import { compressImage, fileToDataUrl } from '../../lib/image'
+import { richTextToPlain, sanitizeRichHtml } from '../../lib/richText'
 import { formatQuestionText, pluralDays } from '../../lib/utils'
 import { BANK_CATEGORIES, BANK_MODULES, type BankQuestion } from '../../types'
 import BankForm from './BankForm'
@@ -36,7 +37,7 @@ export default function QuestionBankPage() {
     if (moduleFilter !== '全部' && item.module !== moduleFilter) return false
     if (categoryFilter !== '全部' && item.category !== categoryFilter) return false
     if (keyword.trim()) {
-      const text = `${item.material} ${item.stem} ${item.options.join(' ')} ${item.answer} ${item.source ?? ''}`.toLowerCase()
+      const text = `${richTextToPlain(item.materialHtml || item.material)} ${item.stem} ${item.options.join(' ')} ${item.answer} ${item.source ?? ''}`.toLowerCase()
       if (!text.includes(keyword.trim().toLowerCase())) return false
     }
     return true
@@ -170,7 +171,11 @@ export default function QuestionBankPage() {
                     <span className="bank-item-id" title={item.id}>ID {item.id.slice(0, 8)}…</span>
                     <span className="small light">{pluralDays(item.createdAt)}</span>
                   </div>
-                  {item.material && <div className="bank-item-material">{formatQuestionText(item.material).replace(/\n/g, ' ').slice(0, 160)}</div>}
+                  {item.materialHtml ? (
+                    <div className="bank-item-material-rich" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(item.materialHtml) }} />
+                  ) : item.material ? (
+                    <div className="bank-item-material">{formatQuestionText(item.material).replace(/\n/g, ' ').slice(0, 160)}</div>
+                  ) : null}
                   <div className="bank-item-stem">{formatQuestionText(item.stem).replace(/\n/g, ' ')}</div>
                   <div className="bank-item-options">
                     {item.options.map((opt, i) => opt ? <span key={i}>{String.fromCharCode(65 + i)}. {opt}</span> : null)}

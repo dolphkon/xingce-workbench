@@ -378,8 +378,10 @@ export interface BankQuestion {
   category: BankCategory
   /** 模块：六大固定模块之一 */
   module: string
-  /** 材料（资料分析等共用材料） */
+  /** 材料纯文本（供搜索/拆题/推送错题使用） */
   material: string
+  /** 材料富文本 HTML（含排版与内嵌图片；老题目为空，由 material 生成） */
+  materialHtml?: string
   /** 题干 */
   stem: string
   /** 选项，A-D */
