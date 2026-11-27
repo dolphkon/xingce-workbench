@@ -53,7 +53,7 @@ function classifyError(err: unknown): { reason: LlmBlockReason; message: string 
   const combined = `${code} ${msg}`.toLowerCase()
 
   if (combined.includes('capability_disabled') || combined.includes('未开通 ai') || combined.includes('开通 ai 能力')) {
-    return { reason: 'disabled', message: '当前应用尚未开通 AI 能力。请在 WorkBuddy「设置」中开启 AI 能力后重试。' }
+    return { reason: 'disabled', message: '当前应用尚未开通 AI 能力。请在 WorkBuddy 应用中打开本工具使用智能拆题，或联系官方开通。' }
   }
   if (combined.includes('origin') || combined.includes('allowlist') || combined.includes('not allowed') || combined.includes('auth_')) {
     return { reason: 'origin', message: '当前访问域名未启用智能拆题。请在 WorkBuddy 应用中打开本工具后使用。' }

@@ -159,9 +159,10 @@ npm install -D typescript@^5.6.3 vite@^5.4.10 \
 # 4. 按第 4 节文件树创建 src/ 下所有文件（逐文件职责见第 4、7、9 节）
 
 # 5. 关键配置常量（cloud.ts）：
-#    ENDPOINT = 'https://xingce-workbench-53921.app.workbuddy.host'
-#    PUBLISHABLE_KEY = 'wbpk_jw6026ZNcqYFzU3nV4V2iA_cNgN30Q5QinX1jRs6QYmwi6mjLE2kcuA'
-#    （如需复现云端能力，需先通过 workbuddy_cloud_service 激活应用拿到自己的 publicConfig 并替换）
+#    ENDPOINT = 'https://xingce-workbench-ai.app.workbuddy.host'
+#    PUBLISHABLE_KEY = 'wbpk_6G3nteaUKurmlxHnjcgVk3_BV5PE2vtrQdfg0w8QGMoc8pGU0tkMwCX'
+#    （如需复现云端/AI 能力，必须先通过 workbuddy_cloud_service 的 activate(create,
+#      intent 声明"接入大模型"）新建应用拿到自己的 publicConfig 并替换——旧应用事后无法补开 AI 能力，见 16.2）
 
 # 6. 启动
 npm run dev            # 开发
@@ -722,16 +723,21 @@ PORT=4179 npm run dev
 - 线上地址：`https://dolphkon.github.io/xingce-workbench/`
 - 因 `base:'./'` + HashRouter，子路径部署无需服务端 rewrite。
 
-### 15.2 WorkBuddy 分享应用
+### 15.2 WorkBuddy 分享应用（当前启用：AI 版）
 
-- 分享链接：`https://xingce-workbench-53921.app.workbuddy.host/?sharecode=42GZLX32U2`
-- 应用 ID：`wbapp_jw6026ZNcqYFzU3nV4V2iA`（标记文件 `.wbapp_jw6026ZNcqYFzU3nV4V2iA.genie`）。
+- **当前分享链接**：`https://xingce-workbench-ai.app.workbuddy.host/?sharecode=QEQEGZR6PN`
+- **当前应用 ID**：`wbapp_6G3nteaUKurmlxHnjcgVk3`（名称「行测工作台AI」，标记文件 `.wbapp_6G3nteaUKurmlxHnjcgVk3.genie`）。
+- **发布目录**：`/Users/kondolph/WorkBuddy/xingce-workbench-ai`（独立目录，专用新应用；站点源码仍以本文所在目录为准，发布前需同步过来）。
+- **该应用创建时声明了「接入大模型实现文档智能拆题」，因此 AI 能力已开通**（见 16.2）。
+- 旧应用 `wbapp_jw6026ZNcqYFzU3nV4V2iA` / 旧链接 `https://xingce-workbench-53921.app.workbuddy.host/?sharecode=42GZLX32U2` 保留但**不再发布**（无 AI 能力）。
 - 通过 `workbuddy_sites_deploy` 复用同一 `applicationId` 更新，域名与分享码不变。
 - **发布约定**（项目长期约定）：任何功能改动完成后默认推送 GitHub Pages + 重新发布 WorkBuddy 分享链接，无需每次询问。
 
+> 关键坑：`workbuddy_sites_deploy` 把 sandbox 与发布目录按路径深度绑定（`workspaceKey` = 目录 hash）。在同一目录内换 `appId` 无效，仍会发布到旧应用。要使用新应用必须从**新目录**发布，且该目录只放新应用的 `.genie` 标记。
+
 ### 15.3 构建产物文件（dist/assets/，2026-11-27 快照）
 
-`index-9KGG-Vc1.js`、`index-CxBuyXe0.js`、`index-C69L4H3I.js`、`index-CgXlS_F3.css`、`lib-BWnBGllE.js`、`pdf-BnPRJEQ6.js`、`docx-preview-DCDaQc2X.js`、`pdf.worker.min-yatZIOMy.mjs`。
+`index-CFwD6Y0q.js`、`index-CgXlS_F3.css`、`lib-BWnBGllE.js`、`pdf-BnPRJEQ6.js`、`docx-preview-0JLj78rT.js`、`pdf.worker.min-yatZIOMy.mjs`、`index-BquMSBPp.js`、`index-CAahKYV0.js`。
 
 ---
 
@@ -746,22 +752,23 @@ PORT=4179 npm run dev
 | 错题库 / 掌握库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
-| 文档转在线刷题 | ✅ 完整可用（规则拆题） | 上传→校对→组卷→无限刷题→错题入库 |
+| 文档转在线刷题 | ✅ 完整可用（大模型智能拆题） | 上传→AI 拆题→人工校对→组卷→无限刷题→错题入库 |
 | 学习计划 + 统计 | ✅ 完整可用 | 周历/计时/子任务/图表 |
 | 本地存储 + 双同步 | ✅ 完整可用 | IndexedDB 镜像、GitHub 同步、WorkBuddy 云同步 |
 | 主题/字号/移动端 | ✅ 完整可用 | 日/夜、三档字号、响应式 |
-| **大模型智能拆题** | ⚠️ **代码就绪，服务端未开通** | 见下 |
+| **大模型智能拆题** | ✅ **已打通并线上验证** | 见下 |
 
-### 16.2 ⚠️ 大模型智能拆题的关键事实（复现者必读）
+### 16.2 大模型智能拆题：从 403 到打通的完整结论（复现者必读）
 
-这是当前唯一未闭环的功能，已通过完整验证链确认：
+**当前状态：AI 能力已开通，线上实测可用**（2026-11-27）。这是通过「重建应用并声明 AI 能力」解决的，过程与结论如下：
 
-- 服务端管理接口 `workbuddy_cloudservice_llm_list_models` 显示：本应用（wbapp_jw6026ZNcqYFzU3nV4V2iA）的**模型目录完整**（几十个模型全部 `enabled:true`）。
-- 但用官方 SDK 从数据面 `/.cloud/llm/models` 调用（无论是否带发布域名 Origin），始终返回 **HTTP 403 `capability_disabled`：「该应用未开通 AI 能力，请先在设置里开启」**。
-- 结论：**代码、域名、Origin、SDK 调用方式均正确；卡点是平台侧的应用级 AI 能力开关未打开**。
-- 现状：应用会自动降级为「**规则拆题 + 人工校对确认组卷**」，功能不受影响（上传、识别、逐题校对、组卷、刷题、错题入库全可用），只是拆题不走大模型。
-- **平台侧没有用户可见的 AI 能力开关**：WorkBuddy「云服务」面板只有数据库/文件存储/身份认证/数据统计四项（官方定义即如此）。官方机制是「在需求中说明接入大模型，由 WorkBuddy 自动为应用接入」，属平台写入的能力标记，无程序化开启接口。
-- 代码已做好探测与友好提示：能力开通后 `probeLlm()` 会自动生效，无需改代码。
+- **旧应用**（`wbapp_jw6026ZNcqYFzU3nV4V2iA`）数据面调用始终返回 HTTP 403 `capability_disabled`：「该应用未开通 AI 能力，请先在设置里开启」。此错误码由**服务端下发**（SDK 源码里不存在），是应用级能力标记。
+- 服务端管理接口 `workbuddy_cloudservice_llm_list_models` 显示模型目录完整（几十个模型全部 `enabled:true`）——即模型本身可用，唯独该应用的数据面通道被禁。
+- 平台侧**没有用户可见的 AI 能力开关**：WorkBuddy「云服务」面板只有数据库/文件存储/身份认证/数据统计四项；`activate(reuse)` 带 intent 也无效。官方机制是「**创建应用时**在需求中声明接入大模型，由 WorkBuddy 写入能力标记」——事后无法补开。
+- **解法**：用 `workbuddy_cloud_service` 的 `activate(applicationMode=create, intent="接入大模型实现文档智能拆题")` 新建应用 `wbapp_6G3nteaUKurmlxHnjcgVk3`，创建即带 AI 能力。实测 `models.list()` 返回 14 个模型、真实 `chat.completions.create` 返回 OK。
+- **Origin 匹配**：新应用 publishableKey 只接受新域名 Origin。故必须从新域名 `xingce-workbench-ai.app.workbuddy.host` 发布（旧域名 Origin 调用返回 403）。发布工具按目录绑定，需从独立目录 `/Users/kondolph/WorkBuddy/xingce-workbench-ai` 发布（见 15.2 的坑说明）。
+- **线上端到端验证**：浏览器内调用应用 `probeLlm(true)` 返回 `{available:true, reason:'ok', message:'大模型智能拆题已就绪'}`；调用 `structureQuestions()` 对 2 题样卷正确拆题并回填答案（1.D、2.A）。
+- 降级仍保留：非白名单域名（如 GitHub Pages）或能力不可用时，`llm.ts` 会自动降级为「规则拆题 + 人工校对确认组卷」，功能不受影响。
 
 ### 16.3 最近提交历史
 
@@ -779,7 +786,7 @@ d1c3c90 feat: 优化同步配色并将主题字号设置移入设置面板
 
 复现/维护时必须注意：
 
-1. **LLM 能力 403**：见 16.2。不要误判为代码 bug；`llm.ts` 的运行时探测 + 降级是正确设计。
+1. **LLM 能力必须靠「创建时声明」开通**：见 16.2。旧应用事后补声明无效；已改用带 AI 能力的新应用。`llm.ts` 的运行时探测 + 降级仍是正确的健壮性设计。
 2. **严格 TS 检查**：`noUnusedLocals`/`noUnusedParameters` 开启，任何未使用变量/参数都会让 `npm run build` 失败。
 3. **云同步域名校验**：WorkBuddy 云服务严格执行 Origin 白名单，GitHub Pages 域名下云同步不可用（但本地功能和 GitHub 同步正常）。
 4. **SDK 依赖安装**：`@tencent-ai/workbuddy-cloud-sdk` 走内部渠道，`npm install` 普通 `pdfjs-dist` 等操作可能清掉 `--no-save` 的 playwright-core；云 SDK 安装失败时按 skill 指引切换 CDN。
@@ -797,10 +804,9 @@ d1c3c90 feat: 优化同步配色并将主题字号设置移入设置面板
 
 按优先级排序：
 
-### P0 — 打通大模型智能拆题（唯一未闭环项）
-- 通过 WorkBuddy 官方渠道为应用 `wbapp_jw6026ZNcqYFzU3nV4V2iA` 开通应用级 AI 能力标记（设置 → 获取帮助/意见反馈，或在重建应用的对话中声明「接入大模型」走官方接入流程）。
-- 开通后验证：应用内 `probeLlm()` 从 `disabled` 变为 `ok`，上传文档走大模型分支（题干带【大模型】标记、method 显示「大模型智能拆题」）。
-- 若重建应用：会得到新 applicationId 和分享链接，需同步更新 `cloud.ts` 的 `ENDPOINT`/`PUBLISHABLE_KEY` 并重新发布。
+### P0 — 打通大模型智能拆题 ✅ 已完成（2026-11-27）
+- 已通过重建应用 `wbapp_6G3nteaUKurmlxHnjcgVk3` 并声明 AI 能力打通，`cloud.ts` 已指向新 endpoint/key，线上端到端验证通过（见 16.2）。
+- 后续维护注意：站点源码在本目录，但 WorkBuddy 发布目录是 `/Users/kondolph/WorkBuddy/xingce-workbench-ai`。功能改动后需先把变更同步到该目录再从那里发布，否则线上还是旧代码。
 
 ### P1 — 可选增强（用户此前未明确要求，供参考）
 - 离线兜底：Prism 高亮本地化，去除 CDN 依赖。
@@ -821,8 +827,8 @@ d1c3c90 feat: 优化同步配色并将主题字号设置移入设置面板
 | localStorage 前缀 | `xingce-cache-v1-` / `xingce-deleted-v1-` |
 | 云表 | `workbench_items` |
 | GitHub 默认仓库/分支/路径 | `xingce-workbench-data` / `data` / `workbench-snapshot.json` |
-| WorkBuddy endpoint | `https://xingce-workbench-53921.app.workbuddy.host` |
-| WorkBuddy publishableKey | `wbpk_jw6026ZNcqYFzU3nV4V2iA_cNgN30Q5QinX1jRs6QYmwi6mjLE2kcuA` |
+| WorkBuddy endpoint（AI 版） | `https://xingce-workbench-ai.app.workbuddy.host` |
+| WorkBuddy publishableKey（AI 版） | `wbpk_6G3nteaUKurmlxHnjcgVk3_BV5PE2vtrQdfg0w8QGMoc8pGU0tkMwCX` |
 | LLM 分批大小 | 12000 字符 |
 | DB 超时兜底 | 800ms |
 | 同步防抖 | WorkBuddy 云 700ms / GitHub 1200ms |
@@ -830,7 +836,8 @@ d1c3c90 feat: 优化同步配色并将主题字号设置移入设置面板
 
 ## 附录 B：应用 ID
 
-- WorkBuddy applicationId：`wbapp_jw6026ZNcqYFzU3nV4V2iA`
+- WorkBuddy applicationId（当前 AI 版）：`wbapp_6G3nteaUKurmlxHnjcgVk3`（分享码 `QEQEGZR6PN`）
+- WorkBuddy applicationId（旧版，保留未发布）：`wbapp_jw6026ZNcqYFzU3nV4V2iA`（分享码 `42GZLX32U2`，无 AI 能力）
 - GitHub 仓库：`dolphkon/xingce-workbench`（站点源码）+ `dolphkon/xingce-workbench-data`（数据同步，私有）
 
 ---
