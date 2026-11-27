@@ -195,5 +195,6 @@ export async function exportWithCloud(): Promise<BackupData> {
     folders: Object.values(snap.stores.folders ?? {}).map((e) => e.payload) as unknown as BackupData['folders'],
     papers: Object.values(snap.stores.papers ?? {}).map((e) => e.payload) as unknown as BackupData['papers'],
     practiceRecords: Object.values(snap.stores.practiceRecords ?? {}).map((e) => e.payload) as unknown as BackupData['practiceRecords'],
+    bank: Object.values(snap.stores.bank ?? {}).map((e) => e.payload) as unknown as BackupData['bank'],
   }
 }

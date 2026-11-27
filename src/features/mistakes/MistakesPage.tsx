@@ -1,17 +1,48 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
-import { remove } from '../../lib/db'
+import { readCachedById, remove } from '../../lib/db'
 import { readCategories } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
-import { dateKey, formatQuestionText, pluralDays } from '../../lib/utils'
-import { reviewStatusChip, reviewStatusLabel, reviewStatusOf, type Mistake, type QuestionType } from '../../types'
+import { dateKey, formatQuestionText, pluralDays, uid } from '../../lib/utils'
+import { reviewStatusChip, reviewStatusLabel, reviewStatusOf, type BankQuestion, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
 export default function MistakesPage() {
   const { items, loading, error, refresh } = useCollection('mistakes')
   const mothers = useCollection('mothers')
+  const [searchParams, setSearchParams] = useSearchParams()
+  // 从题库管理推送过来的题目：读取后打开预填表单，并从 URL 移除参数避免重复触发
+  const [bankInitial, setBankInitial] = useState<Mistake | null>(null)
+  useEffect(() => {
+    const id = searchParams.get('fromBank')
+    if (!id) return
+    const q = readCachedById('bank', id) as BankQuestion | undefined
+    if (q) {
+      const now = Date.now()
+      setBankInitial({
+        id: uid(),
+        title: [q.material, q.stem].filter(Boolean).join('\n'),
+        type: q.module,
+        options: q.options,
+        answer: q.answer,
+        userAnswer: '',
+        analysis: q.analysis,
+        tags: [],
+        images: q.images,
+        createdAt: now,
+        updatedAt: now,
+        reviewCount: 0,
+        correctCount: 0,
+        source: q.source || '题库管理',
+        reviewStatus: 'new',
+      })
+    }
+    const next = new URLSearchParams(searchParams)
+    next.delete('fromBank')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState<QuestionType | '全部'>('全部')
   const [categories] = useState(readCategories)
@@ -21,6 +52,7 @@ export default function MistakesPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [editing, setEditing] = useState<Mistake | 'new' | null>(null)
+  useEffect(() => { if (bankInitial) setEditing(bankInitial) }, [bankInitial])
   const [deleting, setDeleting] = useState<Mistake | null>(null)
 
   // 错题库只显示未掌握的题（已掌握移入掌握库）

@@ -357,6 +357,45 @@ export interface StudyPlan {
   updatedAt: number
 }
 
+/* ---------- 题库后台管理 ---------- */
+
+/** 题库题目的两种类别 */
+export type BankCategory = '单选题' | '多选题'
+export const BANK_CATEGORIES: readonly BankCategory[] = ['单选题', '多选题']
+
+/** 题库固定六大模块 */
+export const BANK_MODULES = ['政治理论', '常识', '言语理解', '数量关系', '判断推理', '资料分析'] as const
+export type BankModule = (typeof BANK_MODULES)[number]
+
+/**
+ * 题库后台中的一道题：图片识别后以 JSON 结构入库，每题唯一 ID。
+ * 与普通错题（Mistake）解耦，可推送到错题编辑页继续加工。
+ */
+export interface BankQuestion {
+  /** 唯一 ID */
+  id: string
+  /** 类别：单选题 / 多选题 */
+  category: BankCategory
+  /** 模块：六大固定模块之一 */
+  module: string
+  /** 材料（资料分析等共用材料） */
+  material: string
+  /** 题干 */
+  stem: string
+  /** 选项，A-D */
+  options: string[]
+  /** 正确答案字母，如 A / AB */
+  answer: string
+  /** 解析 */
+  analysis: string
+  /** 题目原图 DataURL */
+  images: string[]
+  /** 来源说明 */
+  source?: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface BackupData {
   version: number
   exportedAt: number
@@ -368,4 +407,5 @@ export interface BackupData {
   folders?: KnowledgeFolder[]
   papers?: Paper[]
   practiceRecords?: PracticeRecord[]
+  bank?: BankQuestion[]
 }

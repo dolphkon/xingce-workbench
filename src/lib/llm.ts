@@ -124,14 +124,16 @@ function chunkText(text: string, maxChars = 12000): string[] {
 /** 单批调用超时（毫秒）：超时即视为该批失败，由上层降级，避免进度条永久卡住 */
 const CHUNK_TIMEOUT_MS = 45000
 
-/** 调用模型把单批文本结构化为题目 JSON */
-async function structureChunk(
+/** 调用模型把单批文本结构化为题目 JSON（泛型：由 normalize 决定输出结构） */
+async function structureChunk<T>(
   cloud: Awaited<ReturnType<typeof getCloudForLlm>>,
   modelId: string,
   text: string,
+  systemPrompt: string,
+  normalize: (item: unknown) => T,
   signal?: AbortSignal,
   onToken?: (chars: number) => void,
-): Promise<LlmQuestion[]> {
+): Promise<T[]> {
   // 组合外部取消信号与单批超时信号
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS)
@@ -143,7 +145,7 @@ async function structureChunk(
     const stream = cloud.llm.chat.completions.create({
       model: modelId,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: text },
       ],
       stream: true,
@@ -161,7 +163,7 @@ async function structureChunk(
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
     const parsed = JSON.parse(cleaned) as { questions?: unknown }
     if (!parsed || !Array.isArray(parsed.questions)) return []
-    return parsed.questions.map(normalizeQuestion)
+    return parsed.questions.map(normalize)
   } catch (err) {
     if (!signal?.aborted && !timedOut) timedOut = true
     const reason = origReason()
@@ -193,16 +195,75 @@ function pickFastModel(models: PublicLLMModel[]): PublicLLMModel | undefined {
 /** 智能拆题进度回调：fraction 为 0~1 的连续进度（单调递增，供进度条使用） */
 export interface LlmProgress { done: number; total: number; fraction: number; message: string }
 
-/**
- * 智能拆题主入口：先探测能力，可用则分批并行调用模型拆题。
- * 不可用或失败时抛出带 reason 的错误，由上层降级并展示提示。
- * @param onProgress 分批进度回调，用于让用户看到实时进展、避免误以为卡死
- */
-export async function structureQuestions(
+/** 题库后台拆题所需的结构化字段 */
+export interface LlmBankQuestion {
+  category: '单选题' | '多选题'
+  module: string
+  material: string
+  stem: string
+  options: string[]
+  answer: string
+  analysis: string
+}
+
+const BANK_SYSTEM_PROMPT = `你是公务员考试题库录入助手。用户会给你从图片 OCR 识别出的试题文字，请拆分成一道道独立题目，并以严格 JSON 输出。
+要求：
+1. 只输出 JSON，不要输出任何解释文字或 Markdown 代码块标记。
+2. JSON 顶层结构为 {"questions":[{...}]}。
+3. 每道题**必须**用这些字段名（切勿用别名）：category、module、material、stem、options、answer、analysis。
+   - category：只能是"单选题"或"多选题"（多选题答案含两个及以上字母）。
+   - module：只能是这六个之一——"政治理论""常识""言语理解""数量关系""判断推理""资料分析"，不确定填"常识"。
+   - material：材料题的共用材料原文（如资料分析的数据段落、言语理解的文段），没有则空字符串。
+   - stem：题干文本（不含材料、不含选项）。
+   - options：长度恰好为4的字符串数组，依次对应A/B/C/D，只填选项正文不带"A."前缀；没有的选项为空字符串。
+   - answer：正确答案字母，如"A"、"AB"；找不到则空字符串。
+   - analysis：解析文本，没有则空字符串。
+4. 完整保留原文，不要臆造；无法确定的字段留空字符串。
+5. 题号可能挤在句中，请按题号正确切分；末尾答案表请回填到对应题目。
+6. 若文字不是试题，questions 返回空数组。`
+
+function normalizeBankQuestion(item: unknown): LlmBankQuestion {
+  const obj = (item ?? {}) as Record<string, unknown>
+  const rawOptions = obj.options
+  const byLetter: Record<string, string> = {}
+  if (Array.isArray(rawOptions)) {
+    rawOptions.forEach((v, i) => {
+      const s = String(v ?? '').trim()
+      const m = s.match(/^([A-Da-d])[.．、:：\s]\s*(.*)$/)
+      if (m) byLetter[m[1].toUpperCase()] = m[2].trim()
+      else byLetter[String.fromCharCode(65 + i)] = s
+    })
+  } else if (rawOptions && typeof rawOptions === 'object') {
+    Object.entries(rawOptions as Record<string, unknown>).forEach(([k, v]) => {
+      const letter = k.toUpperCase().replace(/[^A-D]/g, '')
+      if (letter) byLetter[letter] = String(v ?? '').trim()
+    })
+  }
+  const answer = String(obj.answer ?? obj.ans ?? '').replace(/[^A-Da-d]/g, '').toUpperCase()
+  const rawCategory = String(obj.category ?? '').trim()
+  const category: '单选题' | '多选题' = rawCategory.includes('多') || answer.length > 1 ? '多选题' : '单选题'
+  const rawModule = String(obj.module ?? obj.type ?? '').trim()
+  const MODULES = ['政治理论', '常识', '言语理解', '数量关系', '判断推理', '资料分析']
+  return {
+    category,
+    module: MODULES.includes(rawModule) ? rawModule : '常识',
+    material: String(obj.material ?? '').trim(),
+    stem: String(obj.stem ?? obj.question ?? obj.title ?? '').trim(),
+    options: ['A', 'B', 'C', 'D'].map((L) => byLetter[L] ?? ''),
+    answer,
+    analysis: String(obj.analysis ?? obj.explanation ?? '').trim(),
+  }
+}
+
+/** 通用拆题流程：探测→分批并行→去重。normalize 与 systemPrompt 由具体场景提供。 */
+async function runStructure<T>(
   text: string,
+  systemPrompt: string,
+  normalize: (item: unknown) => T,
+  dedupKey: (item: T) => string,
   signal?: AbortSignal,
   onProgress?: (p: LlmProgress) => void,
-): Promise<LlmQuestion[]> {
+): Promise<T[]> {
   const probe = await probeLlm()
   if (!probe.available) {
     const err = new Error(probe.message) as Error & { reason?: LlmBlockReason }
@@ -220,28 +281,26 @@ export async function structureQuestions(
   let doneCount = 0
   let charCount = 0
   let maxFraction = 0
-  // 预估总输出字符数：按输入长度的 60% 估，用于把 token 进度映射到 0~1
   const estTotalChars = Math.max(1, Math.round(text.length * 0.6))
   const report = (fraction: number, message: string) => {
-    maxFraction = Math.max(maxFraction, Math.min(0.99, fraction)) // 单调递增，进度条不倒退
+    maxFraction = Math.max(maxFraction, Math.min(0.99, fraction))
     onProgress?.({ done: doneCount, total, fraction: maxFraction, message })
   }
   report(0, `正在解析，共 ${total} 批…`)
 
-  // 受限并发（最多 3 批并行）：兼顾速度与额度/稳定性
   const CONCURRENCY = 3
-  const results: LlmQuestion[][] = new Array(total)
+  const results: T[][] = new Array(total)
   let cursor = 0
   const worker = async () => {
     while (cursor < total && !signal?.aborted) {
       const idx = cursor++
       try {
-        results[idx] = await structureChunk(cloud, model.id, chunks[idx], signal, (n) => {
+        results[idx] = await structureChunk(cloud, model.id, chunks[idx], systemPrompt, normalize, signal, (n) => {
           charCount += n
           report(charCount / estTotalChars, `正在生成题目… ${Math.round(maxFraction * 100)}%`)
         })
       } catch {
-        results[idx] = [] // 单批失败不影响其它批，最终由规则结果兜底
+        results[idx] = []
       }
       doneCount += 1
       report(doneCount / total, `已解析 ${doneCount}/${total} 批…`)
@@ -250,13 +309,12 @@ export async function structureQuestions(
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker))
   if (signal?.aborted) throw new Error('已取消')
 
-  // 跨批次题号去重（以 no 为准，无 no 时按题干去重）
-  const all: LlmQuestion[] = []
+  const all: T[] = []
+  const seen = new Set<string>()
   for (const items of results) {
     for (const item of items ?? []) {
-      const dup = all.some((prev) => item.no !== undefined && prev.no === item.no)
-        || all.some((prev) => prev.stem === item.stem)
-      if (!dup && item.stem) all.push(item)
+      const key = dedupKey(item)
+      if (key && !seen.has(key)) { seen.add(key); all.push(item) }
     }
   }
   if (!all.length) {
@@ -265,6 +323,47 @@ export async function structureQuestions(
     throw err
   }
   return all
+}
+
+/**
+ * 智能拆题主入口：先探测能力，可用则分批并行调用模型拆题。
+ * 不可用或失败时抛出带 reason 的错误，由上层降级并展示提示。
+ * @param onProgress 分批进度回调，用于让用户看到实时进展、避免误以为卡死
+ */
+export async function structureQuestions(
+  text: string,
+  signal?: AbortSignal,
+  onProgress?: (p: LlmProgress) => void,
+): Promise<LlmQuestion[]> {
+  const items = await runStructure<LlmQuestion>(
+    text, SYSTEM_PROMPT, normalizeQuestion,
+    (item) => item.stem || (item.no !== undefined ? `no-${item.no}` : ''),
+    signal, onProgress,
+  )
+  // 保留按题号去重的语义：题号相同只留第一条（runStructure 已按题干去重）
+  const seenNo = new Set<number>()
+  return items.filter((item) => {
+    if (item.no === undefined) return true
+    if (seenNo.has(item.no)) return false
+    seenNo.add(item.no)
+    return true
+  })
+}
+
+/**
+ * 题库后台拆题入口：输出带 category/module/material 等字段的题库结构。
+ * 能力不可用或失败时抛出带 reason 的错误，由上层降级为规则拆题。
+ */
+export async function structureQuestionsForBank(
+  text: string,
+  signal?: AbortSignal,
+  onProgress?: (p: LlmProgress) => void,
+): Promise<LlmBankQuestion[]> {
+  return runStructure<LlmBankQuestion>(
+    text, BANK_SYSTEM_PROMPT, normalizeBankQuestion,
+    (item) => item.stem,
+    signal, onProgress,
+  )
 }
 
 function normalizeQuestion(item: unknown): LlmQuestion {

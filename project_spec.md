@@ -229,7 +229,8 @@ src/
 │   ├── pdfText.ts                    # pdfjs-dist 文本层抽取 + 逐页渲染
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（392 行）
-│   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（204 行）
+│   ├── bankParser.ts                 # 【新增】题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
+│   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
 │   ├── markdown.ts                   # marked + DOMPurify 渲染
 │   ├── filters.ts                    # 正确率/日期筛选
@@ -238,7 +239,7 @@ src/
 │   ├── hooks.ts                      # useCollection
 │   └── utils.ts                      # 日期/UID/题干排版工具
 │
-└── features/                         # 功能模块（7 个目录，24 个页面组件）
+└── features/                         # 功能模块（8 个目录，26 个页面组件）
     ├── dashboard/
     │   └── Dashboard.tsx             # 总览 + 备份导入导出 + 清空
     ├── mistakes/
@@ -259,6 +260,9 @@ src/
     ├── paper/
     │   ├── OnlinePracticePage.tsx    # 上传→解析→校对→组卷→历史（577 行）
     │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
+    ├── bank/                         # 【新增】题库后台管理
+    │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/列表筛选/JSON查看/推送错题
+    │   └── BankForm.tsx              # 题库题目手动新增/编辑表单
     ├── mothers/
     │   ├── MothersPage.tsx           # 母题库列表
     │   ├── MotherForm.tsx            # 母题录入/编辑（316 行）
@@ -335,6 +339,24 @@ interface MotherQuestion {
   subType?: string; images?: string[]; options?: string[];
   createdAt: number; updatedAt: number;
 }
+
+// 【新增】题库后台题目：图片识别后以 JSON 结构入库，每题唯一 ID
+type BankCategory = '单选题' | '多选题'
+const BANK_CATEGORIES = ['单选题', '多选题']
+const BANK_MODULES = ['政治理论','常识','言语理解','数量关系','判断推理','资料分析']
+interface BankQuestion {
+  id: string;                 // 唯一 ID（uid()）
+  category: BankCategory;     // 单选题 / 多选题
+  module: string;             // 六大模块之一
+  material: string;           // 材料（资料分析数据段/言语文段）
+  stem: string;               // 题干
+  options: string[];          // A-D 选项
+  answer: string;             // 正确答案字母（多选含多个字母）
+  analysis: string;           // 解析
+  images: string[];           // 题目原图（压缩存储图）
+  source?: string;
+  createdAt: number; updatedAt: number;
+}
 ```
 
 ### 5.3 知识库与块文档
@@ -390,7 +412,7 @@ interface BackupData {
   version: number; exportedAt: number;
   mistakes: Mistake[]; docs: KnowledgeDoc[]; mothers: MotherQuestion[];
   plans?: StudyPlan[]; categories?: QuestionCategory[];
-  folders?: KnowledgeFolder[]; papers?: Paper[]; practiceRecords?: PracticeRecord[];
+  folders?: KnowledgeFolder[]; papers?: Paper[]; practiceRecords?: PracticeRecord[]; bank?: BankQuestion[];
 }
 ```
 
@@ -402,8 +424,8 @@ interface BackupData {
 
 ### 6.1 IndexedDB
 
-- 数据库名：`xingce-workbench`，**版本 5**。
-- 8 个 object store（keyPath 均为 `id`）：
+- 数据库名：`xingce-workbench`，**版本 6**。
+- 9 个 object store（keyPath 均为 `id`）：
 
 | store | 类型 | 索引 |
 |---|---|---|
@@ -415,6 +437,9 @@ interface BackupData {
 | `folders` | KnowledgeFolder | `by-updated` |
 | `papers` | Paper | `by-updated` |
 | `practiceRecords` | PracticeRecord | `by-updated`、`by-paper`(paperId) |
+| `bank` | BankQuestion | `by-updated`、`by-module`(module)、`by-category`(category) |
+
+> 版本升级链：v5 加 `papers`/`practiceRecords`；**v6 加 `bank`**（题库后台）。所有 store 均需同步登记到 `db.ts` 的 `StoreName`/`EntityMap`、`snapshot.ts` 的 `STORES`/`collectLocal`/`buildSnapshot`、`sync.ts` 的 `exportWithCloud`、`db.ts` 的 export/import/clear 与 storage 事件正则，否则不参与双端同步与备份。
 
 ### 6.2 双写镜像架构（核心设计）
 
@@ -533,6 +558,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 | `/mastered` | MasteredPage（掌握库） |
 | `/mistakes/practice` | PracticePage（专项刷题） |
 | `/online-practice` | OnlinePracticePage（在线刷题） |
+| `/question-bank` | QuestionBankPage（题库后台管理，顶部导航入口） |
 | `/mistakes/:id` | MistakeDetail |
 | `/knowledge` | KnowledgePage（知识库单页工作台） |
 | `/knowledge/:id` | DocEditor（仅重定向到 `/knowledge?doc=:id`） |
@@ -564,6 +590,16 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 - **OnlinePracticePage.tsx**（577 行）：视图 `list|upload|exam`。上传 PDF/DOCX → `parseDocumentToQuestions` 带进度 → 人工校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`；从知识库文件文档直接创建；试卷卡片（开始刷题/历史/删除）；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
 - **PaperExamRunner.tsx**：复用 `.practice-exam/.pe-*/.pr-*` 全屏考试 UI——题目乱序、选项、标记、计时/暂停、答题卡跳题、字号、夜间模式、下载 Markdown 报告、交卷确认、成绩报告（含每题正确答案醒目标注）。
+
+### 9.2.1 题库后台管理（bank/）【新增】
+
+- **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
+- **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR）→ `parseImagesToBank` → 实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
+- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料、题干、4 选项、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
+- **bankParser.ts**：`parseImagesToBank(images, onProgress, signal)` —— 逐张 `recognizeImage` 提文本 → 优先 `structureQuestionsForBank`（LLM 输出 category/module/material/stem/options/answer/analysis）→ 能力不可用时 `ruleParse`（题号切分 + `parseQuestionText` + 关键词猜模块）兜底。每题 `uid()` 唯一 ID。
+- **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。
+- **推送到错题**：`pushToMistake` 跳 `/mistakes?fromBank=<id>`；MistakesPage 的 `useEffect` 读参数 → `readCachedById('bank', id)` → 构造 Mistake（material+stem 合并为题干、module→type、options/answer/analysis/images/source 带入，新 `uid()`）→ 打开预填 MistakeForm → 用 `replace` 移除 URL 参数防重复。
+- E2E 验证：导航/入库/JSON 字段（id/category/module/material/stem/options/answer/images 全在）/推送预填（答案 AB、选项、来源正确带入）/LLM 拆题（单选 C、多选 AD 正确判定）/手机端无溢出，均无报错。
 
 ### 9.3 错题库与专项刷题（mistakes/）
 
@@ -752,6 +788,7 @@ PORT=4179 npm run dev
 | 错题库 / 掌握库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
+| **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；见 9.2.1 |
 | 文档转在线刷题 | ✅ 完整可用（大模型智能拆题） | 上传→AI 拆题→人工校对→组卷→无限刷题→错题入库 |
 | 学习计划 + 统计 | ✅ 完整可用 | 周历/计时/子任务/图表 |
 | 本地存储 + 双同步 | ✅ 完整可用 | IndexedDB 镜像、GitHub 同步、WorkBuddy 云同步 |
