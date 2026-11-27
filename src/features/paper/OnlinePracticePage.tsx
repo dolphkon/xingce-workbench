@@ -71,7 +71,7 @@ function QuestionReviewModal({
         {confidence.needsReview && (
           <div className="op-flag">
             <Icon name="info" size={14} />
-            {confidence.tooLongStem ? '题干过长，疑似多题粘连，请拆分确认' : confidence.missingAnswer ? '答案未识别，请人工填写' : '选项识别不完整，请核对'}
+            {confidence.boilerplateSuspected ? '题干含试卷说明/水印残留，请删除非题目内容' : confidence.tooLongStem ? '题干过长，疑似多题粘连，请拆分确认' : confidence.missingAnswer ? '答案未识别，请人工填写' : '选项识别不完整，请核对'}
           </div>
         )}
         <label className="form-label">题干 / 材料（换行会保留）</label>

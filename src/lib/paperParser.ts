@@ -12,6 +12,7 @@ import { extractPdfText, renderPdfPages } from './pdfText'
 import { recognizeImage } from './ocr'
 import { parseQuestionText } from './ocr'
 import { probeLlm, structureQuestions, type LlmBlockReason, type LlmQuestion } from './llm'
+import { cleanExamText, sanitizeSharedMaterial, stripResidualBoilerplate } from './examClean'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -45,6 +46,8 @@ export interface QuestionConfidence {
   incompleteOptions: boolean
   /** 题干是否过长（疑似多题粘连未切开） */
   tooLongStem: boolean
+  /** 题干是否残留试卷版式噪音（水印/密封线/注意事项） */
+  boilerplateSuspected: boolean
   /** 是否需要人工确认 */
   needsReview: boolean
 }
@@ -56,11 +59,14 @@ export function inspectQuestion(question: QuizQuestion): QuestionConfidence {
   const incompleteOptions = filled > 0 && filled < 4
   // 题干超过 280 字且选项不完整，多半是题号漏切导致多题粘连
   const tooLongStem = question.title.length > 280 && (incompleteOptions || missingAnswer)
+  // 试卷版式噪音残留检测：提示用户校对时重点清理
+  const boilerplateSuspected = /(?:复制必备|版权所有|密封线|条形码|监考老师|注意事项|重要提示|请按照要求在答题卡)/.test(question.title)
   return {
     missingAnswer,
     incompleteOptions,
     tooLongStem,
-    needsReview: missingAnswer || incompleteOptions || tooLongStem,
+    boilerplateSuspected,
+    needsReview: missingAnswer || incompleteOptions || tooLongStem || boilerplateSuspected,
   }
 }
 
@@ -69,7 +75,8 @@ export function formatStem(stem: string): string {
   const lines = stem
     .replace(/\r/g, '')
     .split('\n')
-    .map((line) => line.trim())
+    // 去掉题号切片后残留在行首的孤立标点（如 "2. 2023年…" 被切成 ". 2023年…"）
+    .map((line) => line.trim().replace(/^[.．、,，)）]\s+(?=\S)/, ''))
     .filter(Boolean)
   // 长段中把「（一）」「(四)」等小标题提前换行，避免整段挤成一行
   const expanded = lines.flatMap((line) => line
@@ -179,9 +186,10 @@ function splitByQuestionNumbers(text: string): TextBlock[] {
   const anchors = findQuestionAnchors(normalized)
 
   if (anchors.length >= 2) {
-    // 锚点切片：第一个锚点前的文本视为共用材料，并入第一题，排版时单列展示
+    // 锚点切片：第一个锚点前的文本需先判定是否为真正的共用材料，
+    // 试卷封面（水印/密封线/注意事项）会被 sanitizeSharedMaterial 整体丢弃
     const blocks: TextBlock[] = []
-    const material = normalized.slice(0, anchors[0].start).trim()
+    const material = sanitizeSharedMaterial(normalized.slice(0, anchors[0].start))
     for (let i = 0; i < anchors.length; i += 1) {
       const start = anchors[i].end
       const end = i + 1 < anchors.length ? anchors[i + 1].start : normalized.length
@@ -275,12 +283,15 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
 
   return source.map((question, index) => {
     const rule = rules[index]
-    if (!rule) return question
+    if (!rule) {
+      return { ...question, title: formatStem(stripResidualBoilerplate(question.title)) }
+    }
     const options = question.options.map((option, i) => option.trim() || rule.options[i]?.trim() || '')
     const answer = question.answer || rule.answer || ''
     // 题干明显过短时以规则题干为准（规则保留原文更完整）
     const title = question.title.length < 8 && rule.title.length > question.title.length ? rule.title : question.title
-    return { ...question, title: formatStem(title), options, answer }
+    // 二次兜底：清掉 LLM/规则输出里残留的试卷版式噪音行
+    return { ...question, title: formatStem(stripResidualBoilerplate(title)), options, answer }
   }).filter((question) => question.title.trim().length > 0)
 }
 
@@ -342,6 +353,11 @@ export async function parseDocumentToQuestions(
   }
 
   if (!text.trim()) throw new Error('未能从文档中提取到文字，请确认文档内容或改用可复制文本的版本')
+
+  // 文本清洗：移除试卷封面水印、密封线、条形码说明、注意事项等版式噪音，
+  // 避免它们被规则切题当成「共用材料」或被 LLM 当成题干背景
+  onProgress({ percent: 60, stage: 'prepare', message: '正在清理试卷版式噪音…' })
+  text = cleanExamText(text)
 
   // 运行时探测大模型能力（不再用域名硬编码判断）
   onProgress({ percent: 64, stage: 'llm', message: '正在检测智能拆题能力…' })

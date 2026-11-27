@@ -188,7 +188,8 @@ xingce-workbench/
 ├── tsconfig.json
 ├── vite.config.ts
 ├── scripts/
-│   └── test-refine.mjs               # 【新增】拆题后处理回归测试（npm run test:refine）
+│   ├── test-refine.mjs               # 拆题后处理回归测试（4 项）
+│   └── test-exam-clean.mjs           # 【新增】试卷版式噪音清洗回归测试（5 项，随 test:refine 一起跑）
 ├── dist/                             # 构建产物（部署用，生成即可）
 ├── flowus-editor/                    # 【可忽略】早期独立原型子项目，主站不引用
 └── src/                              # 主源码（58 个文件）
@@ -216,7 +217,7 @@ src/
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
 │   └── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
 │
-├── lib/                              # 核心库（24）
+├── lib/                              # 核心库（25）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
 │   ├── sync.ts                       # WorkBuddy 云双向同步 + 微信 OAuth
 │   ├── syncHook.ts                   # 写入钩子（addSyncHook/pauseSync/notifySync）
@@ -237,6 +238,7 @@ src/
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
+│   ├── examClean.ts                  # 【新增】试卷版式噪音清洗：cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
 │   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
@@ -702,20 +704,21 @@ font-family: -apple-system, "PingFang SC", ...
 
 ### 11.2 文档解析引擎（lib/paperParser.ts）
 
-四重手段：**PDF 文本层(pdfjs)/Word 文本层(mammoth) → 扫描版逐页渲染 OCR 回退 → 免密钥 LLM 结构化 → 规则切题校验补全**。
+四重手段：**PDF 文本层(pdfjs)/Word 文本层(mammoth) → 扫描版逐页渲染 OCR 回退 → 免密钥 LLM 结构化 → 规则切题校验补全**；全流程前置「试卷版式噪音清洗」（lib/examClean.ts）。
 
-- 进度：`prepare→text→ocr→llm→rules→done`（8→18→64→68→76→92→100）。
+- 进度：`prepare→text→clean(60)→llm(64)→rules(68)→done`（8→18→60→64→68→76~92→100）。
+- **试卷噪音清洗（examClean.ts）**：`cleanExamText` 在文本提取后统一过滤版权水印/乱码串/密封线/条形码粘贴说明/考生须知与注意事项条目/页码（"重要提示/注意事项"标题到下一题号之间整块删除）；`sanitizeSharedMaterial` 判定第一个题号前文本是否为真材料（须知关键词≥3 或长段无标点→丢弃）；`stripResidualBoilerplate` 在结果合并时二次兜底。清洗后正文 <20 字时保留原文，避免误删。
 - **题号 LIS 算法**（`findQuestionAnchors`）：收集「数字+标点」候选题号，用最长递增子序列（DP，题号差≤12、间隔≤1600 字）排除年份/小数噪声，支持题中挤在一起的题号（127.2020年…128.2020年…）。
-- `splitByQuestionNumbers`：锚点切片，第一个锚点前文本作为【共用材料】并入第一题。
+- `splitByQuestionNumbers`：锚点切片，第一个锚点前文本经 `sanitizeSharedMaterial` 判定后才作为【共用材料】并入第一题（试卷封面说明整段丢弃）。
 - `extractAnswerKey`：提取「答案：1.D 2.B」表按题号回填。
-- `formatStem`：规整排版（(一)(二)小标题换行、合并 PDF 拆碎短行）。
-- `inspectQuestion` → `QuestionConfidence {missingAnswer, incompleteOptions, tooLongStem, needsReview}`（题干 >280 字且选项不全/无答案→疑似多题粘连）。
-- `mergeResults(llm, rules)`：LLM 缺选项/答案时用规则补齐。
+- `formatStem`：规整排版（(一)(二)小标题换行、合并 PDF 拆碎短行、去题号切片残留的行首孤立标点）。
+- `inspectQuestion` → `QuestionConfidence {missingAnswer, incompleteOptions, tooLongStem, boilerplateSuspected, needsReview}`（题干 >280 字且选项不全/无答案→疑似多题粘连；含水印/密封线/注意事项等关键词→噪音残留，校对页优先提示）。
+- `mergeResults(llm, rules)`：LLM 缺选项/答案时用规则补齐，并对题干做 `stripResidualBoilerplate` 兜底清洗。
 - `parseDocumentToQuestions(fileData, fileName, fileType, onProgress, options)` 为主入口。
 
 ### 11.3 大模型拆题（lib/llm.ts，⚠️ 见当前状态）
 
-- `SYSTEM_PROMPT`：要求模型输出严格 `{"questions":[...]}` JSON，字段 no/stem/options(长度4)/answer/analysis/type。
+- `SYSTEM_PROMPT`：要求模型输出严格 `{"questions":[...]}` JSON，字段 no/stem/options(长度4)/answer/analysis/type；明确要求忽略试卷水印/密封线/条形码/考生须知/注意事项/页码等非题目版式文字；`BANK_SYSTEM_PROMPT` 同步加入该约束。
 - `probeLlm(force=false)`：`cloud.llm.models.list()` 运行时探测，`probeCache` 缓存；`classifyError` 把 capability_disabled→'disabled'、origin/Failed to fetch→'origin'（友好中文「请在 WorkBuddy 应用中打开本工具」）、quota/no_model 等归类。
 - `structureQuestions(text, signal)`：按题号 `chunkText(text, 12000)` 分批，`chat.completions.create({stream:true, temperature:0.1, max_tokens:8192, response_format:{type:'json_object'}})` 收集 SSE delta，去 ```json 包裹后 JSON.parse，按 no/题干跨批去重。
 - `LlmBlockReason = 'ok'|'disabled'|'origin'|'no_model'|'network'|'quota'|'invalid'|'unknown'`。
@@ -761,7 +764,7 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts → node scripts/test-refine.mjs
+npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts → 9 项回归用例（4 后处理 + 5 噪音清洗）
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -939,10 +942,22 @@ PORT=4179 npm run dev
   - 写入点/判断点：MistakesPage（导航按钮「归档库」+ chip 用 masteryLabel/masteryChip）、MistakeDetail（「移入归档库」、归档答错回退 learning）、MistakeForm（下拉「掌握度」三态、默认 unmastered）、PracticePage / OnlinePracticePage 过滤与默认值。
 - 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测——旧 4 态数据正确映射（新录入→未掌握、待复盘/已复盘→掌握中、已掌握→归档库）；`/mastered` 重定向到 `/archive`；下拉三态文案正确；新建时选已掌握保存后自动进归档库；详情页编辑选已掌握自动归档；归档库移回后掌握度为 learning；无 JS 报错（OCR 预热 CDN 在测试环境不可达已有 catch 兜底）。
 
+### 16.2.6 PDF 识别排版紊乱修复：试卷版式噪音多策略清洗（2026-11-27）
+
+- **问题**：用户上传扫描版行测试卷后，第 1 题「共用材料」塞满试卷封面说明（截图中的 `sT8AoIGNGkAO 复制必备`、版权所有、密封线、条形码粘贴说明、"重要提示/注意事项 一~五"）。根因是该 PDF 走 OCR 回退后大模型未启用（拆解方式显示"规则拆题"），规则切题把第一个题号前的全部文字无条件当成共用材料。
+- **四层策略**：
+  1. 前置清洗：新增 `lib/examClean.ts`，`cleanExamText` 在文本提取后逐行过滤强特征噪音（水印/乱码/密封线/条形码/须知条目/页码，"重要提示/注意事项"标题到下一题号整块删除）；
+  2. 切题判定：`sanitizeSharedMaterial` 对第一个题号前文本做真实性判定（须知关键词≥3 或长段无标点→丢弃），试卷封面不再并入第 1 题；
+  3. AI 提示词：`SYSTEM_PROMPT` / `BANK_SYSTEM_PROMPT` 明确要求忽略试卷版式噪音；
+  4. 结果兜底：`stripResidualBoilerplate` 在 `mergeResults` 二次清理，`inspectQuestion` 新增 `boilerplateSuspected` 标记让校对页优先提示。
+- **安全兜底**：清洗后正文 <20 字时保留原文，避免误删正常题目；`formatStem` 去题号切片残留的行首孤立标点。
+- **验证**：`typecheck` / `test:refine`（9/9：4 后处理 + 5 噪音清洗）/ `build` 全过；浏览器 E2E 验证封面噪音清除且两道题保留；完整 docx 解析实测 2 题正确切分、噪音 0 残留、答案/选项完整；无 JS 报错。
+
 ### 16.3 最近提交历史
 
 ```
-6227993 feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）  ← HEAD
+<PENDING_CLEAN_COMMIT> feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱  ← HEAD
+6227993 feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）
 b0d1a8d feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）
 2574832 feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐
 7a1d15d fix: 清除题干里多余的 [图] 占位符（显示层+推送层双层修复）

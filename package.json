@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:refine": "esbuild src/lib/questionRefine.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/qr.mjs --log-level=error && node scripts/test-refine.mjs"
+    "test:refine": "esbuild src/lib/questionRefine.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/qr.mjs --log-level=error && node scripts/test-refine.mjs && esbuild src/lib/examClean.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/exam-clean.mjs --log-level=error && node scripts/test-exam-clean.mjs"
   },
   "dependencies": {
     "@tencent-ai/workbuddy-cloud-sdk": "^0.1.4-dev.71e5d1e.202611161655",
