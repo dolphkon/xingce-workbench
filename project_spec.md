@@ -601,7 +601,7 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 ### 9.2.1 题库后台管理（bank/）【新增】
 
 - **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
-- **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR）→ `parseImagesToBank` → 实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
+- **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR），支持**点击选择**与 **Ctrl/⌘+V 粘贴截图**（弹窗打开时 document `paste` 监听，剪贴板图片经 `addImageFiles` 压缩入列，500ms 防抖后自动调用 `parseImagesToBank` 开始识别；连续粘贴多张只识别一次）；`runParse(batch?)` 读 `draftImagesRef` 镜像 + `parsingRef` 防重，避免异步闭包拿到旧 state；实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
 - **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项（支持 `SymbolPicker` 插入 ①②③ 等符号）、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
 - **材料富文本（适配图形推理/资料分析图表题）**：
   - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。`onPaste` 拦截剪贴板图片（`handlePaste`）走同一压缩+带控件插入逻辑（`insertImages`），使 Ctrl+V 粘贴的图片同样可拖拽缩放（纯文字粘贴保留浏览器默认行为）。
@@ -875,10 +875,16 @@ PORT=4179 npm run dev
   - `SymbolPicker.tsx`（新增）：符号选择器，BankForm 与 MistakeForm 选项区均接入。
 - 验证：E2E（1200×800 测试图）粘贴后带 1 手柄 + 1 删除按钮、拖拽 360→240px 且 `data-w=240`；编辑器/预览/详情字号一致（19.2px/33.6px @scale1.2）；选项 A 插入「①」保存后 JSON 保留「第一项①」；推送错题图片自然宽度=240（按缩放重绘，非 1200）；90 个符号按钮、390px 手机端无横向溢出；`typecheck`/`test:refine`(4/4)/`build` 全通过。
 
+#### 图片识别入口支持粘贴自动识别（2026-11-27）
+- 需求：「图片识别入库」弹窗支持 Ctrl/⌘+V 复制粘贴截图并自动开始识别。
+- 实现：`QuestionBankPage` 弹窗打开时挂 document `paste` 监听，提取剪贴板图片文件 → `addImageFiles` 压缩入列（复用文件选择路径）→ 500ms 防抖后自动 `runParse`。新增 `draftImagesRef` / `parsingRef` 镜像避免异步闭包读到旧 state，`runParse(batch?)` 接受显式批次并防重复触发；上传区文案更新为「点击选择图片，或直接 Ctrl/⌘+V 粘贴截图；粘贴后自动开始识别」。
+- 验证：E2E 用合成 `ClipboardEvent`（DataTransfer 含 PNG）模拟粘贴 → 图片入列 1 张、500ms 后自动进入识别（进度出现）；连续粘贴 3 次图片累积为 3 张且只有 1 个进度条（防抖生效）；文件选择与手动识别按钮回归正常；`typecheck`/`build` 通过。
+
 ### 16.3 最近提交历史
 
 ```
-caa468e feat: 粘贴图片可拖拽缩放、推送错题按缩放尺寸重绘、材料排版对齐详情、选项支持插入符号  ← HEAD
+（提交号将在提交后补充）
+caa468e feat: 粘贴图片可拖拽缩放、推送错题按缩放尺寸重绘、材料排版对齐详情、选项支持插入符号
 f59a3dd fix: 修复题库材料预览图片压扁/红×控件外露及详情页图片被放大
 7d1a5ca feat: 题库材料富文本编辑器——文字排版、插入图片与拖拽缩放，适配图形推理/资料分析
 03200c2 docs: 固化题库编辑到拆题能力优化的闭环约定

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
@@ -32,6 +32,10 @@ export default function QuestionBankPage() {
   const [parseMeta, setParseMeta] = useState<{ usedLlm: boolean; method: string; message: string } | null>(null)
   const [parseError, setParseError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  // ref 镜像：粘贴是异步压缩后再入列，用 ref 读取最新批次，避免闭包拿到旧 state
+  const draftImagesRef = useRef<DraftImage[]>([])
+  const parsingRef = useRef(false)
+  const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const filtered = useMemo(() => items.filter((item) => {
     if (moduleFilter !== '全部' && item.module !== moduleFilter) return false
@@ -43,40 +47,85 @@ export default function QuestionBankPage() {
     return true
   }).sort((a, b) => b.createdAt - a.createdAt), [items, keyword, moduleFilter, categoryFilter])
 
+  /** 统一更新待识别图片：同时同步 state 与 ref */
+  const applyDraft = (next: DraftImage[]) => {
+    draftImagesRef.current = next
+    setDraftImages(next)
+  }
+
+  // 把一批图片文件压缩后加入待识别列表，返回合并后的最新批次
+  const addImageFiles = async (files: File[]): Promise<DraftImage[]> => {
+    const [stored, originals] = await Promise.all([
+      Promise.all(files.map((f) => compressImage(f))),
+      Promise.all(files.map((f) => fileToDataUrl(f).catch(() => ''))),
+    ])
+    const added = stored.map((s, i) => ({ stored: s, ocr: originals[i] || s }))
+    const next = [...draftImagesRef.current, ...added].slice(0, 12)
+    applyDraft(next)
+    setParsedQuestions([])
+    setParseError('')
+    return next
+  }
+
   const handleAddImages = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
     try {
-      const [stored, originals] = await Promise.all([
-        Promise.all(files.map((f) => compressImage(f))),
-        Promise.all(files.map((f) => fileToDataUrl(f).catch(() => ''))),
-      ])
-      const added = stored.map((s, i) => ({ stored: s, ocr: originals[i] || s }))
-      setDraftImages((prev) => [...prev, ...added].slice(0, 12))
-      setParsedQuestions([])
-      setParseError('')
+      await addImageFiles(files)
     } catch {
       setParseError('图片读取失败')
     }
     event.target.value = ''
   }
 
-  const runParse = async () => {
-    if (!draftImages.length) return
+  const runParse = useCallback(async (batch?: DraftImage[]) => {
+    const images = batch ?? draftImagesRef.current
+    if (!images.length || parsingRef.current) return
+    parsingRef.current = true
     setParsing(true)
     setParseError('')
     setParsedQuestions([])
     setParseMeta(null)
     try {
-      const result = await parseImagesToBank(draftImages, (p) => setParseProgress(p))
+      const result = await parseImagesToBank(images, (p) => setParseProgress(p))
       setParsedQuestions(result.questions)
       setParseMeta({ usedLlm: result.usedLlm, method: result.method, message: result.message })
     } catch (err) {
       setParseError(err instanceof Error ? err.message : '识别失败')
     } finally {
+      parsingRef.current = false
       setParsing(false)
     }
-  }
+  }, [])
+
+  // 粘贴自动识别：弹窗打开时监听 document，剪贴板含图片则入列，防抖后自动开始识别。
+  // 连续粘贴多张截图时只触发一次识别，避免重复调用大模型。
+  useEffect(() => {
+    if (!importOpen) return
+    const onPaste = (event: ClipboardEvent) => {
+      if (parsingRef.current) return
+      const items = Array.from(event.clipboardData?.items ?? [])
+      const files = items
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file))
+      if (!files.length) return
+      event.preventDefault()
+      setParseProgress({ percent: 0, stage: '正在读取粘贴图片…' })
+      void addImageFiles(files).then((next) => {
+        if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+        pasteTimerRef.current = setTimeout(() => {
+          pasteTimerRef.current = null
+          void runParse(next)
+        }, 500)
+      }).catch(() => setParseError('图片读取失败'))
+    }
+    document.addEventListener('paste', onPaste)
+    return () => {
+      document.removeEventListener('paste', onPaste)
+      if (pasteTimerRef.current) { clearTimeout(pasteTimerRef.current); pasteTimerRef.current = null }
+    }
+  }, [importOpen, runParse])
 
   const saveParsed = async () => {
     if (!parsedQuestions.length) return
@@ -84,7 +133,7 @@ export default function QuestionBankPage() {
       await Promise.all(parsedQuestions.map((q) => put('bank', q)))
       refresh()
       setImportOpen(false)
-      setDraftImages([])
+      applyDraft([])
       setParsedQuestions([])
       setParseMeta(null)
     } catch {
@@ -94,7 +143,7 @@ export default function QuestionBankPage() {
 
   const openImport = () => {
     setImportOpen(true)
-    setDraftImages([])
+    applyDraft([])
     setParsedQuestions([])
     setParseMeta(null)
     setParseError('')
@@ -219,7 +268,8 @@ export default function QuestionBankPage() {
             <label className="form-label">题目图片（最多 12 张）</label>
             <label className="upload-zone">
               <Icon name="image" size={22} />
-              <div style={{ marginTop: 6 }}>点击选择图片，可批量上传</div>
+              <div style={{ marginTop: 6 }}>点击选择图片，或直接 Ctrl / ⌘ + V 粘贴截图</div>
+              <div className="small light" style={{ marginTop: 4 }}>粘贴后自动开始识别，可连续粘贴多张</div>
               <input ref={fileRef} type="file" accept="image/*" multiple onChange={(e) => void handleAddImages(e)} disabled={parsing} />
             </label>
             {draftImages.length > 0 && (
@@ -228,7 +278,7 @@ export default function QuestionBankPage() {
                 altPrefix="待识别"
                 variant="thumb"
                 renderActions={(index) => (
-                  <button type="button" className="icon-btn danger" style={{ background: 'rgba(255,255,255,.92)' }} onClick={() => setDraftImages((prev) => prev.filter((_, i) => i !== index))} disabled={parsing} aria-label="移除图片">
+                  <button type="button" className="icon-btn danger" style={{ background: 'rgba(255,255,255,.92)' }} onClick={() => applyDraft(draftImagesRef.current.filter((_, i) => i !== index))} disabled={parsing} aria-label="移除图片">
                     <Icon name="trash" size={13} />
                   </button>
                 )}
