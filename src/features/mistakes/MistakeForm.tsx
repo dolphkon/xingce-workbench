@@ -4,10 +4,16 @@ import { Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
 import { put } from '../../lib/db'
 import { readCategories } from '../../lib/categories'
+import { syncMistakeToBank } from '../../lib/bankSync'
 import { compressImage, fileToDataUrl } from '../../lib/image'
 import { parseQuestionText, recognizeImage, warmupOcr } from '../../lib/ocr'
+import { plainToRichText, richTextToPlain, sanitizeRichHtml } from '../../lib/richText'
 import { formatQuestionText, parseTags, uid } from '../../lib/utils'
-import { REVIEW_STATUSES, reviewStatusOf, type Mistake, type MotherQuestion, type QuestionType, type ReviewStatus } from '../../types'
+import {
+  BANK_CATEGORIES, BANK_MODULES, REVIEW_STATUSES, reviewStatusOf,
+  type BankCategory, type Mistake, type MotherQuestion, type QuestionType, type ReviewStatus,
+} from '../../types'
+import RichTextEditor from '../../components/RichTextEditor'
 import CategoryFields from '../categories/CategoryFields'
 import CategoryManager from '../categories/CategoryManager'
 
@@ -21,6 +27,16 @@ interface Props {
 const OPTION_LETTERS = ['A', 'B', 'C', 'D']
 
 export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Props) {
+  // 与题库后台共有的字段：类别 / 模块 / 材料 / 题干
+  const [category, setCategory] = useState<BankCategory>(initial?.category ?? '单选题')
+  const [module, setModule] = useState(() => {
+    if (initial?.module && BANK_MODULES.includes(initial.module as (typeof BANK_MODULES)[number])) return initial.module
+    return (initial?.type && BANK_MODULES.includes(initial.type as (typeof BANK_MODULES)[number])) ? initial.type : BANK_MODULES[0]
+  })
+  const [materialHtml, setMaterialHtml] = useState(() => {
+    const base = initial?.materialHtml || plainToRichText(formatQuestionText(initial?.material ?? ''))
+    return sanitizeRichHtml(base)
+  })
   const [title, setTitle] = useState(() => formatQuestionText(initial?.title ?? ''))
   const [categories, setCategories] = useState(readCategories)
   const [managing, setManaging] = useState(false)
@@ -196,8 +212,40 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
     setError(null)
     try {
       const now = Date.now()
+      const cleanAnswer = answer.trim().toUpperCase().replace(/[^A-D]/g, '')
+      const safeHtml = sanitizeRichHtml(materialHtml)
+      const id = initial?.id ?? uid()
+      const bankId = await syncMistakeToBank({
+        id,
+        title: formatQuestionText(title),
+        type,
+        options,
+        answer: cleanAnswer,
+        userAnswer: userAnswer.trim().toUpperCase(),
+        analysis: analysis.trim(),
+        tags: parseTags(tagsInput),
+        source: source.trim() || undefined,
+        accuracy,
+        images,
+        reviewStatus,
+        createdAt: initial?.createdAt ?? now,
+        updatedAt: now,
+        lastReviewedAt: initial?.lastReviewedAt,
+        reviewCount: initial?.reviewCount ?? 0,
+        correctCount: initial?.correctCount ?? 0,
+        motherId: linkMother ? effectiveMotherId || undefined : undefined,
+        categoryId,
+        subType: subType.trim() || undefined,
+        point: linkMother ? point.trim() || undefined : undefined,
+        linkMother,
+        bankId: initial?.bankId,
+        category,
+        module,
+        material: richTextToPlain(safeHtml),
+        materialHtml: safeHtml || undefined,
+      })
       const record: Mistake = {
-        id: initial?.id ?? uid(),
+        id,
         title: formatQuestionText(title),
         type,
         options,
@@ -219,6 +267,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         subType: subType.trim() || undefined,
         point: linkMother ? point.trim() || undefined : undefined,
         linkMother,
+        bankId,
+        category: cleanAnswer.length > 1 ? '多选题' : category,
+        module,
+        material: richTextToPlain(safeHtml),
+        materialHtml: safeHtml || undefined,
       }
       await put('mistakes', record)
       onSaved()
@@ -232,6 +285,27 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
     <>
       {error && <div className="error-banner">{error}</div>}
       {ocrError && <div className="error-banner">{ocrError}</div>}
+
+      {/* 与题库后台一致的前置字段 */}
+      <div className="form-row">
+        <div className="form-field">
+          <label className="form-label">类别</label>
+          <select className="select" value={category} onChange={(e) => setCategory(e.target.value as BankCategory)} data-field="mistake-category">
+            {BANK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div className="form-field">
+          <label className="form-label">模块</label>
+          <select className="select" value={module} onChange={(e) => setModule(e.target.value)} data-field="mistake-module">
+            {BANK_MODULES.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="form-field">
+        <label className="form-label">材料（资料分析图表/言语文段等，可选）</label>
+        <RichTextEditor value={materialHtml} onChange={setMaterialHtml} placeholder="可粘贴文字、插入图表并拖拽调整大小" />
+      </div>
 
       <div className="form-field">
         <label className="form-label">题干 <span className="req">*</span></label>
@@ -247,47 +321,7 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
       </div>
 
       <div className="form-field">
-        <label className="form-label">复盘状态</label>
-        <select className="select" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as ReviewStatus)} data-field="review-status">
-          {REVIEW_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-        <span className="form-hint">新录入的题目默认为「新录入」；设为「已掌握」后将自动移入掌握库，不再显示在错题库</span>
-      </div>
-
-      <CategoryFields
-        categories={categories}
-        type={type}
-        categoryId={categoryId}
-        subType={subType}
-        point={point}
-        linkMother={linkMother}
-        onLinkMotherChange={(value) => {
-          setLinkMother(value)
-          if (!value) setMotherId('')
-        }}
-        onManage={() => setManaging(true)}
-        onChange={(patch) => {
-          setType(patch.type)
-          setCategoryId(patch.categoryId)
-          setSubType(patch.subType)
-          setPoint(patch.point)
-        }}
-      />
-
-      {linkMother && mothers.length > 0 && (
-        <div className="form-field">
-          <label className="form-label">指定母题</label>
-          <select className="select" value={effectiveMotherId} onChange={(e) => setMotherId(e.target.value)}>
-            {mothers.map((item) => (
-              <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
-            ))}
-          </select>
-          <span className="form-hint">默认选中第一个母题，可手动切换；保存后与该母题关联</span>
-        </div>
-      )}
-
-      <div className="form-field">
-        <label className="form-label">选项（留空即视为非选择题）</label>
+        <label className="form-label">选项 <span className="small light">（先点输入框，再点「符号」即可在光标处插入 1、2、3 或 ①②③ 等序号）</span></label>
         <div className="form-row" style={{ gap: 8 }}>
           {OPTION_LETTERS.map((letter, index) => (
             <div className="row" key={letter} style={{ gap: 6 }}>
@@ -315,62 +349,22 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
       <div className="form-row">
         <div className="form-field">
           <label className="form-label">正确答案</label>
-          <input className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="如 A / ABC / 文本内容" />
+          <input className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="如 A / AB（多选）" />
         </div>
         <div className="form-field">
-          <label className="form-label">我的答案（可选）</label>
-          <input className="input" value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} placeholder="当时选了什么" />
+          <label className="form-label">来源（可选）</label>
+          <input className="input" value={source} onChange={(e) => setSource(e.target.value)} placeholder="如 2024 国考真题" />
         </div>
       </div>
 
       <div className="form-field">
-        <label className="form-label">解析 / 复盘笔记</label>
+        <label className="form-label">解析（可选）</label>
         <textarea
           className="textarea"
           value={analysis}
           onChange={(e) => setAnalysis(e.target.value)}
           placeholder="错因、正确思路、易错点…"
         />
-      </div>
-
-      <div className="form-field" style={{ maxWidth: 260 }}>
-        <label className="form-label">自评正确率（可选）</label>
-        <div className="row" style={{ gap: 8 }}>
-          <input
-            className="input"
-            type="number"
-            min={0}
-            max={100}
-            step={1}
-            value={accuracyInput}
-            onChange={(e) => {
-              const value = e.target.value
-              if (value === '') { setAccuracyInput(''); return }
-              const num = Number(value)
-              if (Number.isFinite(num) && num >= 0 && num <= 100) setAccuracyInput(value)
-            }}
-            placeholder="0–100"
-          />
-          <span className="small muted" style={{ flex: '0 0 auto' }}>%</span>
-        </div>
-        <span className="form-hint">手动记录自评正确率，与刷题统计相互独立</span>
-      </div>
-
-      <div className="form-field">
-        <label className="form-label">题目来源</label>
-        <input
-          className="input"
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          placeholder="如：2024 国考行测真题、某教材第 3 章、某 APP 模考"
-        />
-        <span className="form-hint">记录这道题的出处，方便日后追溯</span>
-      </div>
-
-      <div className="form-field">
-        <label className="form-label">标签</label>
-        <input className="input" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="用逗号分隔，如：削弱论证, 高频考点" />
-        <span className="form-hint">多个标签用逗号、空格或换行分隔</span>
       </div>
 
       <div className="form-field">
@@ -430,6 +424,85 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
         <span className="form-hint" style={{ marginTop: 6 }}>
           支持直接 Ctrl/⌘ + V 粘贴截图，粘贴后自动上传并识别题干、选项与答案；首次 OCR 需下载中文语言包（约 15MB），结果请务必人工校对。
         </span>
+      </div>
+
+      <div className="form-section-divider"><span>错题库补充信息</span></div>
+      <p className="form-hint" style={{ marginTop: -4, marginBottom: 10 }}>
+        以下内容仅错题库存档使用；上方题目信息保存后会自动同步到题库后台。
+      </p>
+
+      <div className="form-field">
+        <label className="form-label">复盘状态</label>
+        <select className="select" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as ReviewStatus)} data-field="review-status">
+          {REVIEW_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <span className="form-hint">新录入的题目默认为「新录入」；设为「已掌握」后将自动移入掌握库，不再显示在错题库</span>
+      </div>
+
+      <CategoryFields
+        categories={categories}
+        type={type}
+        categoryId={categoryId}
+        subType={subType}
+        point={point}
+        linkMother={linkMother}
+        onLinkMotherChange={(value) => {
+          setLinkMother(value)
+          if (!value) setMotherId('')
+        }}
+        onManage={() => setManaging(true)}
+        onChange={(patch) => {
+          setType(patch.type)
+          setCategoryId(patch.categoryId)
+          setSubType(patch.subType)
+          setPoint(patch.point)
+        }}
+      />
+
+      {linkMother && mothers.length > 0 && (
+        <div className="form-field">
+          <label className="form-label">指定母题</label>
+          <select className="select" value={effectiveMotherId} onChange={(e) => setMotherId(e.target.value)}>
+            {mothers.map((item) => (
+              <option key={item.id} value={item.id}>{item.title.slice(0, 30)}{item.title.length > 30 ? '…' : ''}</option>
+            ))}
+          </select>
+          <span className="form-hint">默认选中第一个母题，可手动切换；保存后与该母题关联</span>
+        </div>
+      )}
+
+      <div className="form-field" style={{ maxWidth: 260 }}>
+        <label className="form-label">我的答案（可选）</label>
+        <input className="input" value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} placeholder="当时选了什么" />
+      </div>
+
+      <div className="form-field" style={{ maxWidth: 260 }}>
+        <label className="form-label">自评正确率（可选）</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={accuracyInput}
+            onChange={(e) => {
+              const value = e.target.value
+              if (value === '') { setAccuracyInput(''); return }
+              const num = Number(value)
+              if (Number.isFinite(num) && num >= 0 && num <= 100) setAccuracyInput(value)
+            }}
+            placeholder="0–100"
+          />
+          <span className="small muted" style={{ flex: '0 0 auto' }}>%</span>
+        </div>
+        <span className="form-hint">手动记录自评正确率，与刷题统计相互独立</span>
+      </div>
+
+      <div className="form-field">
+        <label className="form-label">标签</label>
+        <input className="input" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="用逗号分隔，如：削弱论证, 高频考点" />
+        <span className="form-hint">多个标签用逗号、空格或换行分隔</span>
       </div>
 
       <div className="form-actions">

@@ -136,6 +136,16 @@ export interface Mistake {
   linkMother?: boolean
   /** 复盘状态：已掌握的题目进入掌握库、不再显示在错题库 */
   reviewStatus?: ReviewStatus
+  /** 关联题库后台记录 ID：录入错题时自动同步题库，编辑时按此 ID 更新同一条题库记录 */
+  bankId?: string
+  /** 题库类别（单选题/多选题），与题库后台保持一致 */
+  category?: BankCategory
+  /** 题库模块（六大固定模块之一），与题库后台保持一致 */
+  module?: string
+  /** 材料纯文本，与题库后台共用 */
+  material?: string
+  /** 材料富文本 HTML，与题库后台共用 */
+  materialHtml?: string
 }
 
 /* ---------- 在线刷题（文档转试卷） ---------- */

@@ -29,6 +29,12 @@ export default function MistakesPage() {
           // 图片已单独提取到 images，去掉富文本转纯文本遗留的「[图]」占位符
           title: stripImagePlaceholder([richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n')),
           type: q.module,
+          // 保存时按 bankId 更新原题库记录，而非重复新建
+          bankId: q.id,
+          category: q.category,
+          module: q.module,
+          material: q.material,
+          materialHtml: q.materialHtml,
           options: q.options,
           answer: q.answer,
           userAnswer: '',

@@ -216,7 +216,7 @@ src/
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
 │   └── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
 │
-├── lib/                              # 核心库（23）
+├── lib/                              # 核心库（24）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
 │   ├── sync.ts                       # WorkBuddy 云双向同步 + 微信 OAuth
 │   ├── syncHook.ts                   # 写入钩子（addSyncHook/pauseSync/notifySync）
@@ -237,6 +237,7 @@ src/
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
+│   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
 │   ├── markdown.ts                   # marked + DOMPurify 渲染
@@ -252,7 +253,7 @@ src/
     ├── mistakes/
     │   ├── MistakesPage.tsx          # 错题库列表 + 多维筛选
     │   ├── MistakeDetail.tsx         # 错题详情 + 做题模式 + 移入掌握库
-    │   ├── MistakeForm.tsx           # 错题录入/编辑 + OCR 粘贴（422 行）
+    │   ├── MistakeForm.tsx           # 错题录入/编辑 + OCR 粘贴 + 题库同步；排版与题库后台对齐（类别+模块→材料→题干→选项→答案+来源→解析→图片→错题库补充区）
     │   ├── MasteredPage.tsx          # 掌握库
     │   ├── PracticePage.tsx          # 专项刷题全屏考试（746 行）
     │   ├── QuestionSketch.tsx        # 题目手写草稿（覆盖相邻三题）
@@ -623,7 +624,7 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 ### 9.3 错题库与专项刷题（mistakes/）
 
 - **MistakesPage.tsx**：模块 tab + 关键词/题型/正确率/日期多维筛选；只显示未掌握题；chip 展示状态/模块/题型/正确率/来源/答案/图片数/练习次数/标签。
-- **MistakeForm.tsx**（422 行）：题干（失焦自动 `formatQuestionText`）、复盘状态下拉、三级分类、关联母题开关、4 选项、答案/我的答案、解析、自评正确率、来源、标签、图片（最多 8 张）；**核心交互**：进入即 `warmupOcr()`，Ctrl/⌘+V 粘贴截图自动 OCR 并回填答案。
+- **MistakeForm.tsx**：排版与题库后台 `BankForm` 对齐——① 共有区：类别 + 模块（两列）→ 材料富文本（`RichTextEditor`）→ 题干（失焦自动 `formatQuestionText`）→ 选项（`SymbolPicker` 插入序号）→ 正确答案 + 来源 → 解析 → 图片（最多 8 张，支持 Ctrl/⌘+V 粘贴自动 OCR）；② `.form-section-divider`「错题库补充信息」区：复盘状态、三级分类/关联母题/指定母题、我的答案、自评正确率、标签。**保存时自动同步题库后台**：新建/编辑都写 `bank` store，通过 `mistake.bankId` 关联原记录，编辑时保留题库记录 `createdAt`，从题库推送过来的题带原 `bankId` 直接更新原记录。
 - **MistakeDetail.tsx**：做题模式（默认隐藏答案/解析）、作答累计 reviewCount/correctCount、答错自动移回错题库、「移入已掌握库」、QuestionNavigator 翻页、关联母题列表。
 - **MasteredPage.tsx**：掌握库（reviewStatus='mastered'），移回错题库/编辑/彻底删除。
 - **PracticePage.tsx**（746 行）：专项刷题——筛选（时间/模块/题型/正确率/题量 10/20/50/全部），答题过程不即时显示对错，交卷统一判分；本轮进度存 sessionStorage；计时/暂停/标记/笔记/草稿；答题卡；报告页含难度系数（`10 - 平均正确率/20`，限制 1~5）、分模块统计、每题答案醒目标注、Markdown 报告下载。
@@ -915,10 +916,22 @@ PORT=4179 npm run dev
   - MistakeDetail、PracticePage（做题/报告）、PaperExamRunner（做题/报告）、MotherDetail 全部改为给 `QuestionStem` 传 `images`，删除原来紧随其后的独立 `QuestionImages` 与无用 import；录入表单缩略图 variant 不受影响。
 - 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测符号面板首组为「序号数字」、首格为 `1`、连续插入 1/2/3 后选项值为「选项123」；详情页类别右边缘 x=105、题干左边缘 x=113、图片左边缘 x=113（对齐生效），两张小图同 Y 横排，无 JS 报错。
 
+### 16.2.4 错题库录入页排版对齐题库后台 + 保存自动同步题库（2026-11-27）
+
+- 需求：错题库录入错题的排版与题库后台管理页一致；录入成功后自动添加到题库后台。用户在确认中选择「顺序对齐+补齐共有字段」「新建和编辑都同步」。
+- 实现：
+  - `types.ts`：`Mistake` 新增 `bankId / category / module / material / materialHtml`，与 `BankQuestion` 建立关联。
+  - `lib/bankSync.ts`（新增）：`mistakeToBankQuestion()` 把错题转为题库题目（类别按答案字母数校正、模块用 BANK_MODULES 校验回退、材料富文本 sanitize + 纯文本转换）；`syncMistakeToBank()` 按 `bankId` 读写 `bank` store，编辑时保留原记录 `createdAt`。
+  - `MistakeForm`：字段顺序改为「类别+模块 → 材料富文本 → 题干 → 选项 → 正确答案+来源 → 解析 → 图片」，与 `BankForm` 一致；错题库特有字段（复盘状态、三级分类/母题、我的答案、自评正确率、标签）归入 `.form-section-divider`「错题库补充信息」区；`handleSubmit` 先同步题库拿到 bankId 再保存错题。
+  - `MistakesPage`：`?fromBank=<id>` 推送预填时带上 `bankId/category/module/material/materialHtml`，保存后更新原题库记录而非新建。
+  - `global.css`：新增 `.form-section-divider` 分组标题样式。
+- 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测——字段顺序标签为「类别,模块,材料,题干,选项,正确答案,来源,解析,题目图片,复盘状态,考试模块,题型,关联母题,我的答案,自评正确率,标签」，分隔标题生效；新建错题后 bank 记录 1 条且 `bankId` 与题库 ID 一致、类别/模块/答案同步正确；编辑后题库记录数不变、题干与答案更新、`createdAt` 稳定；从题库推送预填保留类别/模块/题干；无 JS 报错。
+
 ### 16.3 最近提交历史
 
 ```
-2574832 feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐  ← HEAD
+<PENDING_SYNC_COMMIT> feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）  ← HEAD
+2574832 feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐
 7a1d15d fix: 清除题干里多余的 [图] 占位符（显示层+推送层双层修复）
 b80cbe9 feat: 图片题干下方从左到右横排且与题干左对齐；题干前显示单选题/多选题类别标签
 3e7ce73 feat: 图片识别入库支持复制粘贴截图并自动开始识别（防抖合并连续粘贴）
