@@ -770,6 +770,20 @@ PORT=4179 npm run dev
 - **线上端到端验证**：浏览器内调用应用 `probeLlm(true)` 返回 `{available:true, reason:'ok', message:'大模型智能拆题已就绪'}`；调用 `structureQuestions()` 对 2 题样卷正确拆题并回填答案（1.D、2.A）。
 - 降级仍保留：非白名单域名（如 GitHub Pages）或能力不可用时，`llm.ts` 会自动降级为「规则拆题 + 人工校对确认组卷」，功能不受影响。
 
+#### 拆题性能与进度优化（2026-11-27 后续修复）
+
+用户反馈「拆题卡在 76% 没反应」，根因与修复：
+
+- **根因**：① `structureQuestions` 原用 `usable.find(isDefault)` 选中 `auto`（推理型模型，`onlyReasoning:true`/`effort:high`），长文拆题慢；② 长文本切多批**串行**调用，每批数秒、几十批累计很久；③ 调用期间无进度反馈，进度条卡在 76% 不动，用户误以为死机；④ 无超时，异常时永久挂起。
+- **修复**（`src/lib/llm.ts`）：
+  - `pickFastModel()`：优先选非推理快模型 `hunyuan-chat`（显式排除 `auto`/`onlyReasoning`/图像视频模型）。
+  - **受限并发 3 批并行**（`CONCURRENCY=3`），大幅缩短总耗时。
+  - **单批 45s 超时**（`CHUNK_TIMEOUT_MS`），超时自动降级，不再永久挂起。
+  - **token 级进度回调**：`structureChunk` 每收到流式 chunk 上报字符数，主流程汇总成单调递增的 `fraction`（0~1），paperParser 映射到进度条 76~91%（`llm.ts` 的 `LlmProgress.fraction` 由 `paperParser.ts` 消费），进度条随生成实时前进。
+  - **字段名兼容**：`normalizeQuestion` 兼容模型返回的 `question/id/ans/answer` 等别名，选项支持数组 / `{A,B,C,D}` 对象 / 内联字符串三种形态；SYSTEM_PROMPT 明确要求用 `stem` + 4 元素数组。
+  - 批次大小 8000 字符。
+- 验证：4 题真实样卷全部正确拆出（答案 D/A/A/C），进度单调 0→0.99；12 题样卷正确拆出、无页面错误。
+
 ### 16.3 最近提交历史
 
 ```

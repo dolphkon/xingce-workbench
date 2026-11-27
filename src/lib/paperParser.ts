@@ -359,7 +359,11 @@ export async function parseDocumentToQuestions(
   if (llmEnabled) {
     try {
       onProgress({ percent: 76, stage: 'llm', message: '正在用大模型智能拆题…' })
-      llm = await structureQuestions(text, options.signal)
+      llm = await structureQuestions(text, options.signal, (p) => {
+        // 用连续 fraction 映射到 76~91 区间：token 级进度让进度条持续前进，不再卡死
+        const pct = 76 + Math.round(p.fraction * 15)
+        onProgress({ percent: Math.min(91, pct), stage: 'llm', message: p.message })
+      })
       usedLlm = llm.length > 0
     } catch (err) {
       llm = []
