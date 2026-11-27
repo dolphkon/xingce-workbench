@@ -1,0 +1,100 @@
+/**
+ * 通用拆题（在线刷题）输出规范化。
+ *
+ * 与题库链路的 questionRefine.ts 对应：LLM/规则拆出的题目常忠实保留 OCR 原文的
+ * 「1.」题号、「A)」选项字母前缀，导致在线刷题校对页排版凌乱。
+ * 本模块做确定性清理：去题号前缀、去选项字母前缀、行内选项抽取、答案回填。
+ * 纯函数、无副作用，LLM 与规则两条路径统一调用。
+ */
+
+export interface AtomicQuestion {
+  stem: string
+  options: string[]
+  answer: string
+  analysis?: string
+  type?: string
+}
+
+/** 题干行首题号："1. " "第2题 " "（3）" "4、" 等 */
+const QUESTION_NUMBER_RE = /^\s*(?:第\s*)?\d{1,3}\s*(?:[.．、,，)）]|[ 　]*题)\s*/
+
+/** 选项字母前缀："A. " "B) " "（C）" "D、" 等（全角字母一并处理） */
+const OPTION_PREFIX_RE = /^[（(]?\s*[A-Da-dＡ-Ｄ]\s*[.．、:：)）]\s*/
+
+/** 答案标注 */
+const ANSWER_RE = /(?:正确|参考|标准)?\s*答案\s*(?:是|为)?\s*[:：]?\s*([A-Da-dＡ-Ｄ][A-Da-dＡ-Ｄ、,，\s]*)/i
+
+/** 行内选项标记：前接空白或中文标点 */
+const INLINE_OPTION_RE = /(?:^|[\s\n，,；;。：:])([A-Da-dＡ-Ｄ])\s*[.．、:：]\s*/g
+
+function normalizeAnswer(raw: string): string {
+  return Array.from(new Set(String(raw ?? '').toUpperCase().replace(/[^A-D]/g, ''))).sort().join('')
+}
+
+function toAscii(letter: string): string {
+  return letter.toUpperCase().replace('Ａ', 'A').replace('Ｂ', 'B').replace('Ｃ', 'C').replace('Ｄ', 'D')
+}
+
+/** 去掉题干行首题号；没有题号则原样返回 */
+export function stripQuestionNumber(text: string): string {
+  return String(text ?? '').trim().replace(QUESTION_NUMBER_RE, '').trim()
+}
+
+/** 去掉选项字母前缀；没有前缀则原样返回 */
+export function stripOptionLetter(text: string): string {
+  return String(text ?? '').trim().replace(OPTION_PREFIX_RE, '').trim()
+}
+
+/**
+ * 对一道原子题做规范化。
+ * 选项已完整时只清理前缀与题干题号；选项缺失时尝试从题干行内抽取。
+ */
+export function refineAtomicQuestion<T extends AtomicQuestion>(input: T): T {
+  let stem = String(input.stem ?? '').trim()
+  let analysis = String(input.analysis ?? '').trim()
+  let options = Array.isArray(input.options)
+    ? ['A', 'B', 'C', 'D'].map((_, i) => stripOptionLetter(String(input.options[i] ?? '')))
+    : ['', '', '', '']
+  let answer = normalizeAnswer(String(input.answer ?? ''))
+
+  // ① 题干去行首题号
+  stem = stripQuestionNumber(stem)
+
+  // ② 选项缺失/不完整时，从题干里的 "A.xx B.xx C.xx D.xx" 抽取
+  let inlineAnswer = ''
+  if (options.filter(Boolean).length < 2) {
+    const marks = Array.from(stem.matchAll(INLINE_OPTION_RE))
+    const letters = marks.map((m) => toAscii(m[1]))
+    if (marks.length >= 2 && letters.includes('A') && letters.includes('B')) {
+      const extracted = ['', '', '', '']
+      for (let i = 0; i < marks.length; i += 1) {
+        const idx = letters[i].charCodeAt(0) - 65
+        if (idx < 0 || idx > 3) continue
+        const start = (marks[i].index ?? 0) + marks[i][0].length
+        const end = i + 1 < marks.length ? (marks[i + 1].index ?? stem.length) : stem.length
+        const segment = stem.slice(start, end).trim()
+        const found = segment.match(ANSWER_RE)
+        if (found?.[1]) inlineAnswer = toAscii(found[1])
+        extracted[idx] = stripOptionLetter(segment.replace(ANSWER_RE, '').trim())
+      }
+      // 保留紧邻首个选项前面的标点（如「准确的是：A.」中的冒号属于题干）
+      const firstLead = marks[0][0].match(/^[\s\n，,；;。：:]/)?.[0] ?? ''
+      stem = (stem.slice(0, marks[0].index ?? 0) + firstLead).trim()
+      options = extracted
+    }
+  }
+
+  // ③ 答案回填：显式答案 → 行内抽取 → 题干/解析里的「答案：X」
+  if (!answer && inlineAnswer) answer = normalizeAnswer(inlineAnswer)
+  if (!answer) {
+    for (const source of [stem, analysis]) {
+      const found = source.match(ANSWER_RE)
+      if (found) { answer = normalizeAnswer(found[1]); break }
+    }
+  }
+  // 去掉题干/解析里残留的答案标注
+  stem = stem.replace(ANSWER_RE, '').trim()
+  analysis = analysis.replace(ANSWER_RE, '').trim()
+
+  return { ...input, stem, options, answer, analysis }
+}

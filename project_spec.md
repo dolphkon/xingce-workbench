@@ -188,8 +188,9 @@ xingce-workbench/
 ├── tsconfig.json
 ├── vite.config.ts
 ├── scripts/
-│   ├── test-refine.mjs               # 拆题后处理回归测试（4 项）
-│   └── test-exam-clean.mjs           # 【新增】试卷版式噪音清洗回归测试（5 项，随 test:refine 一起跑）
+│   ├── test-refine.mjs               # 题库拆题后处理回归测试（4 项）
+│   ├── test-exam-clean.mjs           # 试卷版式噪音清洗回归测试（5 项）
+│   └── test-question-clean.mjs       # 【新增】通用拆题规范化回归测试（4 项，随 test:refine 一起跑）
 ├── dist/                             # 构建产物（部署用，生成即可）
 ├── flowus-editor/                    # 【可忽略】早期独立原型子项目，主站不引用
 └── src/                              # 主源码（58 个文件）
@@ -217,7 +218,7 @@ src/
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
 │   └── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
 │
-├── lib/                              # 核心库（25）
+├── lib/                              # 核心库（26）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
 │   ├── sync.ts                       # WorkBuddy 云双向同步 + 微信 OAuth
 │   ├── syncHook.ts                   # 写入钩子（addSyncHook/pauseSync/notifySync）
@@ -238,7 +239,8 @@ src/
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
-│   ├── examClean.ts                  # 【新增】试卷版式噪音清洗：cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
+│   ├── examClean.ts                  # 试卷版式噪音清洗：cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
+│   ├── questionClean.ts              # 【新增】通用拆题规范化：refineAtomicQuestion 去题号/选项字母前缀、行内选项抽取、答案回填
 │   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
@@ -714,6 +716,7 @@ font-family: -apple-system, "PingFang SC", ...
 - `formatStem`：规整排版（(一)(二)小标题换行、合并 PDF 拆碎短行、去题号切片残留的行首孤立标点）。
 - `inspectQuestion` → `QuestionConfidence {missingAnswer, incompleteOptions, tooLongStem, boilerplateSuspected, needsReview}`（题干 >280 字且选项不全/无答案→疑似多题粘连；含水印/密封线/注意事项等关键词→噪音残留，校对页优先提示）。
 - `mergeResults(llm, rules)`：LLM 缺选项/答案时用规则补齐，并对题干做 `stripResidualBoilerplate` 兜底清洗。
+- **通用拆题规范化（lib/questionClean.ts）**：`refineAtomicQuestion` 对 LLM/规则两条路径统一处理——去题干行首题号（`1.`/`第2题`）、去选项字母前缀（`A)`/`（C）`）、选项缺失时从题干行内 `A.xx B.xx` 抽取（保留设问末尾冒号）、答案从显式/行内/解析回填并清除残留标注。`normalizeQuestion`（llm.ts）与 `ruleParseBlock`（paperParser.ts）均调用。
 - `parseDocumentToQuestions(fileData, fileName, fileType, onProgress, options)` 为主入口。
 
 ### 11.3 大模型拆题（lib/llm.ts，⚠️ 见当前状态）
@@ -764,7 +767,7 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts → 9 项回归用例（4 后处理 + 5 噪音清洗）
+npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts → 13 项回归用例（4 题库后处理 + 5 噪音清洗 + 4 通用拆题规范化）
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -953,10 +956,17 @@ PORT=4179 npm run dev
 - **安全兜底**：清洗后正文 <20 字时保留原文，避免误删正常题目；`formatStem` 去题号切片残留的行首孤立标点。
 - **验证**：`typecheck` / `test:refine`（9/9：4 后处理 + 5 噪音清洗）/ `build` 全过；浏览器 E2E 验证封面噪音清除且两道题保留；完整 docx 解析实测 2 题正确切分、噪音 0 残留、答案/选项完整；无 JS 报错。
 
+### 16.2.7 通用拆题规范化：去题号/选项前缀（2026-11-27）
+
+- **问题**：用户确认已调用大模型（拆解方式显示"大模型智能拆题"），但题干仍带 `1.` `2.` 题号、选项带 `A)` `B)` 字母前缀——通用拆题链路（在线刷题）的 `normalizeQuestion` 忠实保留 OCR 原文，不像题库链路经过 `questionRefine` 后处理。
+- **实现**：新增 `lib/questionClean.ts` 的 `refineAtomicQuestion`，统一去题干行首题号、去选项字母前缀（含全角）、选项缺失时从题干行内 `A.xx B.xx` 抽取（保留设问末尾冒号）、答案从显式/行内/解析回填并清除残留标注；接入 `llm.ts` 的 `normalizeQuestion` 与 `paperParser.ts` 的 `ruleParseBlock` 两条路径。
+- **验证**：`typecheck` / `test:refine`（13/13：4 题库后处理 + 5 噪音清洗 + 4 通用拆题规范化）/ `build` 全过；用截图原文实测——题干 `1.` `2.` 去除、选项 `A)` 前缀去除、第2题答案从解析回填为 A；无 JS 报错。
+
 ### 16.3 最近提交历史
 
 ```
-de9f974 feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱  ← HEAD
+<PENDING_NORMALIZE_COMMIT> feat: 通用拆题规范化——去题号/选项字母前缀、行内选项抽取、答案回填  ← HEAD
+de9f974 feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱
 6227993 feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）
 b0d1a8d feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）
 2574832 feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐

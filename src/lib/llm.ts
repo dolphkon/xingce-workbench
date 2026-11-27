@@ -10,6 +10,7 @@
 import type { PublicLLMModel } from '@tencent-ai/workbuddy-cloud-sdk'
 import { getCloudForLlm } from './cloud'
 import { refineBankQuestion } from './questionRefine'
+import { refineAtomicQuestion } from './questionClean'
 
 export interface LlmQuestion {
   no?: number
@@ -423,12 +424,13 @@ function normalizeQuestion(item: unknown): LlmQuestion {
     }
   }
 
-  return {
+  // 统一后处理：去题号/选项字母前缀、行内选项抽取、答案回填
+  return refineAtomicQuestion({
     no,
     stem,
     options,
     answer: String(obj.answer ?? obj.ans ?? '').replace(/[^A-Da-d]/g, '').toUpperCase(),
     analysis: String(obj.analysis ?? obj.explanation ?? obj.parse ?? '').trim(),
     type: String(obj.type ?? obj.module ?? obj.category ?? '').trim() || '其他',
-  }
+  })
 }

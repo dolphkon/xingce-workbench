@@ -13,6 +13,7 @@ import { recognizeImage } from './ocr'
 import { parseQuestionText } from './ocr'
 import { probeLlm, structureQuestions, type LlmBlockReason, type LlmQuestion } from './llm'
 import { cleanExamText, sanitizeSharedMaterial, stripResidualBoilerplate } from './examClean'
+import { refineAtomicQuestion } from './questionClean'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -245,12 +246,14 @@ function ruleParseBlock(block: TextBlock, answerKey: Map<number, string>): QuizQ
   let answer = parsed.answer
   if (!answer) answer = answerKey.get(block.no) ?? ''
   if (!parsed.stem || parsed.stem.length < 4) return null
-  const stem = material ? `【共用材料】${material}\n\n【题目】${parsed.stem}` : parsed.stem
+  // 统一后处理：去题号/选项字母前缀（规则结果同样带 "1." "A." 前缀）
+  const refined = refineAtomicQuestion({ stem: parsed.stem, options: parsed.options, answer, analysis: '', type: '其他' })
+  const stem = material ? `【共用材料】${material}\n\n【题目】${refined.stem}` : refined.stem
   return {
     id: uid(),
     title: formatStem(stem),
-    options: parsed.options,
-    answer,
+    options: refined.options,
+    answer: refined.answer,
     analysis: '',
     type: '其他',
   }
