@@ -8,6 +8,7 @@ import { Icon } from '../../components/ui'
 import { renderMarkdown } from '../../lib/markdown'
 import { formatBytes } from '../../lib/docFile'
 import { parsePptxDeck, type PptxDeck, type PptxPara, type PptxRun, type PptxShape } from '../../lib/pptxSlide'
+import DocSketch from './DocSketch'
 
 type PreviewKind = 'pdf' | 'image' | 'text' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'unknown'
 
@@ -483,18 +484,22 @@ export interface FileReaderProps {
   onFullscreen?: () => void
   fullscreenLabel?: string
   className?: string
+  /** 文档 ID：传入后 PDF/Word 支持手写批注，笔迹按此 ID 独立保存 */
+  sketchKey?: string
 }
 
 /** 文档式文件阅读器：工作区内嵌与独立弹层共用同一套版面与解析逻辑。 */
 export function FileReader({
   fileData, fileName, fileType = '', variant = 'overlay',
-  onClose, onFullscreen, fullscreenLabel = '全屏阅读', className = '',
+  onClose, onFullscreen, fullscreenLabel = '全屏阅读', className = '', sketchKey,
 }: FileReaderProps) {
   const kind = useMemo(() => detectKind(fileName, fileType), [fileName, fileType])
   const { content, native, loading, error } = useParsedFile(fileData, kind)
   const [zoom, setZoom] = useState(1)
+  const [sketching, setSketching] = useState(false)
+  const canSketch = Boolean(sketchKey) && (kind === 'pdf' || kind === 'docx')
 
-  useEffect(() => { setZoom(1) }, [fileData, fileName])
+  useEffect(() => { setZoom(1); setSketching(false) }, [fileData, fileName])
 
   useEffect(() => {
     if (variant !== 'overlay') return
@@ -520,6 +525,15 @@ export function FileReader({
           <button className="fr-tool fr-zoom-value" onClick={() => setZoom(1)} title="恢复 100%">{Math.round(zoom * 100)}%</button>
           <button className="fr-tool" onClick={() => changeZoom(0.1)} title="放大">+</button>
         </div>
+        {canSketch && (
+          <button
+            className={`fr-tool fr-tool-text${sketching ? ' active' : ''}`}
+            onClick={() => setSketching((value) => !value)}
+            title={sketching ? '退出手写' : '在原文档上手写'}
+          >
+            <Icon name="edit" size={15} /> {sketching ? '退出手写' : '手写'}
+          </button>
+        )}
         {onFullscreen && (
           <button className="fr-tool fr-tool-text" onClick={onFullscreen} title={fullscreenLabel}>
             <Icon name="expand" size={15} /> {fullscreenLabel}
@@ -540,7 +554,7 @@ export function FileReader({
       {loading && <div className="fr-loading">正在解析文档…</div>}
       {error && <div className="fr-error">解析失败：{error}</div>}
       {!loading && !error && (
-        <div className={`fr-paper${native ? ' fr-paper-office' : ''}`} style={{ '--fr-zoom': zoom } as CSSProperties}>
+        <div className={`fr-paper${native ? ' fr-paper-office' : ''}${sketching ? ' fr-paper-sketching' : ''}`} style={{ '--fr-zoom': zoom } as CSSProperties}>
           {kind === 'pdf' ? (
             <iframe src={`${fileData}#toolbar=0&navpanes=0&view=FitH`} title={title} className="fr-frame" />
           ) : kind === 'image' ? (
@@ -548,6 +562,9 @@ export function FileReader({
           ) : native ? (
             <OfficeRenderer request={native} />
           ) : content}
+          {canSketch && sketchKey && (
+            <DocSketch sketchKey={sketchKey} active={sketching} onExit={() => setSketching(false)} />
+          )}
         </div>
       )}
     </div>

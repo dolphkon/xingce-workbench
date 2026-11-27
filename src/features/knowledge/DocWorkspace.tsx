@@ -272,6 +272,7 @@ export default function DocWorkspace({
               fileData={doc.fileData ?? ''}
               fileName={doc.fileName || doc.title || '文件'}
               fileType={doc.fileType}
+              sketchKey={doc.id}
               onFullscreen={() => setImmersive(true)}
             />
           </div>
@@ -335,6 +336,7 @@ export default function DocWorkspace({
                   fileData={doc.fileData ?? ''}
                   fileName={doc.fileName || doc.title || '文件'}
                   fileType={doc.fileType}
+                  sketchKey={doc.id}
                   onFullscreen={closeImmersive}
                   fullscreenLabel="退出全屏"
                 />

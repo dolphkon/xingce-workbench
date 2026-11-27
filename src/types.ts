@@ -138,6 +138,68 @@ export interface Mistake {
   reviewStatus?: ReviewStatus
 }
 
+/* ---------- 在线刷题（文档转试卷） ---------- */
+
+/** 由文档解析出的通用题目：可在在线试卷中作答，答错时并入错题库 */
+export interface QuizQuestion {
+  id: string
+  /** 题干（已格式化文本） */
+  title: string
+  /** 选项文本，A-D；空数组表示非选择题 */
+  options: string[]
+  /** 正确答案，如 'A' / 'AB' / 文本 */
+  answer: string
+  /** 解析 */
+  analysis: string
+  /** 模块 / 题型名称 */
+  type: string
+  subType?: string
+  point?: string
+  images?: string[]
+}
+
+/** 一份由文档解析生成的在线试卷；上传一次可无限次刷题 */
+export interface Paper {
+  id: string
+  title: string
+  fileName: string
+  fileType: string
+  /** 保留原文档 DataURL，便于回看与重新解析 */
+  fileData?: string
+  questions: QuizQuestion[]
+  /** 识别方式说明，如「PDF 文本层 + 规则切题」 */
+  parseMethod: string
+  questionCount: number
+  /** 若来自知识库文档，记录来源文档 ID */
+  sourceDocId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 一次在线刷题的历史记录 */
+export interface PracticeRecord {
+  id: string
+  paperId: string
+  paperTitle: string
+  startedAt: number
+  finishedAt: number
+  /** 用时（秒） */
+  elapsed: number
+  total: number
+  correct: number
+  wrong: number
+  skipped: number
+  details: Array<{
+    questionId: string
+    title: string
+    chosen: string
+    answer: string
+    correct: boolean
+  }>
+  createdAt: number
+  updatedAt: number
+}
+
 /* ---------- FlowUs 式块文档 ---------- */
 export type BlockType =
   | 'text' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'quote'
@@ -304,4 +366,6 @@ export interface BackupData {
   plans?: StudyPlan[]
   categories?: QuestionCategory[]
   folders?: KnowledgeFolder[]
+  papers?: Paper[]
+  practiceRecords?: PracticeRecord[]
 }

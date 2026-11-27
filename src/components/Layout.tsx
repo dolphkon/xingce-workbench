@@ -11,6 +11,7 @@ const navItems = [
   { to: '/', label: '总览', icon: 'home', end: true },
   { to: '/mistakes', label: '错题库', icon: 'target', end: false },
   { to: '/knowledge', label: '知识库', icon: 'book', end: false },
+  { to: '/online-practice', label: '在线刷题', icon: 'play', end: false },
   { to: '/mothers', label: '母题库', icon: 'layers', end: false },
   { to: '/plans', label: '学习计划', icon: 'calendar', end: false },
 ]

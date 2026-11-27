@@ -1,6 +1,9 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import { notifySync } from './syncHook'
-import type { BackupData, KnowledgeDoc, KnowledgeFolder, Mistake, MotherQuestion, QuestionCategory, StudyPlan } from '../types'
+import type {
+  BackupData, KnowledgeDoc, KnowledgeFolder, Mistake, MotherQuestion, Paper,
+  PracticeRecord, QuestionCategory, StudyPlan,
+} from '../types'
 
 interface WorkbenchDB extends DBSchema {
   mistakes: {
@@ -33,9 +36,19 @@ interface WorkbenchDB extends DBSchema {
     value: KnowledgeFolder
     indexes: { 'by-updated': number }
   }
+  papers: {
+    key: string
+    value: Paper
+    indexes: { 'by-updated': number }
+  }
+  practiceRecords: {
+    key: string
+    value: PracticeRecord
+    indexes: { 'by-updated': number; 'by-paper': string }
+  }
 }
 
-export type StoreName = 'mistakes' | 'docs' | 'mothers' | 'plans' | 'categories' | 'folders'
+export type StoreName = 'mistakes' | 'docs' | 'mothers' | 'plans' | 'categories' | 'folders' | 'papers' | 'practiceRecords'
 
 export type EntityMap = {
   mistakes: Mistake
@@ -44,10 +57,12 @@ export type EntityMap = {
   plans: StudyPlan
   categories: QuestionCategory
   folders: KnowledgeFolder
+  papers: Paper
+  practiceRecords: PracticeRecord
 }
 
 const DB_NAME = 'xingce-workbench'
-const DB_VERSION = 4
+const DB_VERSION = 5
 const CACHE_PREFIX = 'xingce-cache-v1-'
 const DELETED_PREFIX = 'xingce-deleted-v1-'
 /** 后台数据库读取的最长等待时间；页面渲染不再依赖它 */
@@ -85,6 +100,13 @@ function getDB(): Promise<IDBPDatabase<WorkbenchDB>> {
         if (oldVersion < 4) {
           const folders = db.createObjectStore('folders', { keyPath: 'id' })
           folders.createIndex('by-updated', 'updatedAt')
+        }
+        if (oldVersion < 5) {
+          const papers = db.createObjectStore('papers', { keyPath: 'id' })
+          papers.createIndex('by-updated', 'updatedAt')
+          const records = db.createObjectStore('practiceRecords', { keyPath: 'id' })
+          records.createIndex('by-updated', 'updatedAt')
+          records.createIndex('by-paper', 'paperId')
         }
       },
     }).catch((err) => {
@@ -167,7 +189,7 @@ function persistDeleted(store: StoreName, ids: Iterable<string>): void {
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (!event.key) return
-    const match = /^xingce-(?:cache|deleted)-v1-(mistakes|docs|mothers|plans|categories|folders)$/.exec(event.key)
+    const match = /^xingce-(?:cache|deleted)-v1-(mistakes|docs|mothers|plans|categories|folders|papers|practiceRecords)$/.exec(event.key)
     if (match) cacheMap.delete(match[1] as StoreName)
   })
 }
@@ -268,15 +290,17 @@ export async function count(store: StoreName): Promise<number> {
 }
 
 export async function exportAll(): Promise<BackupData> {
-  const [mistakes, docs, mothers, plans, categories, folders] = await Promise.all([
+  const [mistakes, docs, mothers, plans, categories, folders, papers, practiceRecords] = await Promise.all([
     listAll('mistakes'),
     listAll('docs'),
     listAll('mothers'),
     listAll('plans'),
     listAll('categories'),
     listAll('folders'),
+    listAll('papers'),
+    listAll('practiceRecords'),
   ])
-  return { version: 2, exportedAt: Date.now(), mistakes, docs, mothers, plans, categories, folders }
+  return { version: 3, exportedAt: Date.now(), mistakes, docs, mothers, plans, categories, folders, papers, practiceRecords }
 }
 
 export async function importAll(data: BackupData): Promise<void> {
@@ -286,6 +310,8 @@ export async function importAll(data: BackupData): Promise<void> {
   const plans = Array.isArray(data.plans) ? data.plans : []
   const categories = Array.isArray(data.categories) ? data.categories : []
   const folders = Array.isArray(data.folders) ? data.folders : []
+  const papers = Array.isArray(data.papers) ? data.papers : []
+  const practiceRecords = Array.isArray(data.practiceRecords) ? data.practiceRecords : []
   await Promise.all([
     ...data.mistakes.map((item) => put('mistakes', item)),
     ...data.docs.map((item) => put('docs', item)),
@@ -293,11 +319,13 @@ export async function importAll(data: BackupData): Promise<void> {
     ...plans.map((item) => put('plans', item)),
     ...categories.map((item) => put('categories', item)),
     ...folders.map((item) => put('folders', item)),
+    ...papers.map((item) => put('papers', item)),
+    ...practiceRecords.map((item) => put('practiceRecords', item)),
   ])
 }
 
 export async function clearAll(): Promise<void> {
-  const stores: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans', 'categories', 'folders']
+  const stores: StoreName[] = ['mistakes', 'docs', 'mothers', 'plans', 'categories', 'folders', 'papers', 'practiceRecords']
   stores.forEach((store) => {
     const ids = stateOf(store).items.map((item) => item.id)
     persistCache(store, [])
