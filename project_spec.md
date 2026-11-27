@@ -187,6 +187,8 @@ xingce-workbench/
 ├── package.json / package-lock.json
 ├── tsconfig.json
 ├── vite.config.ts
+├── scripts/
+│   └── test-refine.mjs               # 【新增】拆题后处理回归测试（npm run test:refine）
 ├── dist/                             # 构建产物（部署用，生成即可）
 ├── flowus-editor/                    # 【可忽略】早期独立原型子项目，主站不引用
 └── src/                              # 主源码（58 个文件）
@@ -229,7 +231,8 @@ src/
 │   ├── pdfText.ts                    # pdfjs-dist 文本层抽取 + 逐页渲染
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（392 行）
-│   ├── bankParser.ts                 # 【新增】题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
+│   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
+│   ├── questionRefine.ts             # 【新增】拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
 │   ├── markdown.ts                   # marked + DOMPurify 渲染
@@ -597,9 +600,11 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 - **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR）→ `parseImagesToBank` → 实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
 - **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料、题干、4 选项、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
 - **bankParser.ts**：`parseImagesToBank(images, onProgress, signal)` —— 逐张 `recognizeImage` 提文本 → 优先 `structureQuestionsForBank`（LLM 输出 category/module/material/stem/options/answer/analysis）→ 能力不可用时 `ruleParse`（题号切分 + `parseQuestionText` + 关键词猜模块）兜底。每题 `uid()` 唯一 ID。
-- **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。
+- **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。题库拆题去重键为 `material(80)+stem+options(100)`，因矫正后 `stem` 只剩设问句，单独用 stem 去重会误删多道同设问题。
+- **questionRefine.ts**：拆题结果确定性后处理（LLM 与规则兜底均调用）——① 从单行 `A.… B.… C.… D.…` 抽出 4 个独立选项并保留行内「答案：X」；② 将「文段 + 设问」拆成 `material`/`stem`（识别「对上述文段…」「根据上述材料…」「填入画横线…」等设问句型）；③ 答案字母去重/过滤非法字母、回填并清除残留标注；④ 答案 >1 字母自动改「多选题」；⑤ 模块填「常识」但内容有明确关键词时按内容纠正（片段阅读→言语理解、数据段落→资料分析等）。纯函数无副作用。
+- **BANK_SYSTEM_PROMPT 人工矫正锚点**：把用户人工校正后的「免密支付」言语理解题完整写入提示词作为 few-shot 示例，明确 material/stem 边界、4 条独立选项、答案只按原文回填不臆测。
 - **推送到错题**：`pushToMistake` 跳 `/mistakes?fromBank=<id>`；MistakesPage 的 `useEffect` 读参数 → `readCachedById('bank', id)` → 构造 Mistake（material+stem 合并为题干、module→type、options/answer/analysis/images/source 带入，新 `uid()`）→ 打开预填 MistakeForm → 用 `replace` 移除 URL 参数防重复。
-- E2E 验证：导航/入库/JSON 字段（id/category/module/material/stem/options/answer/images 全在）/推送预填（答案 AB、选项、来源正确带入）/LLM 拆题（单选 C、多选 AD 正确判定）/手机端无溢出，均无报错。
+- E2E 验证：导航/入库/JSON 字段（id/category/module/material/stem/options/answer/images 全在）/推送预填（答案 AB、选项、来源正确带入）/LLM 拆题（单选 C、多选 AD 正确判定）/手机端无溢出，均无报错。矫正后处理有 4 项回归测试（`npm run test:refine`，见 14）。
 
 ### 9.3 错题库与专项刷题（mistakes/）
 
@@ -735,7 +740,15 @@ font-family: -apple-system, "PingFang SC", ...
 
 ## 14. 测试方式
 
-项目**未提交任何测试文件**（无 test 脚本、无测试框架依赖）。开发期使用 `playwright-core` + 系统 Chrome 无头浏览器做 E2E：
+仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
+
+```bash
+npm run test:refine   # esbuild 打包 questionRefine.ts → node scripts/test-refine.mjs
+```
+
+覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
+
+其余开发期验证使用 `playwright-core` + 系统 Chrome 无头浏览器做 E2E：
 
 ```bash
 npm install --no-save playwright-core@1.49.0
@@ -821,10 +834,23 @@ PORT=4179 npm run dev
   - 批次大小 8000 字符。
 - 验证：4 题真实样卷全部正确拆出（答案 D/A/A/C），进度单调 0→0.99；12 题样卷正确拆出、无页面错误。
 
+#### 题库拆题准确度优化：以人工矫正题为准（2026-11-27 后续修复）
+
+用户给出题库后台「免密支付」言语理解题的人工矫正结果（类别单选题、模块言语理解、材料=文段原文、题干=「对上述文段主旨概括准确的是：」、4 条独立选项、答案 B），要求据此优化拆题流程。
+
+- **问题定位**：原流程模型常把整段文段塞进 `stem`、设问句丢失；OCR 把四选项挤在同一行时被当成一条；答案标注随选项被切掉；模块误填默认「常识」；去重只看 `stem` 导致同设问题互删。
+- **修复**：
+  - `src/lib/questionRefine.ts`（新增）：纯函数后处理，按上述四项规则修复；LLM 输出（`normalizeBankQuestion`）与规则兜底（`ruleParse`/`toBankQuestions`）统一经过。
+  - `src/lib/llm.ts`：`BANK_SYSTEM_PROMPT` 加入该题完整人工矫正 JSON 作为 few-shot，并明确 material/stem 边界与「不凭内容猜答案」；题库去重键改为材料+题干+选项指纹。
+  - `scripts/test-refine.mjs` + `package.json` 的 `test:refine`：4 项回归测试全部通过。
+- **验证**：`npm run test:refine` 4/4 通过；`npm run typecheck`、`npm run build` 通过；1440×900 Chrome 冒烟测试题库页无 pageerror。
+
 ### 16.3 最近提交历史
 
 ```
-5b46723 feat: 新增题库后台管理（顶部）——图片识别按JSON结构化入库并推送错题编辑页  ← HEAD
+（提交号将在发布后补充）
+
+5b46723 feat: 新增题库后台管理（顶部）——图片识别按JSON结构化入库并推送错题编辑页
 5cffc58 perf: 优化大模型拆题速度与进度反馈，修复卡在76%无响应
 c990164 feat: 接入大模型智能拆题——重建应用开通 AI 能力并切换到新域名
 650d4db fix: 智能拆题跨域失败提示改为友好中文指引
@@ -864,7 +890,7 @@ d1c3c90 feat: 优化同步配色并将主题字号设置移入设置面板
 
 ### P1 — 可选增强（用户此前未明确要求，供参考）
 - 离线兜底：Prism 高亮本地化，去除 CDN 依赖。
-- 测试建设：将临时 E2E 脚本固化为仓库内测试套件（Playwright + config）。
+- 测试建设：拆题后处理回归测试已固化（`npm run test:refine`）；Playwright E2E 仍为临时脚本，未固化。
 - 同步冲突可视化：mergeStores 冲突时给用户更明确的提示界面。
 
 ### P2 — 持续约定

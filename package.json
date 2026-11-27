@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:refine": "esbuild src/lib/questionRefine.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/qr.mjs --log-level=error && node scripts/test-refine.mjs"
   },
   "dependencies": {
     "@tencent-ai/workbuddy-cloud-sdk": "^0.1.4-dev.71e5d1e.202611161655",

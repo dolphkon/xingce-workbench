@@ -9,6 +9,7 @@ import { BANK_MODULES, type BankCategory, type BankQuestion } from '../types'
 import { recognizeImage } from './ocr'
 import { formatQuestionText, uid } from './utils'
 import { probeLlm, structureQuestionsForBank, type LlmBankQuestion, type LlmProgress } from './llm'
+import { refineBankQuestion, refineBankQuestions } from './questionRefine'
 
 export interface BankParseProgress {
   percent: number
@@ -78,7 +79,7 @@ function ruleParse(text: string, images: string[]): BankQuestion[] {
     const stem = formatQuestionText(stemLines.join('\n'))
     if (!stem && !options.some(Boolean)) continue
     const category: BankCategory = answer.length > 1 ? '多选题' : '单选题'
-    out.push({
+    out.push(refineBankQuestion({
       id: uid(),
       category,
       module: guessModule(stem),
@@ -90,7 +91,7 @@ function ruleParse(text: string, images: string[]): BankQuestion[] {
       images,
       createdAt: now,
       updatedAt: now,
-    })
+    }))
   }
   return out
 }
@@ -98,7 +99,7 @@ function ruleParse(text: string, images: string[]): BankQuestion[] {
 /** 把大模型结构化结果转为题库题目（每题唯一 ID） */
 function toBankQuestions(items: LlmBankQuestion[], images: string[]): BankQuestion[] {
   const now = Date.now()
-  return items
+  return refineBankQuestions(items)
     .filter((q) => q.stem || q.options.some(Boolean))
     .map((q) => ({
       id: uid(),

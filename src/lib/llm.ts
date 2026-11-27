@@ -9,6 +9,7 @@
  */
 import type { PublicLLMModel } from '@tencent-ai/workbuddy-cloud-sdk'
 import { getCloudForLlm } from './cloud'
+import { refineBankQuestion } from './questionRefine'
 
 export interface LlmQuestion {
   no?: number
@@ -211,16 +212,19 @@ const BANK_SYSTEM_PROMPT = `你是公务员考试题库录入助手。用户会�
 1. 只输出 JSON，不要输出任何解释文字或 Markdown 代码块标记。
 2. JSON 顶层结构为 {"questions":[{...}]}。
 3. 每道题**必须**用这些字段名（切勿用别名）：category、module、material、stem、options、answer、analysis。
-   - category：只能是"单选题"或"多选题"（多选题答案含两个及以上字母）。
+   - category：只能是"单选题"或"多选题"（答案含两个及以上字母即为多选题）。
    - module：只能是这六个之一——"政治理论""常识""言语理解""数量关系""判断推理""资料分析"，不确定填"常识"。
-   - material：材料题的共用材料原文（如资料分析的数据段落、言语理解的文段），没有则空字符串。
-   - stem：题干文本（不含材料、不含选项）。
-   - options：长度恰好为4的字符串数组，依次对应A/B/C/D，只填选项正文不带"A."前缀；没有的选项为空字符串。
-   - answer：正确答案字母，如"A"、"AB"；找不到则空字符串。
+   - material：设问句之前的背景材料原文。言语理解「片段阅读」题中，"对上述文段主旨概括准确的是："之前的整段文段必须放 material；资料分析的数据段落、判断推理的题干背景同理。没有材料才填空字符串。
+   - stem：**只填设问句本身**（例如"对上述文段主旨概括准确的是："），绝不能把 material 的内容重复写进 stem。
+   - options：长度恰好为4的字符串数组，依次对应 A/B/C/D，只填选项正文不带"A."前缀。OCR 常把四个选项挤在同一行（如"A.xx B.xx C.xx D.xx"），必须拆成4条，不能合并成一条。
+   - answer：只根据原文标注（如"答案：B"或末尾答案表）回填，不要凭选项内容自行推断；找不到就填空字符串。
    - analysis：解析文本，没有则空字符串。
-4. 完整保留原文，不要臆造；无法确定的字段留空字符串。
+4. 完整保留原文，不要臆造、不要概括或缩写；无法确定的字段留空字符串。
 5. 题号可能挤在句中，请按题号正确切分；末尾答案表请回填到对应题目。
-6. 若文字不是试题，questions 返回空数组。`
+6. 若文字不是试题，questions 返回空数组。
+7. 以下是已人工校正的标准示例，务必严格照此结构输出（注意 material/stem 的边界和4个独立选项）：
+输入：免密支付本质是技术进步对消费体验的重塑，但其健康发展必须建立在尊重消费者权利的基础之上。从多次跳转到“一键取消”，从信息隐蔽到公开透明，这不仅关乎每一位消费者的切身利益，更关系到市场健康与消费信心的可持续。只有构建起“事前告知—事中控制—事后补救”的全链条保障机制，才能使免密支付真正成为便利生活的工具，而非侵害权益的陷阱。对上述文段主旨概括准确的是：A.免密技术的主要风险是消费者信息不透明 B.免密技术健康发展需要兼顾技术进步与用户权益 C.一键取消功能是保障免密支付安全的核心 D.健全的全链条保障机制决定了免密支付的成败 答案：B
+输出：{"questions":[{"category":"单选题","module":"言语理解","material":"免密支付本质是技术进步对消费体验的重塑，但其健康发展必须建立在尊重消费者权利的基础之上。从多次跳转到“一键取消”，从信息隐蔽到公开透明，这不仅关乎每一位消费者的切身利益，更关系到市场健康与消费信心的可持续。只有构建起“事前告知—事中控制—事后补救”的全链条保障机制，才能使免密支付真正成为便利生活的工具，而非侵害权益的陷阱。","stem":"对上述文段主旨概括准确的是：","options":["免密技术的主要风险是消费者信息不透明","免密技术健康发展需要兼顾技术进步与用户权益","一键取消功能是保障免密支付安全的核心","健全的全链条保障机制决定了免密支付的成败"],"answer":"B","analysis":""}]}`
 
 function normalizeBankQuestion(item: unknown): LlmBankQuestion {
   const obj = (item ?? {}) as Record<string, unknown>
@@ -244,7 +248,8 @@ function normalizeBankQuestion(item: unknown): LlmBankQuestion {
   const category: '单选题' | '多选题' = rawCategory.includes('多') || answer.length > 1 ? '多选题' : '单选题'
   const rawModule = String(obj.module ?? obj.type ?? '').trim()
   const MODULES = ['政治理论', '常识', '言语理解', '数量关系', '判断推理', '资料分析']
-  return {
+  // 模型输出统一经过确定性后处理：拆分文段/设问、切分单行选项、回填答案
+  return refineBankQuestion({
     category,
     module: MODULES.includes(rawModule) ? rawModule : '常识',
     material: String(obj.material ?? '').trim(),
@@ -252,7 +257,7 @@ function normalizeBankQuestion(item: unknown): LlmBankQuestion {
     options: ['A', 'B', 'C', 'D'].map((L) => byLetter[L] ?? ''),
     answer,
     analysis: String(obj.analysis ?? obj.explanation ?? '').trim(),
-  }
+  })
 }
 
 /** 通用拆题流程：探测→分批并行→去重。normalize 与 systemPrompt 由具体场景提供。 */
@@ -361,7 +366,9 @@ export async function structureQuestionsForBank(
 ): Promise<LlmBankQuestion[]> {
   return runStructure<LlmBankQuestion>(
     text, BANK_SYSTEM_PROMPT, normalizeBankQuestion,
-    (item) => item.stem,
+    // 矫正后 stem 只剩设问句（如「下列说法正确的是：」），不能单独作为去重键，
+    // 否则多道同设问题会被误删；用材料 + 选项一起构成指纹。
+    (item) => `${item.material.slice(0, 80)}|${item.stem}|${item.options.join('|').slice(0, 100)}`,
     signal, onProgress,
   )
 }
