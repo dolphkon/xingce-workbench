@@ -1,4 +1,4 @@
-import { formatQuestionText, questionCategory } from '../lib/utils'
+import { formatQuestionText, questionCategory, stripImagePlaceholder } from '../lib/utils'
 
 interface Props {
   /** 题干文本 */
@@ -19,7 +19,7 @@ export default function QuestionStem({ text, answer, category, className = '' }:
   return (
     <div className={`question-text ${className}`.trim()}>
       <span className={`stem-category${label === '多选题' ? ' stem-category-multi' : ''}`}>{label}</span>
-      <span className="stem-category-text">{formatQuestionText(text)}</span>
+      <span className="stem-category-text">{formatQuestionText(stripImagePlaceholder(text))}</span>
     </div>
   )
 }

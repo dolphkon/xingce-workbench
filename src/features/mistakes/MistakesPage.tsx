@@ -6,7 +6,7 @@ import { readCategories } from '../../lib/categories'
 import { extractImagesAtDisplaySize, richTextToPlain } from '../../lib/richText'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
-import { dateKey, formatQuestionText, pluralDays, uid } from '../../lib/utils'
+import { dateKey, formatQuestionText, pluralDays, stripImagePlaceholder, uid } from '../../lib/utils'
 import { reviewStatusChip, reviewStatusLabel, reviewStatusOf, type BankQuestion, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
@@ -26,7 +26,8 @@ export default function MistakesPage() {
       void extractImagesAtDisplaySize(q.materialHtml || '').then((materialImages) => {
         setBankInitial({
           id: uid(),
-          title: [richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n'),
+          // 图片已单独提取到 images，去掉富文本转纯文本遗留的「[图]」占位符
+          title: stripImagePlaceholder([richTextToPlain(q.materialHtml || q.material), q.stem].filter(Boolean).join('\n')),
           type: q.module,
           options: q.options,
           answer: q.answer,

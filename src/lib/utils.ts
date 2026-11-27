@@ -68,6 +68,21 @@ export function pluralDays(ts: number): string {
 }
 
 /**
+ * 清除富文本转纯文本时遗留的「[图]」占位符。
+ * 题目图片由 images 字段单独展示，题干里不应再出现占位文字。
+ * 同时收敛因删除占位符产生的多余空格与空行。
+ */
+export function stripImagePlaceholder(text: string): string {
+  return (text ?? '')
+    .replace(/\[图\]/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '')
+    .trim()
+}
+
+/**
  * 依据答案字母推断题目类别：单个字母为单选题，多个不同字母为多选题。
  * 答案为文本（填空/简答）或无字母时归为单选题。
  */
