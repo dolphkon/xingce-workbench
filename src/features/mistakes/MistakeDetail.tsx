@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
 import QuestionImages from '../../components/QuestionImages'
+import QuestionStem from '../../components/QuestionStem'
 import { getById, put, readCachedById, remove } from '../../lib/db'
 import { relatedMothers } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
@@ -173,7 +174,7 @@ export default function MistakeDetail() {
           </div>
         </div>
         <div className="card-body">
-          <div className="question-text">{formatQuestionText(item.title)}</div>
+          <QuestionStem text={item.title} answer={item.answer} />
 
           <QuestionImages images={item.images} altPrefix="题目图片" className="question-images-section" />
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, Icon } from '../../components/ui'
 import QuestionImages from '../../components/QuestionImages'
+import QuestionStem from '../../components/QuestionStem'
 import QuestionSketch from '../mistakes/QuestionSketch'
 import { FONT_SIZES, readFontIndex, setFontIndex } from '../../lib/fontSize'
 import { THEME_CHANGE_EVENT, readTheme, setTheme, type ThemeKey } from '../../lib/theme'
@@ -260,7 +261,7 @@ export default function PaperExamRunner({
                         <button className={marks[result.id] ? 'on' : ''} onClick={() => item && toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
                       </span>
                     </div>
-                    <div className="question-text pr-q-text">{formatQuestionText(result.title)}</div>
+                    <QuestionStem text={result.title} answer={result.answer} className="pr-q-text" />
                     <QuestionImages images={item?.images ?? []} altPrefix="题目图片" className="question-images-section" />
                     {options.length > 0 && (
                       <div className="pe-options">
@@ -316,7 +317,7 @@ export default function PaperExamRunner({
                   <button className={marks[item.id] ? 'on' : ''} onClick={() => toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
                 </span>
               </div>
-              <div className="question-text pe-q-text">{formatQuestionText(item.title)}</div>
+              <QuestionStem text={item.title} answer={item.answer} className="pe-q-text" />
               <QuestionImages images={item.images ?? []} altPrefix="题目图片" className="question-images-section" />
               {options.length > 0 ? (
                 <div className="pe-options">

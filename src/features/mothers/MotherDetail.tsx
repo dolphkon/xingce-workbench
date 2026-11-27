@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
 import QuestionImages from '../../components/QuestionImages'
+import QuestionStem from '../../components/QuestionStem'
 import { getById, readCachedById, remove } from '../../lib/db'
 import { relatedMistakes } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
@@ -111,7 +112,7 @@ export default function MotherDetail() {
           </div>
         </div>
         <div className="card-body">
-          <div className="question-text">{formatQuestionText(item.title)}</div>
+          <QuestionStem text={item.title} answer={item.modelAnswer} />
           <QuestionImages images={item.images ?? []} altPrefix="母题图片" className="question-images-section" />
           {item.tags.length > 0 && (
             <div className="tag-row" style={{ marginTop: 14 }}>

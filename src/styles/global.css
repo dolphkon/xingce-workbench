@@ -295,6 +295,9 @@ a { color: inherit; text-decoration: none; }
 
 /* ---------- Mistakes ---------- */
 .question-text { white-space: pre-wrap; line-height: 1.75; font-size: calc(16px * var(--font-scale)); }
+/* 题干类别标签：紧邻题干前展示单选题/多选题 */
+.stem-category { display: inline-flex; align-items: center; margin-right: 8px; padding: 1px 8px; border-radius: 5px; background: var(--primary-light); color: var(--primary); font-size: calc(12px * var(--font-scale)); font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+.stem-category-multi { background: var(--warning-bg); color: var(--warning); }
 .option-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .option-item {
   display: flex; align-items: flex-start; gap: 11px;
@@ -326,17 +329,17 @@ a { color: inherit; text-decoration: none; }
 .image-thumb { position: relative; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-muted); }
 .image-thumb img { width: 100%; height: 120px; object-fit: cover; display: block; }
 .image-thumb .icon-btn { position: absolute; top: 4px; right: 4px; background: rgba(255,255,255,.9); }
-/* 题目图片（图形推理等宽图/细节图）：按原始比例完整显示，绝不裁剪两侧选项 */
-.question-images { display: grid; gap: 12px; }
-.question-images-detail { grid-template-columns: minmax(0, 1fr); }
-.question-images-thumb { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+/* 题目图片：题干下方从左到右横排、与题干左对齐；按原始比例完整显示，绝不裁剪两侧选项 */
+.question-images { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start; gap: 12px; }
+.question-images-detail { /* 横排由 .question-images 统一控制 */ }
+.question-images-thumb { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .question-images-section { margin-top: 16px; }
 .question-images-form { margin-top: 10px; }
-.question-image-item { position: relative; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: #fff; }
-.question-image-view { position: relative; display: flex; justify-content: center; width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; line-height: 0; }
+.question-image-item { position: relative; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: #fff; }
+.question-image-view { position: relative; display: flex; justify-content: flex-start; width: auto; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; line-height: 0; }
 /* 原图比容器窄时保持原始尺寸，不放大；比容器宽时等比缩小到容器内 */
 .question-image-view img { display: block; width: auto; max-width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
-.question-images-thumb .question-image-view { height: 160px; align-items: center; }
+.question-images-thumb .question-image-view { width: 100%; height: 160px; justify-content: center; align-items: center; }
 .question-images-thumb .question-image-view img { max-height: 160px; }
 .question-image-zoom { position: absolute; right: 8px; top: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(15, 23, 42, .72); color: #fff; font-size: calc(11px * var(--font-scale)); line-height: 1.5; opacity: 0; transition: opacity .15s; pointer-events: none; }
 .question-image-view:hover .question-image-zoom { opacity: 1; }

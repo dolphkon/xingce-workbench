@@ -206,11 +206,12 @@ src/
 ├── styles/
 │   └── global.css                    # 唯一样式文件（1781 行），含全部组件样式与主题变量
 │
-├── components/                       # 公共组件（6）
+├── components/                       # 公共组件（7）
 │   ├── ui.tsx                        # Icon（内联 SVG path 表）、Modal、ConfirmDialog、EmptyState
 │   ├── Layout.tsx                    # 顶部导航 + 设置面板 + GitHub/WorkBuddy 同步面板（429 行）
 │   ├── QuestionNavigator.tsx         # 详情/做题翻页导航（← → 键）
-│   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱（object-fit: contain）
+│   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱：题干下方从左到右横排、与题干左对齐（flex-wrap），object-fit: contain
+│   ├── QuestionStem.tsx              # 【新增】题干统一展示：题干前类别标签（单选题/多选题）+ 格式化题干，供详情/刷题/母题页复用
 │   ├── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
 │   └── SymbolPicker.tsx              # 【新增】符号选择器：给选项插入 ①②③/⑴/Ⅰ/常用符号，光标处插入
@@ -243,7 +244,7 @@ src/
 │   ├── fontSize.ts                   # 三档字号
 │   ├── theme.ts                      # 明暗主题
 │   ├── hooks.ts                      # useCollection
-│   └── utils.ts                      # 日期/UID/题干排版工具
+│   └── utils.ts                      # 日期/UID/题干排版工具 + questionCategory（按答案字母数推断单选/多选）
 │
 └── features/                         # 功能模块（8 个目录，26 个页面组件）
     ├── dashboard/
@@ -527,7 +528,7 @@ export function getCloudForLlm(): Promise<CloudClient> {    // LLM 用：不受�
 | `image.ts` | `fileToDataUrl`（OCR 用原图不压缩）、`compressImage(file, maxSize=3200, quality=0.95)`（PNG/GIF/BMP 无损，照片 JPEG 高质量压缩+白底填充） |
 | `docFile.ts` | `loadDocFile(file)`（文本 readAsText，其余 DataURL）、`docFileKind()`、`formatBytes` |
 | `filters.ts` | `ACCURACY_RANGES`（lt30/30to50/50to60/60to70/gte70，左闭右开）、`matchesAccuracy`、`matchesDate` |
-| `utils.ts` | `dateKey/fromDateKey/weekOf`（周日开始）、`formatHours/formatClock`、`uid`（crypto.randomUUID 回退）、`formatQuestionText`（题干自动排版） |
+| `utils.ts` | `dateKey/fromDateKey/weekOf`（周日开始）、`formatHours/formatClock`、`uid`（crypto.randomUUID 回退）、`formatQuestionText`（题干自动排版）、`questionCategory(answer)`（答案字母去重 >1 → 多选题，否则单选题；无字母文本答案归单选题） |
 | `hooks.ts` | `useCollection(store)` → `{items, loading, error, refresh}`（首帧 readCachedAll 同步，后台 listAll，监听 SYNC_EVENT） |
 | `theme.ts` | `ThemeKey='light'|'dark'`、`THEME_KEY`、`initTheme()`、`setTheme()`（写 `document.documentElement.dataset.theme` + CustomEvent） |
 | `fontSize.ts` | `FONT_SIZES`（standard/large/xlarge，默认 large）、`FONT_SIZE_KEY`、`initFontSize/readFontIndex/setFontIndex/cycleFontSize`（写 `dataset.fontSize`） |
@@ -609,7 +610,9 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
   - `SymbolPicker.tsx`：可复用符号选择器（带圈数字 ①~⑳、括号数字 ⑴~⒑、罗马数字 Ⅰ~ⅹ、常用符号 30 个）；点击时 `onMouseDown` 阻止默认以保留输入框焦点，父组件（BankForm / MistakeForm）在 `onPick` 里按 `selectionStart/End` 在光标处插入并回填光标。题库与错题表单的选项区均已接入。
   - 数据兼容：`material` 继续存纯文本供搜索/拆题/推送，`materialHtml` 存排版与图片；老题无 `materialHtml` 时由 `material` 自动生成，不改变既有数据。列表卡片用 `.bank-item-material-rich` + `richHtmlForPreview` 渲染缩略内容与图片；预览容器 `max-height:150px`、图片 `max-height:88px` 且 `width:auto;height:auto`，不再压扁。编辑页仍从原始 `materialHtml` 读取，保留拖拽/删除控件。
 - **排版/字号对齐**：编辑器 `.rte-body` 与列表预览 `.bank-item-material-rich` 的字号/行高统一为错题详情 `.question-text` 的 `calc(16px * var(--font-scale))` / `1.75`，实现题库编辑、预览与错题详情所见即所得（缩放依赖 `--font-scale`，详情同步为 19.2px/33.6px @1.2 倍）。
-  - 详情页/练习页统一图片组件 `QuestionImages`：`.question-image-view img` 改为 `width:auto;max-width:100%;height:auto;max-height:70vh`，原图小于容器时按原始尺寸居中显示，不再被 `width:100%` 拉伸放大；缩略图 variant 固定 160px 高并居中。
+  - 详情页/练习页统一图片组件 `QuestionImages`：`.question-image-view img` 为 `width:auto;max-width:100%;height:auto;max-height:70vh`，原图小于容器时保持原始尺寸，不再被 `width:100%` 拉伸放大；缩略图 variant 固定 160px 高并居中。
+  - **图片布局（从左到右、与题干左对齐）**：`.question-images` 由单列 grid 改为 `display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:flex-start; gap:12px`，多张图片在题干下方从左到右横排、左边缘与题干左边缘对齐；`.question-image-item { max-width:100% }` 防宽图溢出；`.question-image-view { justify-content:flex-start; width:auto }` 去掉旧居中。thumb variant 仍为 grid + 居中（录入表单缩略图不受影响）。
+  - **题干类别标签**：新增 `QuestionStem` 公共组件（`components/QuestionStem.tsx`），在题干前渲染 `.stem-category`（单选题蓝底 / 多选题橙底 `.stem-category-multi`），再渲染 `formatQuestionText` 后的题干。类别由 `utils.ts` 的 `questionCategory(answer)` 推断（答案字母去重 >1 为多选题，否则单选题；题库题可显式传 `category` 覆盖）。已接入：错题详情、专项刷题（做题页+报告页）、试卷刷题（做题页+报告页）、母题详情；题库列表头部已有类别 chip，不重复展示。
 - **bankParser.ts**：`parseImagesToBank(images, onProgress, signal)` —— 逐张 `recognizeImage` 提文本 → 优先 `structureQuestionsForBank`（LLM 输出 category/module/material/stem/options/answer/analysis）→ 能力不可用时 `ruleParse`（题号切分 + `parseQuestionText` + 关键词猜模块）兜底。每题 `uid()` 唯一 ID。
 - **llm.ts**：泛型 `runStructure<T>(text, systemPrompt, normalize, dedupKey, ...)`；`structureQuestions`（原逻辑）与 `structureQuestionsForBank`（新）共用；`BANK_SYSTEM_PROMPT` 约束六模块与字段名，`normalizeBankQuestion` 兼容多种返回格式。题库拆题去重键为 `material(80)+stem+options(100)`，因矫正后 `stem` 只剩设问句，单独用 stem 去重会误删多道同设问题。
 - **questionRefine.ts**：拆题结果确定性后处理（LLM 与规则兜底均调用）——① 从单行 `A.… B.… C.… D.…` 抽出 4 个独立选项并保留行内「答案：X」；② 将「文段 + 设问」拆成 `material`/`stem`（识别「对上述文段…」「根据上述材料…」「填入画横线…」等设问句型）；③ 答案字母去重/过滤非法字母、回填并清除残留标注；④ 答案 >1 字母自动改「多选题」；⑤ 模块填「常识」但内容有明确关键词时按内容纠正（片段阅读→言语理解、数据段落→资料分析等）。纯函数无副作用。
@@ -638,7 +641,8 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **ui.tsx**：`Icon` 内联 SVG path 字典（约 45 个图标名，缺省 file）、`Modal`（Esc/遮罩关闭，wide=900px）、`ConfirmDialog`、`EmptyState`。
 - **Layout.tsx**（429 行）：顶部导航（粉笔风 `.topbar/.topnav`）；`GithubConfigModal`（粘贴 Fine-grained PAT → 自动识别用户/建私有仓库/建 data 分支）；`GithubSyncPanel`；`WorkbuddySyncPanel`（微信扫码，仅 CLOUD_AVAILABLE 显示）；`TopbarSync`；`AppearanceSettings`（主题日/夜 + 三档字号）；`SettingsPanel`（外观 + 账户 + GitHub 三区）。
-- **QuestionNavigator / QuestionImages / ImageLightbox**：翻页导航；图片 `object-fit: contain` 完整显示（不裁切图形推理选项）+ 灯箱（缩放/下载/Esc）。
+- **QuestionNavigator / QuestionImages / ImageLightbox**：翻页导航；图片题干下方从左到右横排（`flex-wrap`）、与题干左对齐，`object-fit: contain` 完整显示（不裁切图形推理选项）+ 灯箱（缩放/下载/Esc）。
+- **QuestionStem**：题干统一展示——题目前置类别标签（`.stem-category` 单选题蓝 / `.stem-category-multi` 多选题橙）+ 格式化题干；类别取 `questionCategory(answer)` 或显式 `category`。供 MistakeDetail、PracticePage（做题/报告）、PaperExamRunner（做题/报告）、MotherDetail 复用。
 
 ---
 
@@ -809,7 +813,8 @@ PORT=4179 npm run dev
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 错题库 / 掌握库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联 |
+| 错题库 / 掌握库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联；题干前显示单选题/多选题类别标签（QuestionStem） |
+| 题目图片与题干布局 | ✅ 完整可用（2026-11-27） | 图片题干下方从左到右横排、与题干左对齐（flex-wrap）；题干前置类别标签，覆盖详情/专项刷题/试卷刷题/母题详情 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
 | **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；见 9.2.1 |
@@ -880,10 +885,22 @@ PORT=4179 npm run dev
 - 实现：`QuestionBankPage` 弹窗打开时挂 document `paste` 监听，提取剪贴板图片文件 → `addImageFiles` 压缩入列（复用文件选择路径）→ 500ms 防抖后自动 `runParse`。新增 `draftImagesRef` / `parsingRef` 镜像避免异步闭包读到旧 state，`runParse(batch?)` 接受显式批次并防重复触发；上传区文案更新为「点击选择图片，或直接 Ctrl/⌘+V 粘贴截图；粘贴后自动开始识别」。
 - 验证：E2E 用合成 `ClipboardEvent`（DataTransfer 含 PNG）模拟粘贴 → 图片入列 1 张、500ms 后自动进入识别（进度出现）；连续粘贴 3 次图片累积为 3 张且只有 1 个进度条（防抖生效）；文件选择与手动识别按钮回归正常；`typecheck`/`build` 通过。
 
+### 16.2.1 图片横排与题干类别标签（2026-11-27）
+
+- 需求：① 图片位于题干下方，从左到右、与题干左对齐；② 每道题题干前添加类别（单选题/多选题）。
+- 实现：
+  - `global.css`：`.question-images` 从单列 grid 改为 `flex + flex-wrap + flex-start`，多图横排且左对齐；`.question-image-view` 去居中改 `justify-content:flex-start; width:auto`；thumb variant 保持 grid 居中。新增 `.stem-category` / `.stem-category-multi` 标签样式。
+  - 新增 `components/QuestionStem.tsx`：`QuestionStem` 统一渲染「类别标签 + 题干」，替代 5 处直接 `formatQuestionText` 的题干 div。
+  - `utils.ts` 新增 `questionCategory(answer)`：答案字母去重 >1 → 多选题，否则单选题；题库题可显式传 `category` 覆盖。
+  - 接入位置：MistakeDetail、PracticePage（做题+报告）、PaperExamRunner（做题+报告）、MotherDetail；题库列表头部已有类别 chip 不重复。
+- 说明：用户原话「单选题/双选题」，系统数据模型为「单选题/多选题」，统一用多选题措辞保持一致。
+- 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 注入数据实测——单选答案 A 渲染「单选题」、多选答案 AB 渲染「多选题」且带橙色样式；3 张小图 Y 坐标相同、X 依次递增（横排），左边缘与题干一致；无 JS 报错。
+
 ### 16.3 最近提交历史
 
 ```
-3e7ce73 feat: 图片识别入库支持复制粘贴截图并自动开始识别（防抖合并连续粘贴）  ← HEAD
+<PENDING_LAYOUT_COMMIT> feat: 图片题干下方从左到右横排且与题干左对齐；题干前显示单选题/多选题类别标签  ← HEAD
+3e7ce73 feat: 图片识别入库支持复制粘贴截图并自动开始识别（防抖合并连续粘贴）
 caa468e feat: 粘贴图片可拖拽缩放、推送错题按缩放尺寸重绘、材料排版对齐详情、选项支持插入符号
 f59a3dd fix: 修复题库材料预览图片压扁/红×控件外露及详情页图片被放大
 7d1a5ca feat: 题库材料富文本编辑器——文字排版、插入图片与拖拽缩放，适配图形推理/资料分析

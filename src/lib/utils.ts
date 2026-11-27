@@ -67,6 +67,15 @@ export function pluralDays(ts: number): string {
   return `${days} 天前`
 }
 
+/**
+ * 依据答案字母推断题目类别：单个字母为单选题，多个不同字母为多选题。
+ * 答案为文本（填空/简答）或无字母时归为单选题。
+ */
+export function questionCategory(answer?: string): '单选题' | '多选题' {
+  const letters = (answer ?? '').toUpperCase().match(/[A-Z]/g) ?? []
+  return new Set(letters).size > 1 ? '多选题' : '单选题'
+}
+
 /** 按逗号、空格、换行分割标签并去重 */
 export function parseTags(input: string): string[] {
   return Array.from(
