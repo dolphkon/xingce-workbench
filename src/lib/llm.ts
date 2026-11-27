@@ -58,13 +58,17 @@ function classifyError(err: unknown): { reason: LlmBlockReason; message: string 
   if (combined.includes('origin') || combined.includes('allowlist') || combined.includes('not allowed') || combined.includes('auth_')) {
     return { reason: 'origin', message: '当前访问域名未启用智能拆题。请在 WorkBuddy 应用中打开本工具后使用。' }
   }
+  // 浏览器里跨域被拒通常表现为 Failed to fetch / Network error（服务端校验 Origin 白名单）
+  if (combined.includes('failed to fetch') || combined.includes('network error') || combined.includes('load failed') || combined.includes('networkrequestfailed')) {
+    return { reason: 'origin', message: '当前访问域名未启用智能拆题。请在 WorkBuddy 应用中打开本工具以启用 AI 拆题。' }
+  }
   if (combined.includes('quota') || combined.includes('额度') || combined.includes('insufficient')) {
     return { reason: 'quota', message: '模型可用额度不足，本次已自动改用规则拆题。' }
   }
   if (combined.includes('no available model') || combined.includes('暂无可用模型') || combined.includes('model')) {
     return { reason: 'no_model', message: '暂无可用模型，本次已自动改用规则拆题。' }
   }
-  return { reason: 'unknown', message: msg || '智能拆题暂不可用，已自动改用规则拆题。' }
+  return { reason: 'unknown', message: msg ? `智能拆题暂不可用（${msg}），已自动改用规则拆题。` : '智能拆题暂不可用，已自动改用规则拆题。' }
 }
 
 /** 运行时探测大模型能力（结果缓存，成功或失败均缓存；失败可强制重探） */
