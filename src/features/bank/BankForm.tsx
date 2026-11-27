@@ -123,7 +123,7 @@ export default function BankForm({ initial, onSaved, onCancel }: Props) {
       </div>
 
       <div className="form-field">
-        <label className="form-label">选项 <span className="small light">（先点选输入框，再点「符号」即可在光标处插入 ①②③ 等）</span></label>
+        <label className="form-label">选项 <span className="small light">（先点输入框，再点「符号」即可在光标处插入 1、2、3 或 ①②③ 等序号）</span></label>
         <div className="form-row" style={{ gap: 8 }}>
           {OPTION_LETTERS.map((letter, index) => (
             <div className="row" key={letter} style={{ gap: 6 }}>

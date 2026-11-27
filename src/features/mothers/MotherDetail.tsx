@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
-import QuestionImages from '../../components/QuestionImages'
 import QuestionStem from '../../components/QuestionStem'
 import { getById, readCachedById, remove } from '../../lib/db'
 import { relatedMistakes } from '../../lib/categories'
@@ -112,8 +111,7 @@ export default function MotherDetail() {
           </div>
         </div>
         <div className="card-body">
-          <QuestionStem text={item.title} answer={item.modelAnswer} />
-          <QuestionImages images={item.images ?? []} altPrefix="母题图片" className="question-images-section" />
+          <QuestionStem text={item.title} answer={item.modelAnswer} images={item.images ?? []} altPrefix="母题图片" />
           {item.tags.length > 0 && (
             <div className="tag-row" style={{ marginTop: 14 }}>
               {item.tags.map((tag) => <span className="chip" key={tag}>#{tag}</span>)}

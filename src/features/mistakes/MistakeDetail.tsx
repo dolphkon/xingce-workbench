@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, Icon, Modal } from '../../components/ui'
 import { QuestionNavigator } from '../../components/QuestionNavigator'
-import QuestionImages from '../../components/QuestionImages'
 import QuestionStem from '../../components/QuestionStem'
 import { getById, put, readCachedById, remove } from '../../lib/db'
 import { relatedMothers } from '../../lib/categories'
@@ -174,9 +173,7 @@ export default function MistakeDetail() {
           </div>
         </div>
         <div className="card-body">
-          <QuestionStem text={item.title} answer={item.answer} />
-
-          <QuestionImages images={item.images} altPrefix="题目图片" className="question-images-section" />
+          <QuestionStem text={item.title} answer={item.answer} images={item.images} altPrefix="题目图片" />
 
           {visibleOptions.length > 0 ? (
             <div className="option-list">

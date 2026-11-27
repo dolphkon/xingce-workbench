@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, Icon } from '../../components/ui'
-import QuestionImages from '../../components/QuestionImages'
 import QuestionStem from '../../components/QuestionStem'
 import QuestionSketch from '../mistakes/QuestionSketch'
 import { FONT_SIZES, readFontIndex, setFontIndex } from '../../lib/fontSize'
@@ -261,8 +260,7 @@ export default function PaperExamRunner({
                         <button className={marks[result.id] ? 'on' : ''} onClick={() => item && toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
                       </span>
                     </div>
-                    <QuestionStem text={result.title} answer={result.answer} className="pr-q-text" />
-                    <QuestionImages images={item?.images ?? []} altPrefix="题目图片" className="question-images-section" />
+                    <QuestionStem text={result.title} answer={result.answer} images={item?.images ?? []} altPrefix="题目图片" className="pr-q-text" />
                     {options.length > 0 && (
                       <div className="pe-options">
                         {options.map((option) => (
@@ -317,8 +315,7 @@ export default function PaperExamRunner({
                   <button className={marks[item.id] ? 'on' : ''} onClick={() => toggleMark(item)} title="标记本题"><Icon name="flag" size={16} /></button>
                 </span>
               </div>
-              <QuestionStem text={item.title} answer={item.answer} className="pe-q-text" />
-              <QuestionImages images={item.images ?? []} altPrefix="题目图片" className="question-images-section" />
+              <QuestionStem text={item.title} answer={item.answer} images={item.images ?? []} altPrefix="题目图片" className="pe-q-text" />
               {options.length > 0 ? (
                 <div className="pe-options">
                   {options.map((option) => (

@@ -210,11 +210,11 @@ src/
 │   ├── ui.tsx                        # Icon（内联 SVG path 表）、Modal、ConfirmDialog、EmptyState
 │   ├── Layout.tsx                    # 顶部导航 + 设置面板 + GitHub/WorkBuddy 同步面板（429 行）
 │   ├── QuestionNavigator.tsx         # 详情/做题翻页导航（← → 键）
-│   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱：题干下方从左到右横排、与题干左对齐（flex-wrap），object-fit: contain
-│   ├── QuestionStem.tsx              # 【新增】题干统一展示：题干前类别标签（单选题/多选题）+ 格式化题干，供详情/刷题/母题页复用
+│   ├── QuestionImages.tsx            # 题目图片统一展示 + 灯箱：多图从左到右横排，object-fit: contain
+│   ├── QuestionStem.tsx              # 【新增】题干统一展示：两列网格（左列类别标签、右列题干+图片），图片与类别标签右侧对齐
 │   ├── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
-│   └── SymbolPicker.tsx              # 【新增】符号选择器：给选项插入 ①②③/⑴/Ⅰ/常用符号，光标处插入
+│   └── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
 │
 ├── lib/                              # 核心库（23）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
@@ -603,11 +603,11 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
 - **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR），支持**点击选择**与 **Ctrl/⌘+V 粘贴截图**（弹窗打开时 document `paste` 监听，剪贴板图片经 `addImageFiles` 压缩入列，500ms 防抖后自动调用 `parseImagesToBank` 开始识别；连续粘贴多张只识别一次）；`runParse(batch?)` 读 `draftImagesRef` 镜像 + `parsingRef` 防重，避免异步闭包拿到旧 state；实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
-- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项（支持 `SymbolPicker` 插入 ①②③ 等符号）、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
+- **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项（支持 `SymbolPicker` 插入 1、2、3 或 ①②③ 等序号）、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
 - **材料富文本（适配图形推理/资料分析图表题）**：
   - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。`onPaste` 拦截剪贴板图片（`handlePaste`）走同一压缩+带控件插入逻辑（`insertImages`），使 Ctrl+V 粘贴的图片同样可拖拽缩放（纯文字粘贴保留浏览器默认行为）。
   - `richText.ts`：`sanitizeRichHtml`（放行 base64 图片）、`richHtmlForPreview`（预览专用二次清洗：删除 `.rt-handle`/`.rt-remove` 与 `contenteditable`，展开 `.rt-image` 包装，去掉 img 的 `width`/`height`/`style`/`data-w`，交由 CSS 等比缩放）、`richTextToPlain`（图片转 `[图]`、剔除编辑器控件字符）、`plainToRichText`（老题纯文本降级显示）、`extractImagesFromHtml`（原始尺寸提取）、`extractImagesAtDisplaySize`（推送错题时按 `data-w`/`width`/`style.width` 用 canvas 把内嵌图重绘到用户缩放宽度，避免大图 dataURL 在详情里撑满失衡；不超过原图宽度以防糊，PNG 保无损）。
-  - `SymbolPicker.tsx`：可复用符号选择器（带圈数字 ①~⑳、括号数字 ⑴~⒑、罗马数字 Ⅰ~ⅹ、常用符号 30 个）；点击时 `onMouseDown` 阻止默认以保留输入框焦点，父组件（BankForm / MistakeForm）在 `onPick` 里按 `selectionStart/End` 在光标处插入并回填光标。题库与错题表单的选项区均已接入。
+  - `SymbolPicker.tsx`：可复用符号选择器（序号数字 1~10 / 1. / 1、/ 1）/ （1）、带圈数字 ①~⑳、括号数字 ⑴~⒑、罗马数字 Ⅰ~ⅹ、常用符号 30 个，共 130 个）；点击时 `onMouseDown` 阻止默认以保留输入框焦点，父组件（BankForm / MistakeForm）在 `onPick` 里按 `selectionStart/End` 在光标处插入并回填光标。题库与错题表单的选项区均已接入。
   - 数据兼容：`material` 继续存纯文本供搜索/拆题/推送，`materialHtml` 存排版与图片；老题无 `materialHtml` 时由 `material` 自动生成，不改变既有数据。列表卡片用 `.bank-item-material-rich` + `richHtmlForPreview` 渲染缩略内容与图片；预览容器 `max-height:150px`、图片 `max-height:88px` 且 `width:auto;height:auto`，不再压扁。编辑页仍从原始 `materialHtml` 读取，保留拖拽/删除控件。
 - **排版/字号对齐**：编辑器 `.rte-body` 与列表预览 `.bank-item-material-rich` 的字号/行高统一为错题详情 `.question-text` 的 `calc(16px * var(--font-scale))` / `1.75`，实现题库编辑、预览与错题详情所见即所得（缩放依赖 `--font-scale`，详情同步为 19.2px/33.6px @1.2 倍）。
   - 详情页/练习页统一图片组件 `QuestionImages`：`.question-image-view img` 为 `width:auto;max-width:100%;height:auto;max-height:70vh`，原图小于容器时保持原始尺寸，不再被 `width:100%` 拉伸放大；缩略图 variant 固定 160px 高并居中。
@@ -641,8 +641,8 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **ui.tsx**：`Icon` 内联 SVG path 字典（约 45 个图标名，缺省 file）、`Modal`（Esc/遮罩关闭，wide=900px）、`ConfirmDialog`、`EmptyState`。
 - **Layout.tsx**（429 行）：顶部导航（粉笔风 `.topbar/.topnav`）；`GithubConfigModal`（粘贴 Fine-grained PAT → 自动识别用户/建私有仓库/建 data 分支）；`GithubSyncPanel`；`WorkbuddySyncPanel`（微信扫码，仅 CLOUD_AVAILABLE 显示）；`TopbarSync`；`AppearanceSettings`（主题日/夜 + 三档字号）；`SettingsPanel`（外观 + 账户 + GitHub 三区）。
-- **QuestionNavigator / QuestionImages / ImageLightbox**：翻页导航；图片题干下方从左到右横排（`flex-wrap`）、与题干左对齐，`object-fit: contain` 完整显示（不裁切图形推理选项）+ 灯箱（缩放/下载/Esc）。
-- **QuestionStem**：题干统一展示——题目前置类别标签（`.stem-category` 单选题蓝 / `.stem-category-multi` 多选题橙）+ 格式化题干；类别取 `questionCategory(answer)` 或显式 `category`。供 MistakeDetail、PracticePage（做题/报告）、PaperExamRunner（做题/报告）、MotherDetail 复用。
+- **QuestionNavigator / QuestionImages / ImageLightbox**：翻页导航；图片题干下方从左到右横排（`flex-wrap`）、与题干文字左对齐，`object-fit: contain` 完整显示（不裁切图形推理选项）+ 灯箱（缩放/下载/Esc）。
+- **QuestionStem**：题干统一展示——两列网格 `grid-template-columns: auto minmax(0,1fr)`：左列类别标签（`.stem-category` 单选题蓝 / `.stem-category-multi` 多选题橙），右列题干文字 + 图片（`.stem-images`），因此图片落在类别标签右侧并与题干文字同起点；类别取 `questionCategory(answer)` 或显式 `category`。供 MistakeDetail、PracticePage（做题/报告）、PaperExamRunner（做题/报告）、MotherDetail 复用，图片由 `images` prop 直接传入，不再单独渲染。
 
 ---
 
@@ -905,10 +905,21 @@ PORT=4179 npm run dev
   - `MistakesPage` 推送层合并题干后调用该函数（阻止新数据继续写入占位符）。
 - 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 注入带 `[图]` 的历史题干 → 显示干净且图片仍在；题库推送含内嵌图材料 → 表单题干无 `[图]`。
 
+### 16.2.3 序号数字输入 + 图片与类别标签右对齐（2026-11-27）
+
+- 需求：① 选项要能输入序号 1、2、3（原符号面板只有 ①②③ / ⑴ / ⒈，缺少纯数字序号）；② 图片要和题目前面的类别标签右对齐（即图片左边缘落在标签右侧，与题干文字同起点）。
+- 实现：
+  - `SymbolPicker.tsx` 新增首组「序号数字」：`1~10`、`1.~10.`、`1、~5、`、`1）~5）`、`（1）~（5）`、`⑴~⑸`；从「括号数字」组移除重复的 ⑴~⑸；总数 130 个。
+  - `BankForm` 选项区提示文案改为「插入 1、2、3 或 ①②③ 等序号」。
+  - `QuestionStem.tsx` 新增 `images` / `altPrefix` props，内部统一渲染 `QuestionImages`；`.question-text.stem-with-category` 改为两列网格：左列 `.stem-category`、右列 `.stem-category-text` 与 `.question-images-section`（`grid-row:1/2`），列间距 8px，标签 `margin-right:0`。
+  - MistakeDetail、PracticePage（做题/报告）、PaperExamRunner（做题/报告）、MotherDetail 全部改为给 `QuestionStem` 传 `images`，删除原来紧随其后的独立 `QuestionImages` 与无用 import；录入表单缩略图 variant 不受影响。
+- 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测符号面板首组为「序号数字」、首格为 `1`、连续插入 1/2/3 后选项值为「选项123」；详情页类别右边缘 x=105、题干左边缘 x=113、图片左边缘 x=113（对齐生效），两张小图同 Y 横排，无 JS 报错。
+
 ### 16.3 最近提交历史
 
 ```
-7a1d15d fix: 清除题干里多余的 [图] 占位符（显示层+推送层双层修复）  ← HEAD
+<PENDING_ALIGN_COMMIT> feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐  ← HEAD
+7a1d15d fix: 清除题干里多余的 [图] 占位符（显示层+推送层双层修复）
 b80cbe9 feat: 图片题干下方从左到右横排且与题干左对齐；题干前显示单选题/多选题类别标签
 3e7ce73 feat: 图片识别入库支持复制粘贴截图并自动开始识别（防抖合并连续粘贴）
 caa468e feat: 粘贴图片可拖拽缩放、推送错题按缩放尺寸重绘、材料排版对齐详情、选项支持插入符号
