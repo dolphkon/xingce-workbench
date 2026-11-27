@@ -11,7 +11,7 @@ import type { QuizQuestion } from '../types'
 import { extractPdfText, renderPdfPages } from './pdfText'
 import { recognizeImage } from './ocr'
 import { parseQuestionText } from './ocr'
-import { structureQuestions, type LlmQuestion } from './llm'
+import { probeLlm, structureQuestions, type LlmBlockReason, type LlmQuestion } from './llm'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -30,6 +30,9 @@ export interface ParseResult {
   usedLlm: boolean
   /** 是否使用了 OCR */
   usedOcr: boolean
+  /** 大模型未启用时的降级原因（供 UI 精确提示） */
+  llmReason?: LlmBlockReason
+  llmMessage?: string
   /** 原始文本（便于人工核对） */
   rawText: string
 }
@@ -286,7 +289,7 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
 /* -------------------------------------------------------------------------- */
 
 export interface ParseOptions {
-  /** 是否禁用大模型（GitHub Pages 域名自动禁用） */
+  /** 是否强制禁用大模型（默认否；可用性以运行时探测为准） */
   disableLlm?: boolean
   /** OCR 最大页数 */
   maxOcrPages?: number
@@ -340,21 +343,33 @@ export async function parseDocumentToQuestions(
 
   if (!text.trim()) throw new Error('未能从文档中提取到文字，请确认文档内容或改用可复制文本的版本')
 
+  // 运行时探测大模型能力（不再用域名硬编码判断）
+  onProgress({ percent: 64, stage: 'llm', message: '正在检测智能拆题能力…' })
+  const probe = await probeLlm()
+  const llmEnabled = !options.disableLlm && probe.available
+
   // 规则解析先行：既作为 LLM 不可用时的兜底，也作为 LLM 结果的校验依据
   onProgress({ percent: 68, stage: 'rules', message: '正在按题号拆分题目…' })
   const rules = ruleParseAll(text)
 
   let llm: LlmQuestion[] = []
   let usedLlm = false
-  if (!options.disableLlm) {
+  let llmReason: LlmBlockReason | undefined
+  let llmMessage: string | undefined
+  if (llmEnabled) {
     try {
-      onProgress({ percent: 76, stage: 'llm', message: '正在智能结构化题目…' })
+      onProgress({ percent: 76, stage: 'llm', message: '正在用大模型智能拆题…' })
       llm = await structureQuestions(text, options.signal)
       usedLlm = llm.length > 0
-    } catch {
-      // 大模型不可用/额度不足时静默回退到规则解析
+    } catch (err) {
       llm = []
+      const typed = err as Error & { reason?: LlmBlockReason }
+      llmReason = typed.reason ?? 'unknown'
+      llmMessage = typed.message || '智能拆题暂不可用，已自动改用规则拆题'
     }
+  } else if (!options.disableLlm) {
+    llmReason = probe.reason
+    llmMessage = probe.message
   }
 
   onProgress({ percent: 92, stage: 'rules', message: '正在校验并合并结果…' })
@@ -365,9 +380,13 @@ export async function parseDocumentToQuestions(
 
   const methodParts = [textMethod]
   if (usedOcr) methodParts.push('OCR 回退')
-  if (usedLlm) methodParts.push('大模型结构化')
-  methodParts.push('规则校验')
+  if (usedLlm) methodParts.push('大模型智能拆题')
+  else methodParts.push('规则拆题')
+  methodParts.push('人工校对')
 
   onProgress({ percent: 100, stage: 'done', message: `识别完成，共 ${questions.length} 道题` })
-  return { questions, method: methodParts.join(' + '), usedLlm, usedOcr, rawText: text }
+  return {
+    questions, method: methodParts.join(' + '), usedLlm, usedOcr,
+    llmReason, llmMessage, rawText: text,
+  }
 }

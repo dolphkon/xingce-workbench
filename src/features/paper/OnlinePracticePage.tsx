@@ -3,7 +3,7 @@ import { ConfirmDialog, Icon, Modal } from '../../components/ui'
 import { useCollection } from '../../lib/hooks'
 import { put, readCachedAll, remove } from '../../lib/db'
 import { loadDocFile } from '../../lib/docFile'
-import { LLM_AVAILABLE } from '../../lib/llm'
+import { probeLlm, type LlmBlockReason, type LlmProbe } from '../../lib/llm'
 import {
   formatStem, inspectQuestion, parseDocumentToQuestions, parseFileKind, type ParseProgress,
 } from '../../lib/paperParser'
@@ -56,14 +56,14 @@ function QuestionReviewModal({
 
   return (
     <Modal
-      title={`审核第 ${index + 1} 题`}
+      title={`校对第 ${index + 1} 题`}
       onClose={onClose}
       wide
       footer={
         <>
           <button className="btn op-delete" onClick={onDelete} style={{ marginRight: 'auto' }}><Icon name="trash" size={14} /> 删除此题</button>
           <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={save} disabled={!canSave}><Icon name="save" size={15} /> 保存修改</button>
+          <button className="btn btn-primary" onClick={save} disabled={!canSave}><Icon name="check" size={15} /> 确认无误并保存</button>
         </>
       }
     >
@@ -101,7 +101,18 @@ function QuestionReviewModal({
   )
 }
 
-/** 在线刷题：上传 PDF/Word → 多方式识别成卷 → 类专项刷题 → 错题入库 → 历史记录 */
+interface Draft {
+  questions: QuizQuestion[]
+  method: string
+  fileName: string
+  fileType: string
+  fileData: string
+  usedLlm: boolean
+  llmReason?: LlmBlockReason
+  llmMessage?: string
+}
+
+/** 在线刷题：上传 PDF/Word → 多方式识别成卷 → 人工校对 → 确认组卷 → 类专项刷题 → 错题入库 → 历史记录 */
 export default function OnlinePracticePage() {
   const { items: papers, refresh: refreshPapers } = useCollection('papers')
   const { items: records, refresh: refreshRecords } = useCollection('practiceRecords')
@@ -114,20 +125,42 @@ export default function OnlinePracticePage() {
   // 上传解析状态
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<ParseProgress>({ percent: 0, stage: 'prepare', message: '' })
-  const [draft, setDraft] = useState<{ questions: QuizQuestion[]; method: string; fileName: string; fileType: string; fileData: string } | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
   const [parseError, setParseError] = useState('')
   const [titleInput, setTitleInput] = useState('')
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
+  const [confirmedIds, setConfirmedIds] = useState<string[]>([])
+  const [showConfirmPaper, setShowConfirmPaper] = useState(false)
+  const [llmProbe, setLlmProbe] = useState<LlmProbe | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null)
 
   useEffect(() => { refreshPapers(); refreshRecords() }, [])
+  // 运行时探测大模型能力（不阻塞首屏；GitHub Pages 会得到 origin 降级提示）
+  useEffect(() => { void probeLlm().then(setLlmProbe) }, [])
+
+  const applyResult = (result: Awaited<ReturnType<typeof parseDocumentToQuestions>>, fileName: string, fileType: string, fileData: string, defaultTitle: string) => {
+    setDraft({
+      questions: result.questions,
+      method: result.method,
+      fileName,
+      fileType: fileType || `application/${fileName.split('.').pop()}`,
+      fileData,
+      usedLlm: result.usedLlm,
+      llmReason: result.llmReason,
+      llmMessage: result.llmMessage,
+    })
+    setTitleInput(defaultTitle)
+    setConfirmedIds([])
+    setView('upload')
+  }
 
   const handleFile = async (file: File) => {
     setParseError('')
     setDraft(null)
     setReviewIndex(null)
+    setConfirmedIds([])
     if (parseFileKind(file.name, file.type) === 'unsupported') {
       setParseError('仅支持 PDF 或 Word（.docx）文档，请选择对应格式的文件。')
       return
@@ -139,15 +172,7 @@ export default function OnlinePracticePage() {
       const fileData = loaded.fileData ?? ''
       if (!fileData) throw new Error('文件内容读取失败')
       const result = await parseDocumentToQuestions(fileData, file.name, file.type, setProgress)
-      setDraft({
-        questions: result.questions,
-        method: result.method,
-        fileName: file.name,
-        fileType: file.type || `application/${file.name.split('.').pop()}`,
-        fileData,
-      })
-      setTitleInput(loaded.title)
-      setView('upload')
+      applyResult(result, file.name, file.type, fileData, loaded.title)
     } catch (err) {
       setParseError(err instanceof Error ? err.message : '解析失败，请重试')
     } finally {
@@ -173,6 +198,8 @@ export default function OnlinePracticePage() {
     await put('papers', paper)
     refreshPapers()
     setDraft(null)
+    setConfirmedIds([])
+    setShowConfirmPaper(false)
     setView('list')
   }
 
@@ -257,27 +284,25 @@ export default function OnlinePracticePage() {
   }
 
   const openFromKnowledgeDoc = (doc: KnowledgeDoc) => {
-    // 从知识库文档进入：直接触发解析
     void (async () => {
       setUploading(true)
       setProgress({ percent: 5, stage: 'prepare', message: '正在读取知识库文档…' })
       try {
         if (!doc.fileData) throw new Error('文档内容为空')
         const result = await parseDocumentToQuestions(doc.fileData, doc.fileName || doc.title, doc.fileType || '', setProgress)
-        setDraft({
-          questions: result.questions, method: result.method,
-          fileName: doc.fileName || doc.title,
-          fileType: doc.fileType || '',
-          fileData: doc.fileData,
-        })
-        setTitleInput(doc.title)
-        setView('upload')
+        applyResult(result, doc.fileName || doc.title, doc.fileType || '', doc.fileData, doc.title)
       } catch (err) {
         setParseError(err instanceof Error ? err.message : '解析失败')
       } finally {
         setUploading(false)
       }
     })()
+  }
+
+  const markConfirmed = (index: number) => {
+    const q = draft?.questions[index]
+    if (!q) return
+    setConfirmedIds((prev) => prev.includes(q.id) ? prev : [...prev, q.id])
   }
 
   if (view === 'exam' && activePaper) {
@@ -293,13 +318,14 @@ export default function OnlinePracticePage() {
 
   const historyFor = (paperId: string) => records.filter((record) => record.paperId === paperId).sort((a, b) => b.finishedAt - a.finishedAt)
   const historyPaper = historyPaperId ? papers.find((paper) => paper.id === historyPaperId) : null
+  const pendingCount = draft ? draft.questions.filter((q) => !confirmedIds.includes(q.id)).length : 0
 
   return (
     <div className="page online-practice-page">
       <div className="page-head">
         <div>
           <h1>在线刷题</h1>
-          <p className="muted">上传 PDF 或 Word 文档，识别解析成在线试卷。同一文档可反复练习，答错的题自动进入错题库。</p>
+          <p className="muted">上传 PDF 或 Word 文档，智能拆题后逐题人工校对、确认组卷。同一文档可反复练习，答错的题自动进入错题库。</p>
         </div>
         <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
           <Icon name="upload" size={16} /> {uploading ? '解析中…' : '上传文档'}
@@ -317,10 +343,16 @@ export default function OnlinePracticePage() {
         />
       </div>
 
-      {!LLM_AVAILABLE && (
-        <div className="op-notice">
-          <Icon name="info" size={15} /> 当前域名使用「文本提取 + 规则切题」识别；在 WorkBuddy 应用中打开可启用大模型智能拆题，准确率更高。
+      {/* 智能拆题能力状态：运行时探测结果，给出精确提示 */}
+      {llmProbe ? (
+        <div className={`op-notice${llmProbe.available ? ' ok' : ' warn'}`}>
+          <Icon name={llmProbe.available ? 'check' : 'info'} size={15} />
+          {llmProbe.available
+            ? '大模型智能拆题已就绪：上传文档后将优先用 AI 结构化拆题，再经人工校对。'
+            : `${llmProbe.message} 规则拆题同样可用，识别后仍可逐题校对确认。`}
         </div>
+      ) : (
+        <div className="op-notice"><Icon name="info" size={15} /> 正在检测智能拆题能力…</div>
       )}
 
       {parseError && <div className="error-text op-error">{parseError}</div>}
@@ -336,8 +368,8 @@ export default function OnlinePracticePage() {
         <div className="op-review">
           <div className="op-review-head">
             <div>
-              <h2>解析完成 · {draft.questions.length} 道题</h2>
-              <p className="muted small">识别方式：{draft.method}</p>
+              <h2>识别完成 · {draft.questions.length} 道题</h2>
+              <p className="muted small">拆题方式：{draft.method}</p>
             </div>
             <button className="btn" onClick={() => { setDraft(null); setView('list') }}><Icon name="back" size={15} /> 返回</button>
           </div>
@@ -345,31 +377,27 @@ export default function OnlinePracticePage() {
             <label className="form-label">试卷名称</label>
             <input className="input" value={titleInput} onChange={(e) => setTitleInput(e.target.value)} placeholder="给这份试卷起个名字" />
           </div>
-          {(() => {
-            const pending = draft.questions
-              .map((q, i) => ({ q, i, c: inspectQuestion(q) }))
-              .filter((item) => item.c.needsReview)
-            return pending.length > 0 ? (
-              <div className="op-review-tip">
-                <Icon name="info" size={15} />
-                <span>有 <b>{pending.length}</b> 道题识别结果不确定（答案未识别 / 选项不全 / 题干疑似粘连），建议逐题审核后再保存。</span>
-                <button className="btn btn-sm" onClick={() => setReviewIndex(pending[0].i)}>审核第 {pending[0].i + 1} 题</button>
-              </div>
-            ) : (
-              <div className="op-review-tip ok"><Icon name="check" size={15} /> 所有题目识别完整，可直接保存；也可以点每道题的「编辑」微调。</div>
-            )
-          })()}
+          <div className={`op-review-tip${pendingCount === 0 ? ' ok' : ''}`}>
+            <Icon name={pendingCount === 0 ? 'check' : 'info'} size={15} />
+            {pendingCount === 0
+              ? <>全部 <b>{draft.questions.length}</b> 道题已完成校对，可确认组卷。</>
+              : <>请逐题校对确认：还有 <b>{pendingCount}</b> 道题未确认。点击每题的「校对」核对题干、选项与答案后保存，或点「确认无误」快速通过。</>}
+          </div>
           <div className="op-review-list">
             {draft.questions.map((question, index) => {
               const confidence = inspectQuestion(question)
               const parsed = splitStem(question.title)
               const filled = question.options.map((option, i) => ({ option, i })).filter((item) => item.option.trim())
+              const confirmed = confirmedIds.includes(question.id)
               return (
-                <div className={`op-review-item${confidence.needsReview ? ' pending' : ''}`} key={question.id}>
+                <div className={`op-review-item${confirmed ? ' confirmed' : ''}${confidence.needsReview && !confirmed ? ' pending' : ''}`} key={question.id}>
                   <div className="op-review-item-head">
                     <span className="op-q-index">第 {index + 1} 题</span>
-                    {confidence.needsReview && <span className="op-pending-flag">待审核</span>}
-                    <button className="btn btn-sm" onClick={() => setReviewIndex(index)}><Icon name="edit" size={14} /> 编辑</button>
+                    {confirmed
+                      ? <span className="op-confirmed-flag"><Icon name="check" size={12} /> 已确认</span>
+                      : <span className="op-pending-flag">待校对</span>}
+                    <button className="btn btn-sm" onClick={() => setReviewIndex(index)}><Icon name="edit" size={14} /> 校对</button>
+                    {!confirmed && <button className="btn btn-sm btn-primary" onClick={() => markConfirmed(index)}><Icon name="check" size={14} /> 确认无误</button>}
                   </div>
                   {parsed.material && (
                     <div className="op-review-material">
@@ -386,10 +414,10 @@ export default function OnlinePracticePage() {
                         <span className="op-option-key">{String.fromCharCode(65 + i)}</span>
                         <span className="op-preserve">{option}</span>
                       </div>
-                    )) : <span className="muted">（未识别到选项，请编辑补充）</span>}
+                    )) : <span className="muted">（未识别到选项，请校对补充）</span>}
                   </div>
                   <div className={`op-review-answer${confidence.missingAnswer ? ' missing' : ''}`}>
-                    正确答案：<b>{question.answer || '未识别 · 请编辑填写'}</b>
+                    正确答案：<b>{question.answer || '未识别 · 请校对填写'}</b>
                   </div>
                 </div>
               )
@@ -397,7 +425,7 @@ export default function OnlinePracticePage() {
           </div>
           <div className="op-review-actions">
             <button className="btn" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={15} /> 重新上传</button>
-            <button className="btn btn-primary" onClick={() => void savePaper()}><Icon name="save" size={16} /> 保存为试卷</button>
+            <button className="btn btn-primary" onClick={() => setShowConfirmPaper(true)}><Icon name="layers" size={16} /> 确认组卷</button>
           </div>
         </div>
       )}
@@ -502,9 +530,34 @@ export default function OnlinePracticePage() {
               ...current,
               questions: current.questions.map((q, i) => i === reviewIndex ? next : q),
             } : current)
+            setConfirmedIds((prev) => prev.includes(next.id) ? prev : [...prev, next.id])
             setReviewIndex(null)
           }}
         />
+      )}
+
+      {showConfirmPaper && draft && (
+        <Modal
+          title="确认组卷"
+          onClose={() => setShowConfirmPaper(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setShowConfirmPaper(false)}>再检查一下</button>
+              <button className="btn btn-primary" onClick={() => void savePaper()}><Icon name="layers" size={15} /> 确认组卷</button>
+            </>
+          }
+        >
+          <div className="op-confirm-summary">
+            <div className="op-confirm-row"><span>试卷名称</span><b>{titleInput.trim() || draft.fileName.replace(/\.[^.]+$/, '')}</b></div>
+            <div className="op-confirm-row"><span>题目总数</span><b>{draft.questions.length} 题</b></div>
+            <div className="op-confirm-row"><span>已校对确认</span><b className="ok">{draft.questions.length - pendingCount} 题</b></div>
+            <div className="op-confirm-row"><span>拆题方式</span><b>{draft.usedLlm ? '大模型智能拆题 + 规则校验' : '规则拆题'}</b></div>
+            {pendingCount > 0 && (
+              <div className="op-flag"><Icon name="info" size={14} /> 还有 {pendingCount} 道题未校对确认，组卷后仍可在刷题页发现并修正。建议先逐题校对。</div>
+            )}
+            <p className="muted small" style={{ margin: '12px 0 0' }}>确认后该试卷将保存，可无限次刷题；答错的题会自动加入错题库。</p>
+          </div>
+        </Modal>
       )}
 
       {confirmDeletePaper && (

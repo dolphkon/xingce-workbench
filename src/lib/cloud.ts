@@ -16,26 +16,39 @@ export const CLOUD_AVAILABLE = (() => {
 
 type CloudClient = WorkBuddyCloudClient
 let cloudPromise: Promise<CloudClient> | null = null
+let llmCloudPromise: Promise<CloudClient> | null = null
+
+function createClient(): Promise<CloudClient> {
+  return import('@tencent-ai/workbuddy-cloud-sdk')
+    .then(({ createWorkBuddyCloud }) => createWorkBuddyCloud({
+      endpoint: ENDPOINT,
+      oauthRelayBaseUrl: OAUTH_RELAY,
+      publishableKey: PUBLISHABLE_KEY,
+    }))
+}
 
 /**
- * 惰性加载云 SDK：SDK 体积较大，且只在 WorkBuddy 发布域名下使用。
+ * 同步用客户端：只在 WorkBuddy 发布域名加载。
  * GitHub Pages 等域名 CLOUD_AVAILABLE=false，首屏完全不会下载 SDK，显著加快加载。
  */
 export function getCloud(): Promise<CloudClient> | null {
   if (!CLOUD_AVAILABLE) return null
   if (!cloudPromise) {
-    cloudPromise = import('@tencent-ai/workbuddy-cloud-sdk')
-      .then(({ createWorkBuddyCloud }) => createWorkBuddyCloud({
-        endpoint: ENDPOINT,
-        oauthRelayBaseUrl: OAUTH_RELAY,
-        publishableKey: PUBLISHABLE_KEY,
-      }))
-      .catch((err) => {
-        cloudPromise = null
-        throw err
-      })
+    cloudPromise = createClient().catch((err) => { cloudPromise = null; throw err })
   }
   return cloudPromise
+}
+
+/**
+ * LLM 专用客户端：不受域名硬限制，按需惰性加载。
+ * 服务端会校验 Origin 与 AI 能力开关，是否可用以实际调用结果为准（见 llm.ts 的探测）。
+ * 仅在用户主动触发文档解析时调用，不影响首屏加载。
+ */
+export function getCloudForLlm(): Promise<CloudClient> {
+  if (!llmCloudPromise) {
+    llmCloudPromise = createClient().catch((err) => { llmCloudPromise = null; throw err })
+  }
+  return llmCloudPromise
 }
 
 export type SyncUser = { id: string; name: string }

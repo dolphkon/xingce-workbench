@@ -1687,10 +1687,17 @@ html[data-theme='dark'] .btn-github { background: #303846; border-color: #495565
 html[data-theme='dark'] .btn-github:hover { background: #3d4756; border-color: #5b6878; }
 html[data-theme='dark'] .btn-github:disabled { background: var(--primary-light); border-color: #315484; color: var(--primary); }
 html[data-theme='dark'] .sync-avatar.github { background: #303846; border: 1px solid #495565; }
+html[data-theme='dark'] .op-notice.ok, html[data-theme='dark'] .op-review-tip.ok, html[data-theme='dark'] .op-confirmed-flag { background: #10352a; border-color: #1f6f52; color: #6ee7b7; }
+html[data-theme='dark'] .op-notice.warn, html[data-theme='dark'] .op-review-tip, html[data-theme='dark'] .op-pending-flag { background: #3a2a10; border-color: #7a5a1f; color: #fcd34d; }
+html[data-theme='dark'] .op-review-item.pending { background: color-mix(in srgb, var(--surface) 92%, #f79009); }
+html[data-theme='dark'] .op-review-answer, html[data-theme='dark'] .op-confirm-row b.ok { color: #6ee7b7; }
+html[data-theme='dark'] .op-confirm-row { border-bottom-color: var(--border); }
 
 /* ---------- 在线刷题（文档转试卷） ---------- */
 .online-practice-page .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .op-notice { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin: 4px 0 14px; border: 1px solid var(--primary-light); border-radius: 8px; background: var(--primary-light); color: var(--primary); font-size: calc(13px * var(--font-scale)); }
+.op-notice.ok { border-color: #a6f4c5; background: #ecfdf3; color: #067647; }
+.op-notice.warn { border-color: #fedf89; background: #fffaeb; color: #b54708; }
 .op-error { margin: 8px 0 14px; }
 .op-progress { padding: 16px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .op-progress-bar { height: 8px; border-radius: 6px; background: var(--surface-muted); overflow: hidden; }
@@ -1708,7 +1715,16 @@ html[data-theme='dark'] .sync-avatar.github { background: #303846; border: 1px s
 .op-review-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .op-q-index { font-weight: 700; font-size: calc(14px * var(--font-scale)); }
 .op-pending-flag { padding: 2px 8px; border-radius: 10px; background: #fffaeb; color: #b54708; font-size: calc(11px * var(--font-scale)); }
+.op-confirmed-flag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 10px; background: #ecfdf3; color: #067647; font-size: calc(11px * var(--font-scale)); }
+.op-review-item.confirmed { border-left-color: var(--success); }
 .op-review-item-head .btn { margin-left: auto; }
+.op-review-item-head .btn + .btn { margin-left: 0; }
+.op-confirm-summary { display: flex; flex-direction: column; gap: 10px; }
+.op-confirm-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); }
+.op-confirm-row:last-of-type { border-bottom: 0; }
+.op-confirm-row span { color: var(--text-light); }
+.op-confirm-row b.ok { color: #067647; }
+.op-confirm-summary .op-flag { margin-top: 4px; }
 .op-preserve { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; }
 .op-review-material { margin-bottom: 10px; padding: 10px 12px; border-radius: 7px; background: var(--surface-muted); color: var(--text-light); font-size: calc(13px * var(--font-scale)); }
 .op-material-label { margin-bottom: 4px; font-weight: 600; color: var(--text); }
