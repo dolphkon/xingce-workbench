@@ -52,6 +52,39 @@ const cases = [
     expect: (out) => out.includes('答案：B'),
     detail: (out) => out,
   },
+  {
+    name: '真实样本：复制必究/冲刺班标题/推广水印/参考时间清除，题目保留',
+    run: () => cleanExamText(`st8AoNGkAo 复制必究
+2026 下半年公考笔试·套题冲刺班一期
+行政职业能力测验（一）
+（共 30 题，参考时间：28 分钟）
+一手最全人考说题 | 岗信 biguo368 依次填入画横线部分最恰当的一项是：
+${REAL_QUESTION}`),
+    expect: (out) => {
+      const banned = ['复制必究', '套题冲刺班', '行政职业能力测验', 'biguo', '参考时间']
+      return banned.every((k) => !out.includes(k))
+        && out.includes('依次填入画横线部分') && out.includes('对上述文段主旨概括准确的是')
+    },
+    detail: (out) => out.slice(0, 200),
+  },
+  {
+    name: '真实样本：行内页码与分册标题剥离，页码后的题目正文保留',
+    run: () => cleanExamText(`※淡溪第 9 页 共 39 页第三部分 言语理解与表达
+1. 免密支付本质是技术进步对消费体验的重塑。对上述文段主旨概括准确的是：A.风险 B.权益 C.核心 D.机制 答案：B`),
+    expect: (out) => !out.includes('第 9 页') && !out.includes('第三部分')
+      && out.includes('免密支付本质') && out.includes('答案：B'),
+    detail: (out) => out.slice(0, 180),
+  },
+  {
+    name: '真实样本：OCR 连续重复行去重（选项只留一次）',
+    run: () => cleanExamText(`1. 下列说法正确的一项是：
+A.排山倒海无从选择 B.扑面而来手足无措
+A.排山倒海无从选择 B.扑面而来手足无措
+C.蜂拥而至进退维谷 D.铺天盖地无从适从`),
+    expect: (out) => (out.match(/A\.排山倒海/g) ?? []).length === 1
+      && out.includes('C.蜂拥而至') && out.includes('下列说法正确'),
+    detail: (out) => out,
+  },
 ]
 
 let failed = 0

@@ -36,6 +36,25 @@ const cases = [
     expect: (g) => g.q === '下列说法正确的是：' && g.o === '第三个选项',
     detail: (g) => JSON.stringify(g),
   },
+  {
+    name: '真实样本：题号残留在题干第二行时逐行去除',
+    run: () => refineAtomicQuestion({
+      stem: '42. 知识和信息时，孩子和家长反而，选择性了解让孩子的知识结构变得碎片化。\n43. 史铁生无疑是一个生命的奇迹。',
+      options: [], answer: '', analysis: '', type: '言语理解',
+    }),
+    expect: (g) => g.stem.startsWith('知识和信息时') && g.stem.includes('史铁生')
+      && !/(?:^|\n)\s*4[23]\s*[.．、]/.test(g.stem),
+    detail: (g) => JSON.stringify(g),
+  },
+  {
+    name: '真实样本：清理「答案：未识别，请校对填写」占位提示',
+    run: () => refineAtomicQuestion({
+      stem: '下列说法错误的是：正确答案：未识别，请校对填写',
+      options: ['甲', '乙', '丙', '丁'], answer: '', analysis: '', type: '常识',
+    }),
+    expect: (g) => !g.stem.includes('未识别') && g.stem === '下列说法错误的是：' && g.answer === '',
+    detail: (g) => JSON.stringify(g),
+  },
 ]
 
 let failed = 0

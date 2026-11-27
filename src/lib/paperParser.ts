@@ -10,10 +10,9 @@
 import type { QuizQuestion } from '../types'
 import { extractPdfText, renderPdfPages } from './pdfText'
 import { recognizeImage } from './ocr'
-import { parseQuestionText } from './ocr'
 import { probeLlm, structureQuestions, type LlmBlockReason, type LlmQuestion } from './llm'
-import { cleanExamText, sanitizeSharedMaterial, stripResidualBoilerplate } from './examClean'
-import { refineAtomicQuestion } from './questionClean'
+import { cleanExamText, stripResidualBoilerplate } from './examClean'
+import { findQuestionAnchors, formatStem, ruleParseAll } from './paperSplit'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -61,7 +60,7 @@ export function inspectQuestion(question: QuizQuestion): QuestionConfidence {
   // 题干超过 280 字且选项不完整，多半是题号漏切导致多题粘连
   const tooLongStem = question.title.length > 280 && (incompleteOptions || missingAnswer)
   // 试卷版式噪音残留检测：提示用户校对时重点清理
-  const boilerplateSuspected = /(?:复制必备|版权所有|密封线|条形码|监考老师|注意事项|重要提示|请按照要求在答题卡)/.test(question.title)
+  const boilerplateSuspected = /(?:复制必备|复制必究|版权所有|密封线|条形码|监考老师|注意事项|重要提示|请按照要求在答题卡|biguo\d{3,})/i.test(question.title)
   return {
     missingAnswer,
     incompleteOptions,
@@ -69,31 +68,6 @@ export function inspectQuestion(question: QuizQuestion): QuestionConfidence {
     boilerplateSuspected,
     needsReview: missingAnswer || incompleteOptions || tooLongStem || boilerplateSuspected,
   }
-}
-
-/** 规整题干排版：把挤在一起的 (一)(二) 分段、题内换行、选项串拆开后重新分行 */
-export function formatStem(stem: string): string {
-  const lines = stem
-    .replace(/\r/g, '')
-    .split('\n')
-    // 去掉题号切片后残留在行首的孤立标点（如 "2. 2023年…" 被切成 ". 2023年…"）
-    .map((line) => line.trim().replace(/^[.．、,，)）]\s+(?=\S)/, ''))
-    .filter(Boolean)
-  // 长段中把「（一）」「(四)」等小标题提前换行，避免整段挤成一行
-  const expanded = lines.flatMap((line) => line
-    .replace(/([。！？；])\s*(?=[（(][一二三四五六七八九十\d]+[）)])/g, '$1\n')
-    .split('\n'))
-  // 合并被 PDF 提取拆碎的短行（上一行不以句末标点结尾则拼接）
-  const merged: string[] = []
-  for (const line of expanded) {
-    const prev = merged[merged.length - 1]
-    if (prev && !/[。！？；：.!?;:]$/.test(prev) && line.length < 26 && !/^[（(]/.test(line)) {
-      merged[merged.length - 1] = prev + line
-    } else {
-      merged.push(line)
-    }
-  }
-  return merged.join('\n').trim()
 }
 
 type ProgressFn = (progress: ParseProgress) => void
@@ -134,147 +108,19 @@ async function extractDocxText(dataUrl: string): Promise<string> {
   return result.value || ''
 }
 
-/* -------------------------------------------------------------------------- */
-/* 规则切题：按题号把全文拆成单题块                                            */
-/* -------------------------------------------------------------------------- */
-
-/** 行首题号：支持 "1." "1、" "第1题" "（1）" "1 " 等常见排版 */
-const QUESTION_START_RE = /^\s*(?:第\s*)?(\d{1,3})\s*(?:[.．、,，)）]|[ 　]+题|题)?\s*(?=[^\d\s]|$)/
-
-interface TextBlock { no: number; text: string }
-interface Anchor { no: number; start: number; end: number }
-
-/**
- * 在全文中寻找题号锚点。常见 PDF/网页提取会把题号挤在句中，例如
- * "…127.2020年夏粮产量…128.2020年小麦产量…"，单纯按行首切分会整篇粘连。
- * 这里收集「题号+标点」候选（如 127.），再用最长递增子序列排除年份、小数、
- * 材料序号等噪声（年份后跟"年"、小数后跟数字，都不匹配本正则）。
- */
-function findQuestionAnchors(text: string): Anchor[] {
-  const candidates: Anchor[] = []
-  const re = /(\d{1,3})\s*[.．、,，)）](?=\S)/g
-  let match: RegExpExecArray | null
-  while ((match = re.exec(text)) !== null) {
-    candidates.push({ no: Number(match[1]), start: match.index, end: match.index + match[0].length })
-  }
-  if (candidates.length < 2) return []
-
-  const n = candidates.length
-  const dp = new Array<number>(n).fill(1)
-  const prev = new Array<number>(n).fill(-1)
-  for (let i = 1; i < n; i += 1) {
-    for (let j = 0; j < i; j += 1) {
-      const from = candidates[j]
-      const to = candidates[i]
-      const gap = to.start - from.end
-      // 题号递增、位置递增、间隔合理，避免把小数/年份串成伪序列
-      if (from.no < to.no && to.no - from.no <= 12 && gap >= 0 && gap <= 1600 && dp[j] + 1 > dp[i]) {
-        dp[i] = dp[j] + 1
-        prev[i] = j
-      }
-    }
-  }
-  let best = 0
-  for (let i = 1; i < n; i += 1) if (dp[i] > dp[best]) best = i
-  if (dp[best] < 2) return []
-  const chain: number[] = []
-  for (let k = best; k >= 0; k = prev[k]) chain.unshift(k)
-  return chain.map((i) => candidates[i])
-}
-
-function splitByQuestionNumbers(text: string): TextBlock[] {
-  const normalized = text.replace(/\r/g, '')
-  const anchors = findQuestionAnchors(normalized)
-
-  if (anchors.length >= 2) {
-    // 锚点切片：第一个锚点前的文本需先判定是否为真正的共用材料，
-    // 试卷封面（水印/密封线/注意事项）会被 sanitizeSharedMaterial 整体丢弃
-    const blocks: TextBlock[] = []
-    const material = sanitizeSharedMaterial(normalized.slice(0, anchors[0].start))
-    for (let i = 0; i < anchors.length; i += 1) {
-      const start = anchors[i].end
-      const end = i + 1 < anchors.length ? anchors[i + 1].start : normalized.length
-      let body = normalized.slice(start, end).trim()
-      if (i === 0 && material) body = `【共用材料】${material}\n\n【题目】${body}`
-      if (body) blocks.push({ no: anchors[i].no, text: body })
-    }
-    return blocks
-  }
-
-  // 回退：按行首题号切分
-  const lines = normalized.split('\n')
-  const blocks: TextBlock[] = []
-  let current: TextBlock | null = null
-  let expected = 1
-  for (const line of lines) {
-    const match = line.match(QUESTION_START_RE)
-    const no = match ? Number(match[1]) : 0
-    const looksLikeQuestion = no > 0 && no <= expected + 2 && line.trim().length > 3
-    if (looksLikeQuestion) {
-      if (current) blocks.push(current)
-      current = { no, text: line.replace(QUESTION_START_RE, '').trim() }
-      expected = no + 1
-    } else if (current) {
-      current.text += '\n' + line
-    }
-  }
-  if (current && current.text.trim()) blocks.push(current)
-  return blocks.filter((block) => block.text.trim().length > 0)
-}
-
-/** 提取答案表：如 "答案：1.D 2.B 3.C" 或末尾 "1.D 2.B"，按题号回填 */
-function extractAnswerKey(text: string): Map<number, string> {
-  const map = new Map<number, string>()
-  const tail = text.match(/(?:参考)?答案\s*[:：]?\s*([\s\S]{0,800})$/i)
-  const scope = tail ? tail[1] : text
-  const re = /(?:^|[^\d])(\d{1,3})\s*[.．、]\s*([A-Da-dＡ-Ｄ])(?=$|[^\u4e00-\u9fa5\w])/g
-  let match: RegExpExecArray | null
-  while ((match = re.exec(scope)) !== null) {
-    const no = Number(match[1])
-    if (no >= 1 && no <= 300) map.set(no, match[2].toUpperCase())
-  }
-  return map
-}
-
-/** 用规则把单题文本解析为 QuizQuestion */
-function ruleParseBlock(block: TextBlock, answerKey: Map<number, string>): QuizQuestion | null {
-  // 共用材料段与题目段分开解析：材料里的 "D." "（四）" 等不应被当作选项
-  const materialSplit = block.text.indexOf('【题目】')
-  const material = materialSplit >= 0 ? block.text.slice(0, materialSplit).replace('【共用材料】', '').trim() : ''
-  const body = materialSplit >= 0 ? block.text.slice(materialSplit + '【题目】'.length).trim() : block.text
-  const parsed = parseQuestionText(body)
-  let answer = parsed.answer
-  if (!answer) answer = answerKey.get(block.no) ?? ''
-  if (!parsed.stem || parsed.stem.length < 4) return null
-  // 统一后处理：去题号/选项字母前缀（规则结果同样带 "1." "A." 前缀）
-  const refined = refineAtomicQuestion({ stem: parsed.stem, options: parsed.options, answer, analysis: '', type: '其他' })
-  const stem = material ? `【共用材料】${material}\n\n【题目】${refined.stem}` : refined.stem
-  return {
-    id: uid(),
-    title: formatStem(stem),
-    options: refined.options,
-    answer: refined.answer,
-    analysis: '',
-    type: '其他',
-  }
-}
-
-function ruleParseAll(text: string): QuizQuestion[] {
-  const answerKey = extractAnswerKey(text)
-  const blocks = splitByQuestionNumbers(text)
-  const questions = blocks
-    .map((block) => ruleParseBlock(block, answerKey))
-    .filter((item): item is QuizQuestion => Boolean(item))
-  // 若题号切分失败，退化为「整篇当作一道题」并去掉空选项
-  if (questions.length === 0 && text.trim()) {
-    const single = ruleParseBlock({ no: 1, text }, answerKey)
-    if (single) questions.push(single)
-  }
-  return questions
-}
-
 /** 用规则结果校验/补全 LLM 结果：LLM 缺失选项或答案时用规则结果补齐 */
 function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[] {
+  const clean = (q: QuizQuestion): QuizQuestion => ({
+    ...q,
+    title: formatStem(stripResidualBoilerplate(q.title)),
+  })
+
+  // LLM 题数少于规则 → 判定为漏题/多题粘连（OCR 乱序下模型常把一两道题吞掉），
+  // 此时规则按题号切分的结果更完整，直接以规则为准。阈值 1.2 兼顾偶尔的规则过切。
+  if (llm.length && rules.length > llm.length * 1.2) {
+    return rules.map(clean)
+  }
+
   const source = llm.length ? llm.map((item) => ({
     id: uid(),
     title: item.stem,
@@ -286,15 +132,18 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
 
   return source.map((question, index) => {
     const rule = rules[index]
-    if (!rule) {
-      return { ...question, title: formatStem(stripResidualBoilerplate(question.title)) }
+    // 二次校验：单道题的题干里仍含多个题号锚点 → LLM 粘连，改用规则题干
+    let resolved = question
+    if (rule && findQuestionAnchors(question.title).length > 1) {
+      resolved = { ...resolved, title: rule.title }
     }
-    const options = question.options.map((option, i) => option.trim() || rule.options[i]?.trim() || '')
-    const answer = question.answer || rule.answer || ''
+    if (!rule) return clean(resolved)
+    const options = resolved.options.map((option, i) => option.trim() || rule.options[i]?.trim() || '')
+    const answer = resolved.answer || rule.answer || ''
     // 题干明显过短时以规则题干为准（规则保留原文更完整）
-    const title = question.title.length < 8 && rule.title.length > question.title.length ? rule.title : question.title
-    // 二次兜底：清掉 LLM/规则输出里残留的试卷版式噪音行
-    return { ...question, title: formatStem(stripResidualBoilerplate(title)), options, answer }
+    const title = resolved.title.length < 8 && rule.title.length > resolved.title.length
+      ? rule.title : resolved.title
+    return clean({ ...resolved, title, options, answer })
   }).filter((question) => question.title.trim().length > 0)
 }
 

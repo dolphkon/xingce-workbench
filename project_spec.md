@@ -236,11 +236,12 @@ src/
 │   ├── image.ts                      # 图片原图/压缩 DataURL
 │   ├── pdfText.ts                    # pdfjs-dist 文本层抽取 + 逐页渲染
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
-│   ├── paperParser.ts                # 文档→题库四重解析引擎（392 行）
+│   ├── paperParser.ts                # 文档→题库四重解析引擎（校验/合并 LLM 与规则结果；漏题时以规则为准）
+│   ├── paperSplit.ts                 # 【新增】可独立回归测试的规则切题引擎：题号锚点（支持任意起始/重置）/切块/答案表/题干规整
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
-│   ├── examClean.ts                  # 试卷版式噪音清洗：cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
+│   ├── examClean.ts                  # 试卷版式噪音清洗：连续重复行去重 + 行内页码/推广水印剥离 + cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
 │   ├── questionClean.ts              # 【新增】通用拆题规范化：refineAtomicQuestion 去题号/选项字母前缀、行内选项抽取、答案回填
 │   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
@@ -715,14 +716,16 @@ font-family: -apple-system, "PingFang SC", ...
 四重手段：**PDF 文本层(pdfjs)/Word 文本层(mammoth) → 扫描版逐页渲染 OCR 回退 → 免密钥 LLM 结构化 → 规则切题校验补全**；全流程前置「试卷版式噪音清洗」（lib/examClean.ts）。
 
 - 进度：`prepare→text→clean(60)→llm(64)→rules(68)→done`（8→18→60→64→68→76~92→100）。
-- **试卷噪音清洗（examClean.ts）**：`cleanExamText` 在文本提取后统一过滤版权水印/乱码串/密封线/条形码粘贴说明/考生须知与注意事项条目/页码（"重要提示/注意事项"标题到下一题号之间整块删除）；`sanitizeSharedMaterial` 判定第一个题号前文本是否为真材料（须知关键词≥3 或长段无标点→丢弃）；`stripResidualBoilerplate` 在结果合并时二次兜底。清洗后正文 <20 字时保留原文，避免误删。
-- **题号 LIS 算法**（`findQuestionAnchors`）：收集「数字+标点」候选题号，用最长递增子序列（DP，题号差≤12、间隔≤1600 字）排除年份/小数噪声，支持题中挤在一起的题号（127.2020年…128.2020年…）。
-- `splitByQuestionNumbers`：锚点切片，第一个锚点前文本经 `sanitizeSharedMaterial` 判定后才作为【共用材料】并入第一题（试卷封面说明整段丢弃）。
-- `extractAnswerKey`：提取「答案：1.D 2.B」表按题号回填。
-- `formatStem`：规整排版（(一)(二)小标题换行、合并 PDF 拆碎短行、去题号切片残留的行首孤立标点）。
-- `inspectQuestion` → `QuestionConfidence {missingAnswer, incompleteOptions, tooLongStem, boilerplateSuspected, needsReview}`（题干 >280 字且选项不全/无答案→疑似多题粘连；含水印/密封线/注意事项等关键词→噪音残留，校对页优先提示）。
-- `mergeResults(llm, rules)`：LLM 缺选项/答案时用规则补齐，并对题干做 `stripResidualBoilerplate` 兜底清洗。
-- **通用拆题规范化（lib/questionClean.ts）**：`refineAtomicQuestion` 对 LLM/规则两条路径统一处理——去题干行首题号（`1.`/`第2题`）、去选项字母前缀（`A)`/`（C）`）、选项缺失时从题干行内 `A.xx B.xx` 抽取（保留设问末尾冒号）、答案从显式/行内/解析回填并清除残留标注。`normalizeQuestion`（llm.ts）与 `ruleParseBlock`（paperParser.ts）均调用。
+- **试卷噪音清洗（examClean.ts）**：`cleanExamText` ① 先对连续重复行去重（扫描版相邻页重叠/Tesseract 双次识别）；② `stripInlineNoise` 行内剥离页码（「※…第9页 共39页」）、推广水印（「一手最全…说题 | 岗信 biguo368」）；③ 逐行过滤版权水印（复制必备/**复制必究**/版权所有）、公考冲刺班标题、密封线、条形码、考生须知条目、参考时间、分册标题等。第一个锚点前文本 `sanitizeSharedMaterial` 先用封面强特征直接判定丢弃（早于短文本兜底，避免噪音被放回共用材料）；`stripResidualBoilerplate` 结果侧二次兜底。清洗后正文 <20 字保留原文，避免误删。
+- **规则切题引擎（lib/paperSplit.ts，2026-11-28 从 paperParser 抽出以便独立回归测试）**：
+  - `findQuestionAnchors`：收集「数字+标点」候选（标点后**允许空格**，匹配真实 OCR「42. 知识…」），剔除年份/小数/页码/推广串数字；按文本顺序分段——题号递增（跨≤24）归入当前段，题号大幅回落且新号很小（如 42→2）视为新部分另起段；**单题段也保留**（新部分只有一道题时不丢锚点）。支持任意起始题号与题号重置，不再强制从 1 开始、不再依赖全局 LIS。
+  - `splitByQuestionNumbers`：锚点切片，第一个锚点前文本经 `sanitizeSharedMaterial` 判定后才作为【共用材料】并入第一题；锚点不足时回退按行首题号切分（同样不要求从 1 开始）。
+  - `extractAnswerKey`：提取「答案：1.D 2.B」表按题号回填。
+  - `formatStem`：规整排版（**逐行去题号**、`(一)(二)`小标题换行、合并 PDF 拆碎短行、去题号切片残留的行首孤立标点）。
+  - `ruleParseAll/ruleParseBlock`：候选切块 → 单题结构化 → `refineAtomicQuestion` 规范化。
+- `inspectQuestion` → `QuestionConfidence {missingAnswer, incompleteOptions, tooLongStem, boilerplateSuspected, needsReview}`（题干 >280 字且选项不全/无答案→疑似多题粘连；含水印/密封线/注意事项/biguo 等关键词→噪音残留，校对页优先提示）。
+- `mergeResults(llm, rules)`：**LLM 题数少于规则 1.2 倍时判定漏题/多题粘连，直接以规则结果为准**；否则 LLM 缺选项/答案时用规则补齐、单题题干仍含多个题号锚点时改用规则题干，并对题干做 `stripResidualBoilerplate` 兜底清洗。
+- **通用拆题规范化（lib/questionClean.ts）**：`refineAtomicQuestion` 对 LLM/规则两条路径统一处理——**逐行**去题号（`1.`/`第2题`，题干第二行的 `42.` 也能去掉）、去选项字母前缀（`A)`/`（C）`）、选项缺失时从题干行内 `A.xx B.xx` 抽取（保留设问末尾冒号）、答案从显式/行内/解析回填并清除残留标注、选项文本末尾「答案：X」清理、清除「正确答案：未识别，请校对填写」占位提示。`normalizeQuestion`（llm.ts）与 `ruleParseBlock`（paperSplit.ts）均调用。
 - `parseDocumentToQuestions(fileData, fileName, fileType, onProgress, options)` 为主入口。
 
 ### 11.3 大模型拆题（lib/llm.ts，⚠️ 见当前状态）
@@ -773,7 +776,8 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts → 13 项回归用例（4 题库后处理 + 5 噪音清洗 + 4 通用拆题规范化）
+npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts → 23 项回归用例（4 题库后处理 + 8 噪音清洗 + 6 通用拆题规范化 + 5 规则切题）
+node scripts/e2e-split-quality.mjs  # 真实 OCR 样本 DOCX 上传 E2E：验证题号重置/水印清除/答案回填/题数
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -978,10 +982,22 @@ PORT=4179 npm run dev
   - 确认组卷后 `setActivePaperId(paper.id)` 自动选中新卷；删卷后清空选中态。
 - **验证**：`typecheck` / `test:refine`（13/13）/ `build` 全过；E2E（`scripts/e2e-workbench.mjs`、`e2e-progress.mjs`）验证套卷切换/收藏/编辑/添加、环形进度出现与阶段推进、解析完成进度消失，均无 JS 报错；截图确认左右分栏与环形进度视觉符合参考。
 
+### 16.2.9 扫描版试卷拆题紊乱修复（2026-11-28）
+
+- **需求**：用户上传真实扫描版试卷（44 页纯图片无文本层，【四海】26 下半年行测套题班）后拆题仍紊乱——共用材料混入水印/13~17 题多题粘连、题号 `42.` 残留、选项重复错位、答案未识别。要求优化拆题策略提升准确性。
+- **根因定位**：该 PDF 零文本层走逐页 OCR；① `examClean` 只匹配「复制必备」未覆盖「复制必究」，页码正则要求整行独立、行内「第9页 共39页第三部分…」漏网；② 无连续重复行去重（OCR 双次识别）；③ `findQuestionAnchors` 的 `(?=\S)` 要求标点后紧跟非空白，真实 OCR「42. 知识」整批漏锚点，LIS 题号差≤12/间隔≤1600 又限制跨部分；④ 回退切题强制题号从 1 开始；⑤ `stripQuestionNumber` 只处理首行；⑥ LLM 题数少于规则时阈值过松（1.6）未兜底，模型漏掉第 43 题；⑦ `SYSTEM_PROMPT` 无「一题一拆」强约束与对应 few-shot。
+- **实现**：
+  - `examClean.ts`：新增「复制必究/冲刺班标题/推广水印 biguo/参考时间/分册标题」强特征；`stripInlineNoise` 行内剥离页码与推广水印；`dedupeConsecutiveLines` 连续重复行去重；`sanitizeSharedMaterial` 封面强特征判定前置于短文本兜底。
+  - 新增 `lib/paperSplit.ts`：题号锚点标点后允许空格、候选过滤年份/小数/页码/推广串、递增分段 + 题号重置分段（42→2）、单题段保留；`splitByQuestionNumbers`/`extractAnswerKey`/`formatStem`/`ruleParseAll` 全部迁入并增强；`paperParser.ts` 瘦身并新增 `mergeResults` 的 LLM 漏题规则兜底（阈值 1.2）+ 单题多锚点改用规则题干；`QuestionReviewModal` 导入改指 `paperSplit`。
+  - `questionClean.ts`：逐行去题号、选项末尾「答案：X」清理、答案占位提示清除。
+  - `llm.ts`：`SYSTEM_PROMPT` / `BANK_SYSTEM_PROMPT` 新增「一题一拆、任意起始题号、题号重置、OCR 重复行、行内噪音只剥离保正文」强约束，在线刷题提示词补 few-shot 示例。
+- **验证**：`typecheck` / `test:refine`（23/23：4+8+6+5）/ `build` 全过；E2E（`scripts/e2e-split-quality.mjs`，把截图真实 OCR 文本做成 DOCX 上传）验证切出 3 题（含题号重置的 `2.`）、水印/页码/推广串零残留、答案 C/B 正确回填、选项分行、无 JS 报错；截图确认视觉整洁。回归用例已把本次人工矫正样本固化，同类错误不再复现。
+
 ### 16.3 最近提交历史
 
 ```
-6fb4697 feat: 拆题环形倒计时进度 + 我的试卷后台工作台（左列表右编辑管理）  ← HEAD
+(待提交) fix: 扫描版试卷拆题紊乱修复——噪音清洗/题号重置锚点/LLM漏题兜底/提示词强约束  ← HEAD
+6fb4697 feat: 拆题环形倒计时进度 + 我的试卷后台工作台（左列表右编辑管理）
 d860b72 feat: 通用拆题规范化——去题号/选项字母前缀、行内选项抽取、答案回填
 de9f974 feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱
 6227993 feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）

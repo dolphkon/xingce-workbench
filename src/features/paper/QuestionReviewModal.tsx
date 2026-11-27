@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Icon, Modal } from '../../components/ui'
-import { formatStem, inspectQuestion } from '../../lib/paperParser'
+import { inspectQuestion } from '../../lib/paperParser'
+import { formatStem } from '../../lib/paperSplit'
 import type { QuizQuestion } from '../../types'
 
 /** 单题人工审核弹窗：题干、选项、答案、题型、解析均可编辑并即时校验 */
