@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { ConfirmDialog, Icon, Modal } from '../../components/ui'
+import CircularProgress from '../../components/CircularProgress'
 import { useCollection } from '../../lib/hooks'
 import { put, readCachedAll, remove } from '../../lib/db'
 import { loadDocFile } from '../../lib/docFile'
 import { probeLlm, type LlmBlockReason, type LlmProbe } from '../../lib/llm'
 import {
-  formatStem, inspectQuestion, parseDocumentToQuestions, parseFileKind, type ParseProgress,
+  inspectQuestion, parseDocumentToQuestions, parseFileKind, type ParseProgress,
 } from '../../lib/paperParser'
 import { dateKey, formatClock, uid } from '../../lib/utils'
 import type { KnowledgeDoc, Mistake, Paper, PracticeRecord, QuizQuestion } from '../../types'
 import PaperExamRunner, { type ExamResult } from './PaperExamRunner'
+import QuestionReviewModal from './QuestionReviewModal'
+import PaperWorkbench from './PaperWorkbench'
 
 type View = 'list' | 'upload' | 'exam'
 
@@ -20,85 +23,6 @@ function splitStem(title: string): { material: string; stem: string } {
     return { material: parts[0].replace(/^【共用材料】/, '').trim(), stem: parts[1].trim() }
   }
   return { material: '', stem: title.trim() }
-}
-
-/** 单题人工审核弹窗：题干、选项、答案均可编辑并即时校验 */
-function QuestionReviewModal({
-  question, index, onSave, onDelete, onClose,
-}: {
-  question: QuizQuestion
-  index: number
-  onSave: (next: QuizQuestion) => void
-  onDelete: () => void
-  onClose: () => void
-}) {
-  const [title, setTitle] = useState(question.title)
-  const [options, setOptions] = useState<string[]>(() => [0, 1, 2, 3].map((i) => question.options[i] ?? ''))
-  const [answer, setAnswer] = useState(question.answer)
-  const [analysis, setAnalysis] = useState(question.analysis)
-  const [type, setType] = useState(question.type)
-  const confidence = inspectQuestion(question)
-
-  const answerValid = answer.trim() === '' || /^[A-Da-d]{1,4}$/.test(answer.replace(/[\s、,，]/g, '').toUpperCase())
-  const canSave = title.trim().length > 0 && answerValid
-
-  const save = () => {
-    if (!canSave) return
-    onSave({
-      ...question,
-      title: formatStem(title),
-      options: options.map((option) => option.trim()),
-      answer: answer.replace(/[\s、,，]/g, '').toUpperCase(),
-      analysis: analysis.trim(),
-      type: type.trim() || '其他',
-    })
-  }
-
-  return (
-    <Modal
-      title={`校对第 ${index + 1} 题`}
-      onClose={onClose}
-      wide
-      footer={
-        <>
-          <button className="btn op-delete" onClick={onDelete} style={{ marginRight: 'auto' }}><Icon name="trash" size={14} /> 删除此题</button>
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={save} disabled={!canSave}><Icon name="check" size={15} /> 确认无误并保存</button>
-        </>
-      }
-    >
-      <div className="op-review-form">
-        {confidence.needsReview && (
-          <div className="op-flag">
-            <Icon name="info" size={14} />
-            {confidence.boilerplateSuspected ? '题干含试卷说明/水印残留，请删除非题目内容' : confidence.tooLongStem ? '题干过长，疑似多题粘连，请拆分确认' : confidence.missingAnswer ? '答案未识别，请人工填写' : '选项识别不完整，请核对'}
-          </div>
-        )}
-        <label className="form-label">题干 / 材料（换行会保留）</label>
-        <textarea className="input op-textarea" rows={6} value={title} onChange={(e) => setTitle(e.target.value)} />
-        <label className="form-label">选项</label>
-        {options.map((option, i) => (
-          <div className="op-option-edit" key={i}>
-            <span className="op-option-key">{String.fromCharCode(65 + i)}</span>
-            <input className="input" value={option} onChange={(e) => setOptions((prev) => prev.map((v, j) => j === i ? e.target.value : v))} placeholder={`选项 ${String.fromCharCode(65 + i)}`} />
-          </div>
-        ))}
-        <div className="op-form-row">
-          <div>
-            <label className="form-label">正确答案（A-D，多选如 AB）</label>
-            <input className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="如 A / AB" />
-            {!answerValid && <p className="op-field-error">答案只能是 A-D 字母</p>}
-          </div>
-          <div>
-            <label className="form-label">题型 / 模块</label>
-            <input className="input" value={type} onChange={(e) => setType(e.target.value)} placeholder="如 言语理解" />
-          </div>
-        </div>
-        <label className="form-label">解析（可选）</label>
-        <textarea className="input op-textarea" rows={3} value={analysis} onChange={(e) => setAnalysis(e.target.value)} />
-      </div>
-    </Modal>
-  )
 }
 
 interface Draft {
@@ -135,6 +59,12 @@ export default function OnlinePracticePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null)
+  // 后台工作台当前选中的套卷
+  const [activePaperId, setActivePaperId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!activePaperId && papers.length > 0) setActivePaperId(papers[0].id)
+  }, [papers, activePaperId])
 
   useEffect(() => { refreshPapers(); refreshRecords() }, [])
   // 运行时探测大模型能力（不阻塞首屏；GitHub Pages 会得到 origin 降级提示）
@@ -197,10 +127,51 @@ export default function OnlinePracticePage() {
     }
     await put('papers', paper)
     refreshPapers()
+    setActivePaperId(paper.id)
     setDraft(null)
     setConfirmedIds([])
     setShowConfirmPaper(false)
     setView('list')
+  }
+
+  /** 重命名试卷 */
+  const renamePaper = async (paper: Paper, title: string) => {
+    await put('papers', { ...paper, title, updatedAt: Date.now() })
+    refreshPapers()
+  }
+
+  /** 保存/新增试卷中的一道题 */
+  const saveQuestion = async (paper: Paper, index: number | null, question: QuizQuestion) => {
+    const questions = index === null
+      ? [...paper.questions, question]
+      : paper.questions.map((q, i) => i === index ? question : q)
+    await put('papers', { ...paper, questions, questionCount: questions.length, updatedAt: Date.now() })
+    refreshPapers()
+  }
+
+  /** 删除试卷中的一道题 */
+  const deleteQuestion = async (paper: Paper, index: number) => {
+    const questions = paper.questions.filter((_, i) => i !== index)
+    await put('papers', { ...paper, questions, questionCount: questions.length, updatedAt: Date.now() })
+    refreshPapers()
+  }
+
+  /** 收藏/取消收藏试卷中的一道题 */
+  const toggleFavorite = async (paper: Paper, index: number) => {
+    const questions = paper.questions.map((q, i) => i === index ? { ...q, favorite: !q.favorite } : q)
+    await put('papers', { ...paper, questions, updatedAt: Date.now() })
+    refreshPapers()
+  }
+
+  /** 导出试卷 JSON */
+  const exportPaper = (paper: Paper) => {
+    const blob = new Blob([JSON.stringify(paper, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${paper.title || '试卷'}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const startExam = (paper: Paper) => {
@@ -357,12 +328,7 @@ export default function OnlinePracticePage() {
 
       {parseError && <div className="error-text op-error">{parseError}</div>}
 
-      {uploading && (
-        <div className="op-progress">
-          <div className="op-progress-bar"><span style={{ width: `${progress.percent}%` }} /></div>
-          <div className="op-progress-text">{progress.message} · {progress.percent}%</div>
-        </div>
-      )}
+      {uploading && <CircularProgress progress={progress} />}
 
       {view === 'upload' && draft && !uploading && (
         <div className="op-review">
@@ -430,43 +396,20 @@ export default function OnlinePracticePage() {
         </div>
       )}
 
-      <section className="op-section">
-        <div className="op-section-head">
-          <h2>我的试卷 <span className="op-count">{papers.length}</span></h2>
-        </div>
-        {papers.length === 0 ? (
-          <div className="op-empty">
-            <Icon name="filetext" size={30} />
-            <p>还没有试卷。上传一份 PDF 或 Word 文档开始吧。</p>
-            <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={15} /> 上传文档</button>
-          </div>
-        ) : (
-          <div className="op-paper-grid">
-            {papers.map((paper) => {
-              const paperRecords = historyFor(paper.id)
-              const last = paperRecords[0]
-              return (
-                <div className="op-paper-card" key={paper.id}>
-                  <div className="op-paper-icon"><Icon name="filetext" size={22} /></div>
-                  <div className="op-paper-main">
-                    <div className="op-paper-title">{paper.title}</div>
-                    <div className="op-paper-meta muted small">
-                      {paper.questionCount} 道题 · {paper.fileName}
-                      {last && ` · 最近 ${dateKey(new Date(last.finishedAt))}`}
-                    </div>
-                    {paper.parseMethod && <div className="op-paper-method small">识别：{paper.parseMethod}</div>}
-                  </div>
-                  <div className="op-paper-actions">
-                    <button className="btn btn-primary btn-sm" onClick={() => startExam(paper)}><Icon name="play" size={14} /> 开始刷题</button>
-                    <button className="btn btn-sm" onClick={() => setHistoryPaperId(paper.id)}><Icon name="clock" size={14} /> 历史 {paperRecords.length}</button>
-                    <button className="btn btn-sm op-delete" onClick={() => setConfirmDeletePaper(paper)} title="删除试卷"><Icon name="trash" size={14} /></button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </section>
+      <PaperWorkbench
+        papers={papers}
+        activeId={activePaperId}
+        onSelect={setActivePaperId}
+        onStartExam={startExam}
+        onShowHistory={setHistoryPaperId}
+        onDeletePaper={setConfirmDeletePaper}
+        onRenamePaper={(paper, title) => void renamePaper(paper, title)}
+        onSaveQuestion={(paper, index, question) => void saveQuestion(paper, index, question)}
+        onDeleteQuestion={(paper, index) => void deleteQuestion(paper, index)}
+        onToggleFavorite={(paper, index) => void toggleFavorite(paper, index)}
+        onExportPaper={exportPaper}
+        onUpload={() => fileInputRef.current?.click()}
+      />
 
       {docs.filter((doc) => doc.kind === 'file' && /\.(pdf|docx)$/i.test(doc.fileName || '')).length > 0 && (
         <section className="op-section">
@@ -568,7 +511,9 @@ export default function OnlinePracticePage() {
             const paperId = confirmDeletePaper.id
             await Promise.all(historyFor(paperId).map((record) => remove('practiceRecords', record.id)))
             await remove('papers', paperId)
-            refreshPapers(); refreshRecords(); setConfirmDeletePaper(null)
+            refreshPapers(); refreshRecords()
+            if (activePaperId === paperId) setActivePaperId(null)
+            setConfirmDeletePaper(null)
           })()}
         />
       )}

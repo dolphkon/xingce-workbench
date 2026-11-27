@@ -208,7 +208,7 @@ src/
 ├── styles/
 │   └── global.css                    # 唯一样式文件（1781 行），含全部组件样式与主题变量
 │
-├── components/                       # 公共组件（7）
+├── components/                       # 公共组件（9）
 │   ├── ui.tsx                        # Icon（内联 SVG path 表）、Modal、ConfirmDialog、EmptyState
 │   ├── Layout.tsx                    # 顶部导航 + 设置面板 + GitHub/WorkBuddy 同步面板（429 行）
 │   ├── QuestionNavigator.tsx         # 详情/做题翻页导航（← → 键）
@@ -216,7 +216,8 @@ src/
 │   ├── QuestionStem.tsx              # 【新增】题干统一展示：两列网格（左列类别标签、右列题干+图片），图片与类别标签右侧对齐
 │   ├── ImageLightbox.tsx             # 大图灯箱（缩放 0.3~3、下载、Esc）
 │   ├── RichTextEditor.tsx            # 【新增】材料富文本编辑器：排版工具栏 + 插入/粘贴图片 + 拖拽缩放/删除
-│   └── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
+│   ├── SymbolPicker.tsx              # 【新增】符号选择器：序号数字（1/2/3、1.、1、、（1））+ ①②③/⑴/Ⅰ/常用符号，光标处插入
+│   └── CircularProgress.tsx          # 【新增】拆题环形倒计时：外圈旋转虚线表示进行中 + 彩色进度弧 + 中心百分比/阶段 + 已用时/预计剩余 + 阶段步骤条
 │
 ├── lib/                              # 核心库（26）
 │   ├── db.ts                         # IndexedDB 封装 + localStorage 同步镜像（340 行）
@@ -270,7 +271,9 @@ src/
     │   ├── FileViewer.tsx            # 应用内多格式文件阅读器（648 行）
     │   └── DocSketch.tsx             # 文档手写批注层
     ├── paper/
-    │   ├── OnlinePracticePage.tsx    # 上传→解析→校对→组卷→历史（577 行）
+    │   ├── OnlinePracticePage.tsx    # 上传→环形进度拆题→校对→组卷→试卷工作台→历史
+    │   ├── PaperWorkbench.tsx        # 【新增】我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
+    │   ├── QuestionReviewModal.tsx   # 【抽出】单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
     │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
     ├── bank/                         # 【新增】题库后台管理
     │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/列表筛选/JSON查看/推送错题
@@ -328,6 +331,7 @@ interface Mistake {
 interface QuizQuestion {           // 文档解析出的通用题
   id: string; title: string; options: string[]; answer: string;
   analysis: string; type: string; subType?: string; point?: string; images?: string[];
+  favorite?: boolean;               // 试卷后台管理中是否收藏（星标）
 }
 
 interface Paper {                   // 文档转在线试卷
@@ -602,7 +606,9 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 ### 9.2 文档转在线刷题（paper/）
 
-- **OnlinePracticePage.tsx**（577 行）：视图 `list|upload|exam`。上传 PDF/DOCX → `parseDocumentToQuestions` 带进度 → 人工校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`；从知识库文件文档直接创建；试卷卡片（开始刷题/历史/删除）；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。
+- **OnlinePracticePage.tsx**：视图 `list|upload|exam`。上传 PDF/DOCX → `parseDocumentToQuestions` 带进度 → 人工校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`；从知识库文件文档直接创建；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。
+- **拆题环形倒计时（CircularProgress.tsx）**：上传解析期间用环形进度替代旧的线性进度条——外圈虚线 `cp-spin` 持续旋转表示「正在进行」；彩色 SVG 弧 `cp-arc`（`stroke-dashoffset` 按 percent 平滑过渡）显示进度；中心百分比 + 当前阶段；下方「已用时 mm:ss / 预计还需 ~mm:ss」（依据 percent 与 elapsed 估算，前 1 秒显示「计算中」）与 5 段阶段步骤条（准备文件→读取文本→OCR 识别→智能拆题→规则校验，done/active 高亮 + active 呼吸动画）；支持明暗主题、移动端纵向堆叠。E2E 验证：上传 docx 时 `.cp-wrap` 出现、spin 动画生效、阶段正确推进、解析完成后环形进度消失。
+- **试卷后台工作台（PaperWorkbench.tsx）**：原卡片网格「我的试卷」升级为左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「导入新试卷」），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题卡片显示题号 + 类别 chip（按答案推断）+ 题干 + 共用材料 + 图片 + A-D 选项 + 正确答案，支持收藏星标（`QuizQuestion.favorite`）、校对编辑（`QuestionReviewModal`）、删除、添加题目；确认组卷后自动选中新卷。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
 - **PaperExamRunner.tsx**：复用 `.practice-exam/.pe-*/.pr-*` 全屏考试 UI——题目乱序、选项、标记、计时/暂停、答题卡跳题、字号、夜间模式、下载 Markdown 报告、交卷确认、成绩报告（含每题正确答案醒目标注）。
 
@@ -783,6 +789,7 @@ PORT=4179 npm run dev
 - 通过 `page.goto('http://localhost:4179/#/...')` 访问 HashRouter 路由，`page.evaluate` 检查 DOM/localStorage/IndexedDB，`page.screenshot` 人工核对。
 - 技巧：dev server 下 `await import('/src/lib/db.ts')` 调 `put()` 注入测试数据（注入的 Mistake 必须带 `images:[]`）；上传用隐藏 input `input[aria-label="上传本地文件到文件夹"]` 的 `setInputFiles`；模拟 LLM 用拦截 `models`/`chat` 接口返回 SSE。
 - 验收标准：`npm run build` 通过（strict 类型检查）+ 无 `pageerror`。
+- 回归脚本：`scripts/e2e-workbench.mjs`（预置 papers 后验证套卷切换/收藏/编辑/添加题目）与 `scripts/e2e-progress.mjs`（生成临时 docx 上传验证环形进度出现、spin 动画、阶段推进、解析完成进度消失）。均需先启动 dev server（`npm run dev -- --port 5183`），用 `node scripts/e2e-*.mjs` 运行。
 - **注意**：`npm install pdfjs-dist` 等会清掉未记录的 `playwright-core`，需重新安装。
 
 ---
@@ -962,10 +969,20 @@ PORT=4179 npm run dev
 - **实现**：新增 `lib/questionClean.ts` 的 `refineAtomicQuestion`，统一去题干行首题号、去选项字母前缀（含全角）、选项缺失时从题干行内 `A.xx B.xx` 抽取（保留设问末尾冒号）、答案从显式/行内/解析回填并清除残留标注；接入 `llm.ts` 的 `normalizeQuestion` 与 `paperParser.ts` 的 `ruleParseBlock` 两条路径。
 - **验证**：`typecheck` / `test:refine`（13/13：4 题库后处理 + 5 噪音清洗 + 4 通用拆题规范化）/ `build` 全过；用截图原文实测——题干 `1.` `2.` 去除、选项 `A)` 前缀去除、第2题答案从解析回填为 A；无 JS 报错。
 
+### 16.2.8 拆题环形倒计时 + 试卷后台工作台（2026-11-28）
+
+- **需求**：优化在线刷题页——拆题过程用转圈圈的倒计时进度效果（要求效果好）；确认组卷后每套题以列表排列，参考效果为「左侧套题列表 + 右侧该套卷后台编辑管理」。
+- **实现**：
+  - 新增 `components/CircularProgress.tsx` 替换线性进度条：SVG 环形进度（渐变弧 + `stroke-dashoffset` 过渡）+ 外圈持续旋转虚线 + 中心百分比/阶段 + 已用时/预计剩余倒计时 + 5 段阶段步骤条（active 呼吸动画）；样式在 `global.css` 的 `.cp-*`（含暗色主题与移动端堆叠）。
+  - 「我的试卷」卡片网格升级为 `features/paper/PaperWorkbench.tsx` 左右分栏：左侧套题列表（选中高亮），右侧该卷后台编辑管理（逐题题干/材料/图片/选项/答案展示，收藏星标、校对编辑、删除、添加题目，试卷改名、导出 JSON、开始刷题、历史、删除）。`QuestionReviewModal` 抽为独立组件供上传校对与工作台共用；`QuizQuestion` 加 `favorite?` 字段。
+  - 确认组卷后 `setActivePaperId(paper.id)` 自动选中新卷；删卷后清空选中态。
+- **验证**：`typecheck` / `test:refine`（13/13）/ `build` 全过；E2E（`scripts/e2e-workbench.mjs`、`e2e-progress.mjs`）验证套卷切换/收藏/编辑/添加、环形进度出现与阶段推进、解析完成进度消失，均无 JS 报错；截图确认左右分栏与环形进度视觉符合参考。
+
 ### 16.3 最近提交历史
 
 ```
-d860b72 feat: 通用拆题规范化——去题号/选项字母前缀、行内选项抽取、答案回填  ← HEAD
+(待提交) feat: 拆题环形倒计时进度 + 我的试卷后台工作台（左列表右编辑管理）  ← HEAD
+d860b72 feat: 通用拆题规范化——去题号/选项字母前缀、行内选项抽取、答案回填
 de9f974 feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱
 6227993 feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）
 b0d1a8d feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）

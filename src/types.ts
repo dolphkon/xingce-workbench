@@ -185,6 +185,8 @@ export interface QuizQuestion {
   subType?: string
   point?: string
   images?: string[]
+  /** 是否在试卷管理中收藏（星标） */
+  favorite?: boolean
 }
 
 /** 一份由文档解析生成的在线试卷；上传一次可无限次刷题 */

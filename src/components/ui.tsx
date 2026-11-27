@@ -42,6 +42,7 @@ const paths: Record<string, ReactNode> = {
   expand: <><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></>,
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
   bookmark: <><path d="M6 3h12v18l-6-4-6 4z" /></>,
+  star: <><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3L7 14.2l-5-4.9 6.9-1z" /></>,
   note: <><path d="M4 4h16v12H8l-4 4z" /><path d="M8 9h8M8 13h5" /></>,
   undo: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></>,
   eraser: <><path d="m7 21-4-4a2 2 0 0 1 0-2.8L14 3.2a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L11 20H7z" /><path d="M22 21H8" /></>,
