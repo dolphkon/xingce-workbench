@@ -21,6 +21,27 @@ export function sanitizeRichHtml(html: string): string {
   })
 }
 
+/**
+ * 预览专用清洗：在 sanitizeRichHtml 基础上移除编辑器控件与固定图片尺寸。
+ * 保存的 HTML 保留 rt-handle/rt-remove，编辑时仍可拖拽/删除；
+ * 但列表预览若直接渲染会被红色 × 覆盖、固定 width + max-height 会把图压扁，
+ * 因此预览时去掉这些控件和宽高属性，交由 CSS 等比缩放。
+ */
+export function richHtmlForPreview(html: string): string {
+  if (!html) return ''
+  const doc = new DOMParser().parseFromString(sanitizeRichHtml(html), 'text/html')
+  doc.querySelectorAll('.rt-handle, .rt-remove').forEach((node) => node.remove())
+  doc.querySelectorAll('[contenteditable]').forEach((node) => node.removeAttribute('contenteditable'))
+  doc.querySelectorAll('.rt-image').forEach((node) => node.replaceWith(...Array.from(node.childNodes)))
+  doc.querySelectorAll('img').forEach((img) => {
+    img.removeAttribute('width')
+    img.removeAttribute('height')
+    img.removeAttribute('style')
+    img.removeAttribute('data-w')
+  })
+  return doc.body.innerHTML
+}
+
 /** 富文本 → 纯文本：图片替换为「[图]」占位，保留段落换行 */
 export function richTextToPlain(html: string): string {
   if (!html) return ''

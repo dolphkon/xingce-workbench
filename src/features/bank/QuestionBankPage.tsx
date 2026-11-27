@@ -6,7 +6,7 @@ import { put, remove } from '../../lib/db'
 import { useCollection } from '../../lib/hooks'
 import { parseImagesToBank, type BankParseProgress } from '../../lib/bankParser'
 import { compressImage, fileToDataUrl } from '../../lib/image'
-import { richTextToPlain, sanitizeRichHtml } from '../../lib/richText'
+import { richHtmlForPreview, richTextToPlain } from '../../lib/richText'
 import { formatQuestionText, pluralDays } from '../../lib/utils'
 import { BANK_CATEGORIES, BANK_MODULES, type BankQuestion } from '../../types'
 import BankForm from './BankForm'
@@ -172,7 +172,7 @@ export default function QuestionBankPage() {
                     <span className="small light">{pluralDays(item.createdAt)}</span>
                   </div>
                   {item.materialHtml ? (
-                    <div className="bank-item-material-rich" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(item.materialHtml) }} />
+                    <div className="bank-item-material-rich" dangerouslySetInnerHTML={{ __html: richHtmlForPreview(item.materialHtml) }} />
                   ) : item.material ? (
                     <div className="bank-item-material">{formatQuestionText(item.material).replace(/\n/g, ' ').slice(0, 160)}</div>
                   ) : null}
