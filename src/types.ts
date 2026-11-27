@@ -83,29 +83,48 @@ export const QUESTION_TYPES: readonly string[] = DEFAULT_CATEGORIES.map((item) =
 /** 兼容旧类型：现在允许自定义模块名，故为字符串 */
 export type QuestionType = string
 
-/** 错题复盘状态：新录入 → 待复盘 → 已复盘 → 已掌握（已掌握移入掌握库） */
-export type ReviewStatus = 'new' | 'pending' | 'reviewed' | 'mastered'
+/** 掌握度三态：未掌握 → 掌握中 → 已掌握（已掌握自动移入归档库） */
+export type Mastery = 'unmastered' | 'learning' | 'mastered'
 
-export const REVIEW_STATUSES: { value: ReviewStatus; label: string }[] = [
-  { value: 'new', label: '新录入' },
-  { value: 'pending', label: '待复盘' },
-  { value: 'reviewed', label: '已复盘' },
+/** 兼容旧版类型名（历史备份导入用） */
+export type ReviewStatus = Mastery
+
+export const MASTERY_LEVELS: { value: Mastery; label: string }[] = [
+  { value: 'unmastered', label: '未掌握' },
+  { value: 'learning', label: '掌握中' },
   { value: 'mastered', label: '已掌握' },
 ]
 
-/** 兼容旧数据：未设置状态视为新录入 */
-export function reviewStatusOf(item: { reviewStatus?: ReviewStatus }): ReviewStatus {
-  return item.reviewStatus ?? 'new'
+/** 兼容旧版常量名 */
+export const REVIEW_STATUSES = MASTERY_LEVELS
+
+/**
+ * 读取掌握度，兼容历史 4 态数据：
+ * 新录入 → 未掌握；待复盘 / 已复盘 → 掌握中；已掌握 → 已掌握。
+ * 存储字段沿用 reviewStatus 以免历史数据丢失，但语义为掌握度。
+ */
+export function masteryOf(item: { reviewStatus?: string }): Mastery {
+  const value = item.reviewStatus
+  if (value === 'mastered' || value === 'learning' || value === 'unmastered') return value
+  if (value === 'pending' || value === 'reviewed') return 'learning'
+  return 'unmastered'
 }
 
-export function reviewStatusLabel(status: ReviewStatus): string {
-  return REVIEW_STATUSES.find((s) => s.value === status)?.label ?? '新录入'
+/** 兼容旧版函数名 */
+export const reviewStatusOf = masteryOf
+
+export function masteryLabel(status: Mastery): string {
+  return MASTERY_LEVELS.find((s) => s.value === status)?.label ?? '未掌握'
 }
 
-/** 状态对应的 chip 颜色类 */
-export function reviewStatusChip(status: ReviewStatus): string {
-  return { new: 'chip-primary', pending: 'chip-warning', reviewed: 'chip', mastered: 'chip-success' }[status]
+export const reviewStatusLabel = masteryLabel
+
+/** 掌握度对应的 chip 颜色类 */
+export function masteryChip(status: Mastery): string {
+  return { unmastered: 'chip-warning', learning: 'chip-primary', mastered: 'chip-success' }[status]
 }
+
+export const reviewStatusChip = masteryChip
 
 export interface Mistake {
   id: string
@@ -134,8 +153,8 @@ export interface Mistake {
   point?: string
   /** 是否关联母题：关闭后即使有历史考点也不参与自动关联 */
   linkMother?: boolean
-  /** 复盘状态：已掌握的题目进入掌握库、不再显示在错题库 */
-  reviewStatus?: ReviewStatus
+  /** 掌握度：未掌握 / 掌握中 / 已掌握；已掌握的题目进入归档库、不再显示在错题库 */
+  reviewStatus?: Mastery
   /** 关联题库后台记录 ID：录入错题时自动同步题库，编辑时按此 ID 更新同一条题库记录 */
   bankId?: string
   /** 题库类别（单选题/多选题），与题库后台保持一致 */

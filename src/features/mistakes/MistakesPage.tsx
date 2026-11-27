@@ -7,7 +7,7 @@ import { extractImagesAtDisplaySize, richTextToPlain } from '../../lib/richText'
 import { useCollection } from '../../lib/hooks'
 import { ACCURACY_RANGES, matchesAccuracy, matchesDate, type AccuracyRange, type DateRange } from '../../lib/filters'
 import { dateKey, formatQuestionText, pluralDays, stripImagePlaceholder, uid } from '../../lib/utils'
-import { reviewStatusChip, reviewStatusLabel, reviewStatusOf, type BankQuestion, type Mistake, type QuestionType } from '../../types'
+import { masteryChip, masteryLabel, masteryOf, type BankQuestion, type Mistake, type QuestionType } from '../../types'
 import MistakeForm from './MistakeForm'
 
 export default function MistakesPage() {
@@ -46,7 +46,7 @@ export default function MistakesPage() {
           reviewCount: 0,
           correctCount: 0,
           source: q.source || '题库管理',
-          reviewStatus: 'new',
+          reviewStatus: 'unmastered',
         })
       })
     }
@@ -66,9 +66,9 @@ export default function MistakesPage() {
   useEffect(() => { if (bankInitial) setEditing(bankInitial) }, [bankInitial])
   const [deleting, setDeleting] = useState<Mistake | null>(null)
 
-  // 错题库只显示未掌握的题（已掌握移入掌握库）
-  const activeItems = useMemo(() => items.filter((i) => reviewStatusOf(i) !== 'mastered'), [items])
-  const masteredCount = useMemo(() => items.filter((i) => reviewStatusOf(i) === 'mastered').length, [items])
+  // 错题库只显示未掌握 / 掌握中的题（已掌握移入归档库）
+  const activeItems = useMemo(() => items.filter((i) => masteryOf(i) !== 'mastered'), [items])
+  const archivedCount = useMemo(() => items.filter((i) => masteryOf(i) === 'mastered').length, [items])
 
   // 仅展示错题库中实际有题的模块（按配置顺序），作为导航 tab
   const moduleTabs = useMemo(() => {
@@ -91,7 +91,7 @@ export default function MistakesPage() {
 
   const filtered = activeItems
     .filter((item) => {
-      if (reviewStatusOf(item) === 'mastered') return false
+      if (masteryOf(item) === 'mastered') return false
       if (activeType !== '全部' && item.type !== activeType) return false
       if (subType !== '全部' && item.subType !== subType) return false
       if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
@@ -139,7 +139,7 @@ export default function MistakesPage() {
           <p className="page-subtitle">沉淀每一道错题，按时间、题型与正确率进行专项突破</p>
         </div>
         <div className="header-actions">
-          <Link className="btn" to="/mastered"><Icon name="check" size={16} /> 掌握库{masteredCount > 0 ? ` ${masteredCount}` : ''}</Link>
+          <Link className="btn" to="/archive"><Icon name="check" size={16} /> 归档库{archivedCount > 0 ? ` ${archivedCount}` : ''}</Link>
           <Link className="btn" to={practiceHref}><Icon name="play" size={16} /> 专项刷题</Link>
           <button className="btn btn-primary" onClick={() => setEditing('new')}>
             <Icon name="plus" size={16} /> 录入错题
@@ -226,7 +226,7 @@ export default function MistakesPage() {
                       {formatQuestionText(item.title).replace(/\n/g, ' ')}
                     </Link>
                     <div className="item-meta">
-                      <span className={`chip ${reviewStatusChip(reviewStatusOf(item))}`}>{reviewStatusLabel(reviewStatusOf(item))}</span>
+                      <span className={`chip ${masteryChip(masteryOf(item))}`}>{masteryLabel(masteryOf(item))}</span>
                       <span className="chip chip-primary">{item.type}</span>
                       {item.subType && <span className="chip">{item.subType}</span>}
                       {item.accuracy != null && <span className="chip chip-success">正确率 {item.accuracy}%</span>}

@@ -7,7 +7,7 @@ import { getById, put, readCachedById, remove } from '../../lib/db'
 import { relatedMothers } from '../../lib/categories'
 import { useCollection } from '../../lib/hooks'
 import { formatDate, formatQuestionText } from '../../lib/utils'
-import { reviewStatusOf, type Mistake } from '../../types'
+import { masteryOf, type Mistake } from '../../types'
 import MistakeForm from './MistakeForm'
 
 export default function MistakeDetail() {
@@ -40,7 +40,7 @@ export default function MistakeDetail() {
   const { items: allMistakes } = useCollection('mistakes')
   // 仅在当前题型内翻页，顺序与题库列表一致（录入时间倒序）
   const navItems = allMistakes
-    .filter((m) => m.type === item?.type && reviewStatusOf(m) !== 'mastered')
+    .filter((m) => m.type === item?.type && masteryOf(m) !== 'mastered')
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((m) => ({
       id: m.id,
@@ -72,13 +72,13 @@ export default function MistakeDetail() {
     navigate('/mistakes')
   }
 
-  // 移入掌握库：写入状态后刷新缓存并回到错题库（该题不再显示）
+  // 移入归档库：写入掌握度为已掌握后回到错题库（该题不再显示）
   const handleMaster = async () => {
     if (!item) return
     await put('mistakes', { ...item, reviewStatus: 'mastered', updatedAt: Date.now() })
     navigate('/mistakes')
   }
-  const isMastered = reviewStatusOf(item ?? {}) === 'mastered'
+  const isArchived = masteryOf(item ?? {}) === 'mastered'
 
   if (loading) return <div className="loading">加载中…</div>
 
@@ -109,8 +109,8 @@ export default function MistakeDetail() {
     setActive({ selected: chosen, revealed: true })
     // 与专项刷题一致：每次真实作答累计一次练习记录
     const next = { ...item, reviewCount: item.reviewCount + 1, correctCount: item.correctCount + (correct ? 1 : 0), lastReviewedAt: Date.now(), updatedAt: Date.now() }
-    // 掌握库里答错：自动移回错题库继续复盘
-    if (isMastered && !correct) next.reviewStatus = 'reviewed'
+    // 归档库里答错：自动移回错题库继续复盘（掌握中）
+    if (isArchived && !correct) next.reviewStatus = 'learning'
     await put('mistakes', next)
     setLoadedItem(next)
   }
@@ -135,13 +135,13 @@ export default function MistakeDetail() {
           </p>
         </div>
         <div className="header-actions">
-          {revealed && !isMastered && (
-            <button className="btn" onClick={() => void handleMaster()} title="移入掌握库后不再显示在错题库">
-              <Icon name="check" size={16} /> 移入已掌握库
+          {revealed && !isArchived && (
+            <button className="btn" onClick={() => void handleMaster()} title="移入归档库后不再显示在错题库">
+              <Icon name="check" size={16} /> 移入归档库
             </button>
           )}
-          {isMastered && (
-            <span className="chip chip-success">已掌握 · 在掌握库中</span>
+          {isArchived && (
+            <span className="chip chip-success">已掌握 · 在归档库中</span>
           )}
           <button className="btn" onClick={() => setEditing(true)}><Icon name="edit" size={16} /> 编辑</button>
           <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => setDeleting(true)}>

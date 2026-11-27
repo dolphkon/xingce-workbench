@@ -245,7 +245,7 @@ export default function OnlinePracticePage() {
           source: `${activePaper.title}（在线试卷）`,
           subType: question.subType,
           point: question.point,
-          reviewStatus: 'new',
+          reviewStatus: 'unmastered',
         }
       await put('mistakes', record)
     }))

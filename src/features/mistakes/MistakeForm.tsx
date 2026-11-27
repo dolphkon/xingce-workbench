@@ -10,8 +10,8 @@ import { parseQuestionText, recognizeImage, warmupOcr } from '../../lib/ocr'
 import { plainToRichText, richTextToPlain, sanitizeRichHtml } from '../../lib/richText'
 import { formatQuestionText, parseTags, uid } from '../../lib/utils'
 import {
-  BANK_CATEGORIES, BANK_MODULES, REVIEW_STATUSES, reviewStatusOf,
-  type BankCategory, type Mistake, type MotherQuestion, type QuestionType, type ReviewStatus,
+  BANK_CATEGORIES, BANK_MODULES, MASTERY_LEVELS, masteryOf,
+  type BankCategory, type Mistake, type MotherQuestion, type QuestionType, type Mastery,
 } from '../../types'
 import RichTextEditor from '../../components/RichTextEditor'
 import CategoryFields from '../categories/CategoryFields'
@@ -76,8 +76,8 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
   const [accuracyInput, setAccuracyInput] = useState(() =>
     initial?.accuracy != null ? String(initial.accuracy) : '',
   )
-  // 复盘状态：新建默认「新录入」，编辑时沿用已有状态
-  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>(() => reviewStatusOf(initial ?? {}))
+  // 掌握度：新建默认「未掌握」，编辑时沿用已有状态
+  const [reviewStatus, setReviewStatus] = useState<Mastery>(() => masteryOf(initial ?? {}))
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const imagesRef = useRef(images)
   // 原始清晰图缓存：OCR 用原图（压缩会破坏圆圈标记），存储用压缩图
@@ -432,11 +432,11 @@ export default function MistakeForm({ initial, mothers, onSaved, onCancel }: Pro
       </p>
 
       <div className="form-field">
-        <label className="form-label">复盘状态</label>
-        <select className="select" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as ReviewStatus)} data-field="review-status">
-          {REVIEW_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        <label className="form-label">掌握度</label>
+        <select className="select" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as Mastery)} data-field="mastery">
+          {MASTERY_LEVELS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
-        <span className="form-hint">新录入的题目默认为「新录入」；设为「已掌握」后将自动移入掌握库，不再显示在错题库</span>
+        <span className="form-hint">新题目默认为「未掌握」；设为「已掌握」后保存将自动移入归档库，不再显示在错题库</span>
       </div>
 
       <CategoryFields

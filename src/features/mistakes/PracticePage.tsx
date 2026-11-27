@@ -13,7 +13,7 @@ import { THEME_CHANGE_EVENT, readTheme, setTheme, type ThemeKey } from '../../li
 import { useCollection } from '../../lib/hooks'
 import { readCategories } from '../../lib/categories'
 import { dateKey, formatClock, formatQuestionText } from '../../lib/utils'
-import { reviewStatusOf, type Mistake, type QuestionType } from '../../types'
+import { masteryOf, type Mistake, type QuestionType } from '../../types'
 
 interface PracticeResult {
   id: string
@@ -95,7 +95,7 @@ export default function PracticePage() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const eligible = useMemo(() => items.filter((item) => {
-    if (reviewStatusOf(item) === 'mastered') return false
+    if (masteryOf(item) === 'mastered') return false
     if (!matchesDate(item.createdAt, days, startDate, endDate)) return false
     if (type !== '全部' && item.type !== type) return false
     if (subType !== '全部' && item.subType !== subType) return false

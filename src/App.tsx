@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { ensureCategories } from './lib/categories'
 import Layout from './components/Layout'
 import Dashboard from './features/dashboard/Dashboard'
 import MistakesPage from './features/mistakes/MistakesPage'
 import MistakeDetail from './features/mistakes/MistakeDetail'
-import MasteredPage from './features/mistakes/MasteredPage'
+import ArchivePage from './features/mistakes/ArchivePage'
 import PracticePage from './features/mistakes/PracticePage'
 import OnlinePracticePage from './features/paper/OnlinePracticePage'
 import QuestionBankPage from './features/bank/QuestionBankPage'
@@ -24,7 +24,8 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/mistakes" element={<MistakesPage />} />
-        <Route path="/mastered" element={<MasteredPage />} />
+        <Route path="/archive" element={<ArchivePage />} />
+        <Route path="/mastered" element={<Navigate to="/archive" replace />} />
         <Route path="/mistakes/practice" element={<PracticePage />} />
         <Route path="/online-practice" element={<OnlinePracticePage />} />
         <Route path="/question-bank" element={<QuestionBankPage />} />

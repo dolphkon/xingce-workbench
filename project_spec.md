@@ -252,9 +252,9 @@ src/
     │   └── Dashboard.tsx             # 总览 + 备份导入导出 + 清空
     ├── mistakes/
     │   ├── MistakesPage.tsx          # 错题库列表 + 多维筛选
-    │   ├── MistakeDetail.tsx         # 错题详情 + 做题模式 + 移入掌握库
+    │   ├── MistakeDetail.tsx         # 错题详情 + 做题模式 + 移入归档库
     │   ├── MistakeForm.tsx           # 错题录入/编辑 + OCR 粘贴 + 题库同步；排版与题库后台对齐（类别+模块→材料→题干→选项→答案+来源→解析→图片→错题库补充区）
-    │   ├── MasteredPage.tsx          # 掌握库
+    │   ├── ArchivePage.tsx           # 归档库（原掌握库，功能一致）
     │   ├── PracticePage.tsx          # 专项刷题全屏考试（746 行）
     │   ├── QuestionSketch.tsx        # 题目手写草稿（覆盖相邻三题）
     │   └── DraftPad.tsx              # 独立草稿纸抽屉
@@ -299,12 +299,13 @@ interface QuestionCategory {
   typePoints?: Record<string, string[]>;   // 题型 → 专属考点
   createdAt: number; updatedAt: number;
 }
-type ReviewStatus = 'new' | 'pending' | 'reviewed' | 'mastered'
+type Mastery = 'unmastered' | 'learning' | 'mastered'   // 掌握度三态
+type ReviewStatus = Mastery                            // 兼容旧类型名
 ```
 
 `DEFAULT_CATEGORIES` 为 6 个预置模块（言语理解/数量关系/判断推理/资料分析/常识判断/其他），各含 `types`、`points`、`typePoints`。首次启动由 `ensureCategories()` 种子化，固定 id `seed-category-1..6`，按名去重。
 
-`ReviewStatus` 工具函数：`reviewStatusOf`（默认 new）、`reviewStatusLabel`、`reviewStatusChip`（new→chip-primary / pending→chip-warning / reviewed→chip / mastered→chip-success）。`mastered` 状态的错题进入掌握库、不再显示在错题库。
+掌握度工具函数：`masteryOf`（兼容旧 4 态：new→未掌握、pending/reviewed→掌握中、mastered→已掌握）、`masteryLabel`、`masteryChip`（unmastered→chip-warning / learning→chip-primary / mastered→chip-success）。旧函数名 `reviewStatusOf/reviewStatusLabel/reviewStatusChip` 保留为别名。`mastered` 的错题进入归档库、不再显示在错题库。存储字段沿用 `reviewStatus` 以免历史数据丢失。
 
 ### 5.2 核心实体
 
@@ -317,7 +318,7 @@ interface Mistake {
   lastReviewedAt?: number; reviewCount: number; correctCount: number;
   motherId?: string; source?: string; accuracy?: number;
   categoryId?: string; subType?: string; point?: string;
-  linkMother?: boolean; reviewStatus?: ReviewStatus;
+  linkMother?: boolean; reviewStatus?: Mastery;   // 掌握度三态；另有 bankId/category/module/material/materialHtml 供题库同步
 }
 
 interface QuizQuestion {           // 文档解析出的通用题
@@ -564,7 +565,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 |---|---|
 | `/` | Dashboard（总览） |
 | `/mistakes` | MistakesPage（错题库） |
-| `/mastered` | MasteredPage（掌握库） |
+| `/archive` | ArchivePage（归档库，原掌握库功能一致） |
+| `/mastered` | 重定向到 `/archive`（兼容旧链接） |
 | `/mistakes/practice` | PracticePage（专项刷题） |
 | `/online-practice` | OnlinePracticePage（在线刷题） |
 | `/question-bank` | QuestionBankPage（题库后台管理，顶部导航入口） |
@@ -625,8 +627,8 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 - **MistakesPage.tsx**：模块 tab + 关键词/题型/正确率/日期多维筛选；只显示未掌握题；chip 展示状态/模块/题型/正确率/来源/答案/图片数/练习次数/标签。
 - **MistakeForm.tsx**：排版与题库后台 `BankForm` 对齐——① 共有区：类别 + 模块（两列）→ 材料富文本（`RichTextEditor`）→ 题干（失焦自动 `formatQuestionText`）→ 选项（`SymbolPicker` 插入序号）→ 正确答案 + 来源 → 解析 → 图片（最多 8 张，支持 Ctrl/⌘+V 粘贴自动 OCR）；② `.form-section-divider`「错题库补充信息」区：复盘状态、三级分类/关联母题/指定母题、我的答案、自评正确率、标签。**保存时自动同步题库后台**：新建/编辑都写 `bank` store，通过 `mistake.bankId` 关联原记录，编辑时保留题库记录 `createdAt`，从题库推送过来的题带原 `bankId` 直接更新原记录。
-- **MistakeDetail.tsx**：做题模式（默认隐藏答案/解析）、作答累计 reviewCount/correctCount、答错自动移回错题库、「移入已掌握库」、QuestionNavigator 翻页、关联母题列表。
-- **MasteredPage.tsx**：掌握库（reviewStatus='mastered'），移回错题库/编辑/彻底删除。
+- **MistakeDetail.tsx**：做题模式（默认隐藏答案/解析）、作答累计 reviewCount/correctCount、归档库里答错自动移回错题库并置掌握度为「掌握中」、「移入归档库」、QuestionNavigator 翻页、关联母题列表。
+- **ArchivePage.tsx**：归档库（原掌握库，功能一致），掌握度='已掌握'的题目，移回错题库（置为「掌握中」）/编辑/彻底删除；编辑时把掌握度改非「已掌握」保存后自动回到错题库。
 - **PracticePage.tsx**（746 行）：专项刷题——筛选（时间/模块/题型/正确率/题量 10/20/50/全部），答题过程不即时显示对错，交卷统一判分；本轮进度存 sessionStorage；计时/暂停/标记/笔记/草稿；答题卡；报告页含难度系数（`10 - 平均正确率/20`，限制 1~5）、分模块统计、每题答案醒目标注、Markdown 报告下载。
 - **QuestionSketch.tsx**：手写草稿覆盖锚点题 + 前后各一题（共三题卡片区），笔迹按题 id 存 `sessionStorage[xingce-sketch-v1-<id>]`（PNG），20 步撤销，红黑蓝/擦除。
 - **DraftPad.tsx**：独立草稿纸侧栏抽屉（`xingce-practice-draft-v1`）。
@@ -814,7 +816,7 @@ PORT=4179 npm run dev
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 错题库 / 掌握库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联；题干前显示单选题/多选题类别标签（QuestionStem） |
+| 错题库 / 归档库 / 母题库 | ✅ 完整可用 | CRUD、OCR、三级分类、关联；掌握度三态（未掌握/掌握中/已掌握），已掌握自动进归档库；题干前显示单选题/多选题类别标签（QuestionStem） |
 | 题目图片与题干布局 | ✅ 完整可用（2026-11-27） | 图片题干下方从左到右横排、与题干左对齐（flex-wrap）；题干前置类别标签，覆盖详情/专项刷题/试卷刷题/母题详情 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
@@ -927,10 +929,21 @@ PORT=4179 npm run dev
   - `global.css`：新增 `.form-section-divider` 分组标题样式。
 - 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测——字段顺序标签为「类别,模块,材料,题干,选项,正确答案,来源,解析,题目图片,复盘状态,考试模块,题型,关联母题,我的答案,自评正确率,标签」，分隔标题生效；新建错题后 bank 记录 1 条且 `bankId` 与题库 ID 一致、类别/模块/答案同步正确；编辑后题库记录数不变、题干与答案更新、`createdAt` 稳定；从题库推送预填保留类别/模块/题干；无 JS 报错。
 
+### 16.2.5 掌握库改名归档库 + 复盘状态改掌握度三态（2026-11-27）
+
+- 需求：掌握库改为归档库（功能一致）；复盘状态改为掌握度三态「未掌握 / 掌握中 / 已掌握」；编辑题目时选「已掌握」自动移到归档库。
+- 实现：
+  - `types.ts`：新增 `Mastery = 'unmastered' | 'learning' | 'mastered'` 与 `MASTERY_LEVELS`；`masteryOf()` 兼容历史 4 态（new→unmastered、pending/reviewed→learning、mastered 不变），存储字段沿用 `reviewStatus` 避免历史数据丢失；`reviewStatusOf/Label/Chip` 保留别名。
+  - 新文件 `ArchivePage.tsx`（原 `MasteredPage.tsx` 删除）：标题、空状态、「移入归档库」文案全部改名，功能一致；移回错题库时掌握度置为「掌握中」。
+  - `App.tsx`：`/archive` → ArchivePage；`/mastered` → `<Navigate to="/archive" replace />` 兼容旧书签。
+  - 写入点/判断点：MistakesPage（导航按钮「归档库」+ chip 用 masteryLabel/masteryChip）、MistakeDetail（「移入归档库」、归档答错回退 learning）、MistakeForm（下拉「掌握度」三态、默认 unmastered）、PracticePage / OnlinePracticePage 过滤与默认值。
+- 验证：typecheck / test:refine（4/4）/ build 全通过；E2E 实测——旧 4 态数据正确映射（新录入→未掌握、待复盘/已复盘→掌握中、已掌握→归档库）；`/mastered` 重定向到 `/archive`；下拉三态文案正确；新建时选已掌握保存后自动进归档库；详情页编辑选已掌握自动归档；归档库移回后掌握度为 learning；无 JS 报错（OCR 预热 CDN 在测试环境不可达已有 catch 兜底）。
+
 ### 16.3 最近提交历史
 
 ```
-b0d1a8d feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）  ← HEAD
+<PENDING_MASTERY_COMMIT> feat: 掌握库改为归档库；复盘状态改掌握度三态（未掌握/掌握中/已掌握）  ← HEAD
+b0d1a8d feat: 错题库录入排版对齐题库后台；保存自动同步题库（新建+编辑）
 2574832 feat: 符号面板新增序号数字；图片改为与类别标签右侧对齐
 7a1d15d fix: 清除题干里多余的 [图] 占位符（显示层+推送层双层修复）
 b80cbe9 feat: 图片题干下方从左到右横排且与题干左对齐；题干前显示单选题/多选题类别标签
