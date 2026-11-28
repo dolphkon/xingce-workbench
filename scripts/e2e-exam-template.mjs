@@ -85,8 +85,9 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 const page = await browser.newPage({ viewport: { width: 1500, height: 1050 } })
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
-await page.goto(BASE + '#/online-practice')
-await page.waitForSelector('.online-practice-page')
+await page.goto(BASE + '#/question-bank')
+await page.getByRole('button', { name: '文档转在线刷题' }).click()
+await page.waitForSelector('.document-to-paper-page')
 
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-exam-template.docx')
 await page.waitForSelector('.md-review', { timeout: 40000 })
@@ -124,16 +125,17 @@ console.log('④ 自动排版后页数:', tabsAfter)
 
 // 阶段②：按模板解析成套卷
 await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
-await page.waitForSelector('.op-review', { timeout: 40000 })
-const items = await page.locator('.op-review-item').count()
+await page.waitForSelector('.paper-review-page', { timeout: 40000 })
+const items = await page.locator('.paper-q-card').count()
 console.log('⑤ 解析题目数:', items)
 
-// 组卷并检查题目携带部分/页
-await page.getByRole('button', { name: '确认组卷' }).click()
+// 人工推送到在线刷题，并检查题目携带部分/页
+await page.getByRole('button', { name: '推送到在线刷题' }).click()
 await page.locator('.op-confirm-summary').waitFor()
-await page.getByRole('button', { name: '确认组卷' }).last().click()
-await page.locator('.pw-question').first().waitFor({ timeout: 10000 })
-const chips = await page.locator('.pw-question .chip').allTextContents()
+await page.getByRole('button', { name: '确认推送' }).last().click()
+await page.locator('.paper-q-card').first().waitFor({ timeout: 10000 })
+await page.waitForSelector('.online-practice-page')
+const chips = await page.locator('.paper-q-card .chip').allTextContents()
 console.log('⑥ 试卷题目标签:', chips.slice(0, 6).join(' | '))
 
 console.log('JS 错误:', errors.length ? errors.join(' | ') : '无')

@@ -35,8 +35,9 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
-await page.goto(BASE + '#/online-practice')
-await page.waitForSelector('.online-practice-page')
+await page.goto(BASE + '#/question-bank')
+await page.getByRole('button', { name: '文档转在线刷题' }).click()
+await page.waitForSelector('.document-to-paper-page')
 
 // 上传文件
 const input = page.locator('input[type=file]').first()
@@ -62,11 +63,11 @@ for (let i = 0; i < 40; i++) {
   await page.waitForTimeout(120)
 }
 // 等待解析完成
-await page.waitForSelector('.op-review', { timeout: 20000 }).catch(() => {})
+await page.waitForSelector('.paper-review-page', { timeout: 20000 }).catch(() => {})
 await page.waitForTimeout(400)
 const afterDone = {
-  reviewVisible: await page.locator('.op-review').count() > 0,
-  questionCount: await page.locator('.op-review-item').count(),
+  reviewVisible: await page.locator('.paper-review-page').count() > 0,
+  questionCount: await page.locator('.paper-q-card').count(),
   progressGone: await page.locator('.cp-wrap').count() === 0,
 }
 console.log(JSON.stringify({ progressSeen, snapshot, afterDone, errors }, null, 2))

@@ -38,17 +38,22 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
-await page.goto(BASE + '#/online-practice')
-await page.waitForSelector('.online-practice-page')
+await page.goto(BASE + '#/question-bank')
+await page.getByRole('button', { name: '文档转在线刷题' }).click()
+await page.waitForSelector('.document-to-paper-page')
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-split-quality.docx')
 // 当前默认走两阶段套卷模板：阶段①先出 Markdown，人工确认后再解析成题
 await page.waitForSelector('.md-review', { timeout: 40000 })
 await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
-await page.waitForSelector('.op-review', { timeout: 40000 })
+await page.waitForSelector('.paper-review-page', { timeout: 40000 })
 await page.waitForTimeout(400)
 
-const text = await page.locator('.op-review').innerText().catch(() => '')
-const questionCount = await page.locator('.op-review-item').count()
+// 只检查题干/材料文本：卡片上的「模块」chip 是合法标签，不属于试卷版式噪音
+const text = (await page.locator('.paper-q-card').evaluateAll((cards) => cards.map((card) => [
+  card.querySelector('.bank-item-material')?.textContent ?? '',
+  card.querySelector('.paper-q-stem')?.textContent ?? '',
+].join('\n'))).catch(() => [])).join('\n')
+const questionCount = await page.locator('.paper-q-card').count()
 const banned = ['复制必究', 'biguo', '第 9 页', '参考时间', '言语理解与表达']
 const noise = banned.filter((k) => text.includes(k))
 // UI 会自动渲染 <b>1.</b> 序号，这里只检查原始大题号（42/43）是否漏进题干

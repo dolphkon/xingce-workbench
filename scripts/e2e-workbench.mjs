@@ -53,27 +53,27 @@ await page.waitForSelector('.pw-workbench', { timeout: 8000 })
 const results = {}
 results.paperItems = await page.locator('.pw-paper-item').count()
 results.detailTitle = await page.locator('.pw-detail-title').first().textContent()
-results.questionsShown = await page.locator('.pw-question').count()
-results.categoryChips = await page.locator('.pw-question .stem-category').count()
+results.questionsShown = await page.locator('.paper-q-card').count()
+results.categoryChips = await page.locator('.paper-q-card .chip-primary').count()
 
 // 切换试卷
 await page.locator('.pw-paper-item', { hasText: '联考组卷1' }).click()
 await page.waitForTimeout(300)
 results.switchedTitle = await page.locator('.pw-detail-title').first().textContent()
-results.switchedQuestions = await page.locator('.pw-question').count()
+results.switchedQuestions = await page.locator('.paper-q-card').count()
 
 // 收藏
-await page.locator('.pw-question-head .icon-btn').first().click()
+await page.locator('.paper-q-card').first().locator('.bank-item-actions .icon-btn').first().click()
 await page.waitForTimeout(200)
-results.favorited = await page.locator('.pw-question.favorited').count()
+results.favorited = await page.locator('.paper-q-card.favorited').count()
 
 // 编辑题目 -> 弹窗保存
-await page.locator('.pw-question-head .icon-btn[title="校对编辑"]').first().click()
+await page.locator('.paper-q-card').first().getByRole('button', { name: '校对' }).click()
 await page.waitForSelector('.modal')
 await page.locator('.modal textarea').first().fill('【题目】编辑后的题干是否正确？')
 await page.getByRole('button', { name: /确认无误并保存/ }).click()
 await page.waitForTimeout(300)
-results.editedStem = await page.locator('.pw-q-stem').first().textContent()
+results.editedStem = await page.locator('.paper-q-stem').first().textContent()
 
 // 添加题目（与同一套卷添加前比较，不能和切换前的试卷比）
 results.beforeAddQuestions = await page.locator('.pw-question').count()
@@ -82,7 +82,7 @@ await page.waitForSelector('.modal')
 await page.locator('.modal textarea').first().fill('【题目】新增的题目内容？')
 await page.getByRole('button', { name: /确认无误并保存/ }).click()
 await page.waitForTimeout(300)
-results.afterAddQuestions = await page.locator('.pw-question').count()
+results.afterAddQuestions = await page.locator('.paper-q-card').count()
 
 // 截图
 await page.screenshot({ path: '/tmp/xingce-workbench.png', fullPage: true })

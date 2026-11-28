@@ -1,18 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ConfirmDialog, Icon } from '../../components/ui'
-import QuestionImages from '../../components/QuestionImages'
-import { formatQuestionText, questionCategory, stripImagePlaceholder, uid } from '../../lib/utils'
-import type { Paper, QuizQuestion } from '../../types'
+import { ConfirmDialog, Icon, Modal } from '../../components/ui'
+import { put } from '../../lib/db'
+import { bankQuestionToQuiz, quizToBankQuestion } from '../../lib/bankSync'
+import { uid } from '../../lib/utils'
+import type { BankQuestion, Paper, QuizQuestion } from '../../types'
+import BankForm from '../bank/BankForm'
+import PaperQuestionCard from './PaperQuestionCard'
 import QuestionReviewModal from './QuestionReviewModal'
-
-/** 把题干拆成「共用材料 / 题目正文」两段 */
-function splitStem(title: string): { material: string; stem: string } {
-  const parts = title.split('【题目】')
-  if (parts.length === 2) {
-    return { material: parts[0].replace(/^【共用材料】/, '').trim(), stem: parts[1].trim() }
-  }
-  return { material: '', stem: title.trim() }
-}
 
 interface Props {
   papers: Paper[]
@@ -31,7 +25,8 @@ interface Props {
 
 /**
  * 我的试卷后台工作台：
- * 左侧套题列表，右侧为选中试卷的后台编辑管理（逐题查看/校对/收藏/增删）。
+ * 左侧套题列表，右侧逐题校对与管理；题目卡片与题库管理入库卡片同一版式，
+ * 每题可查看 JSON、编辑题库，整卷在开始刷题处推送到在线刷题。
  */
 export default function PaperWorkbench({
   papers, activeId, onSelect, onStartExam, onShowHistory, onDeletePaper,
@@ -41,10 +36,12 @@ export default function PaperWorkbench({
   const [renameValue, setRenameValue] = useState('')
   const [editing, setEditing] = useState<{ index: number | null; question: QuizQuestion } | null>(null)
   const [confirmDelQ, setConfirmDelQ] = useState<number | null>(null)
+  const [jsonIndex, setJsonIndex] = useState<number | null>(null)
+  const [editingBank, setEditingBank] = useState<{ index: number; initial: BankQuestion } | null>(null)
 
   const active = papers.find((paper) => paper.id === activeId) ?? null
 
-  useEffect(() => { setRenaming(false); setEditing(null); setConfirmDelQ(null) }, [activeId])
+  useEffect(() => { setRenaming(false); setEditing(null); setConfirmDelQ(null); setJsonIndex(null); setEditingBank(null) }, [activeId])
 
   const startRename = () => {
     if (!active) return
@@ -66,14 +63,14 @@ export default function PaperWorkbench({
       <div className="op-section-head">
         <h2>我的试卷 <span className="op-count">{papers.length}</span></h2>
         <span className="pw-head-hint muted small">点击左侧套卷，在右侧校对与管理题目</span>
-        <button className="btn btn-sm pw-head-upload" onClick={onUpload}><Icon name="upload" size={14} /> 上传文档</button>
+        <button className="btn btn-sm pw-head-upload" onClick={onUpload}><Icon name="upload" size={14} /> 去生成套卷</button>
       </div>
 
       {papers.length === 0 ? (
         <div className="op-empty">
           <Icon name="filetext" size={30} />
-          <p>还没有试卷。上传一份 PDF 或 Word 文档开始吧。</p>
-          <button className="btn btn-primary" onClick={onUpload}><Icon name="upload" size={15} /> 上传文档</button>
+          <p>还没有试卷。到题库管理页上传一份 PDF 或 Word 文档生成套卷吧。</p>
+          <button className="btn btn-primary" onClick={onUpload}><Icon name="upload" size={15} /> 去题库管理</button>
         </div>
       ) : (
         <div className="pw-workbench">
@@ -92,7 +89,7 @@ export default function PaperWorkbench({
                 </button>
               ))}
             </div>
-            <button className="pw-sidebar-add" onClick={onUpload}><Icon name="plus" size={14} /> 导入新试卷</button>
+            <button className="pw-sidebar-add" onClick={onUpload}><Icon name="plus" size={14} /> 从文档生成套卷</button>
           </aside>
 
           {/* 右侧：该套卷后台编辑管理 */}
@@ -129,52 +126,18 @@ export default function PaperWorkbench({
                 </div>
 
                 <div className="pw-questions">
-                  {active.questions.map((question, index) => {
-                    const parsed = splitStem(question.title)
-                    const category = questionCategory(question.answer)
-                    const filled = question.options.map((option, i) => ({ option, i })).filter((item) => item.option.trim())
-                    return (
-                      <div className={`pw-question${question.favorite ? ' favorited' : ''}`} key={question.id || index}>
-                        <div className="pw-question-head">
-                          <span className="pw-q-num">{index + 1}.</span>
-                          <span className={`stem-category${category === '多选题' ? ' stem-category-multi' : ''}`}>{category}</span>
-                          {question.page ? <span className="chip">第 {question.page} 页</span> : null}
-                          {question.section ? <span className="chip">{question.section}</span> : null}
-                          {question.favorite && <span className="pw-q-fav-flag"><Icon name="star" size={12} /> 已收藏</span>}
-                          <span className="spacer" />
-                          <button
-                            className={`icon-btn${question.favorite ? ' starred' : ''}`}
-                            title={question.favorite ? '取消收藏' : '收藏此题'}
-                            onClick={() => onToggleFavorite(active, index)}
-                          ><Icon name="star" size={15} /></button>
-                          <button className="icon-btn" title="校对编辑" onClick={() => setEditing({ index, question })}><Icon name="edit" size={15} /></button>
-                          <button className="icon-btn danger" title="删除此题" onClick={() => setConfirmDelQ(index)}><Icon name="trash" size={15} /></button>
-                        </div>
-                        {parsed.material && (
-                          <div className="pw-q-material">
-                            <div className="op-material-label">共用材料</div>
-                            <div className="op-preserve">{parsed.material}</div>
-                          </div>
-                        )}
-                        <div className="pw-q-stem op-preserve">{formatQuestionText(stripImagePlaceholder(parsed.stem))}</div>
-                        {!!question.images?.length && (
-                          <QuestionImages images={question.images} altPrefix={`第 ${index + 1} 题`} variant="thumb" className="question-images-section stem-images" />
-                        )}
-                        <div className="pw-q-options">
-                          {filled.length > 0 ? filled.map(({ option, i }) => (
-                            <div className="pw-q-option" key={i}>
-                              <span className="op-option-key">{String.fromCharCode(65 + i)}</span>
-                              <span className="op-preserve">{option}</span>
-                            </div>
-                          )) : <span className="muted small">（未识别到选项，请校对补充）</span>}
-                        </div>
-                        <div className={`pw-q-answer${question.answer ? '' : ' missing'}`}>
-                          正确答案：<b>{question.answer || '未识别 · 请校对填写'}</b>
-                        </div>
-                        {question.analysis && <div className="pr-analysis">{question.analysis}</div>}
-                      </div>
-                    )
-                  })}
+                  {active.questions.map((question, index) => (
+                    <PaperQuestionCard
+                      key={question.id || index}
+                      question={question}
+                      index={index}
+                      onReview={() => setEditing({ index, question })}
+                      onViewJson={() => setJsonIndex(index)}
+                      onEditBank={() => setEditingBank({ index, initial: quizToBankQuestion(question) })}
+                      onDelete={() => setConfirmDelQ(index)}
+                      onToggleFavorite={() => onToggleFavorite(active, index)}
+                    />
+                  ))}
                   <button className="pw-add-question" onClick={addQuestion}><Icon name="plus" size={15} /> 添加题目</button>
                 </div>
               </>
@@ -194,6 +157,30 @@ export default function PaperWorkbench({
           }}
           onSave={(next) => { onSaveQuestion(active, editing.index, next); setEditing(null) }}
         />
+      )}
+
+      {jsonIndex !== null && active?.questions[jsonIndex] && (
+        <Modal
+          title={`第 ${jsonIndex + 1} 题 JSON`}
+          onClose={() => setJsonIndex(null)}
+          footer={<button className="btn" onClick={() => setJsonIndex(null)}>关闭</button>}
+        >
+          <pre className="bank-json-view">{JSON.stringify(active.questions[jsonIndex], null, 2)}</pre>
+        </Modal>
+      )}
+
+      {editingBank && active && (
+        <Modal title={`编辑题库 · 第 ${editingBank.index + 1} 题`} onClose={() => setEditingBank(null)} wide>
+          <BankForm
+            initial={editingBank.initial}
+            onCancel={() => setEditingBank(null)}
+            onSaved={async (q) => {
+              await put('bank', q)
+              onSaveQuestion(active, editingBank.index, bankQuestionToQuiz(q, active.questions[editingBank.index]))
+              setEditingBank(null)
+            }}
+          />
+        </Modal>
       )}
 
       {confirmDelQ !== null && active && (

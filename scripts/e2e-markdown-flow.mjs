@@ -41,8 +41,9 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
-await page.goto(BASE + '#/online-practice')
-await page.waitForSelector('.online-practice-page')
+await page.goto(BASE + '#/question-bank')
+await page.getByRole('button', { name: '文档转在线刷题' }).click()
+await page.waitForSelector('.document-to-paper-page')
 
 // 阶段①：上传文档 → 生成 Markdown 中间稿
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-markdown-flow.docx')
@@ -105,11 +106,11 @@ D. 丁
 await page.getByRole('button', { name: '全文视图' }).click()
 await page.locator('.md-review-editor').fill(edited)
 await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
-await page.waitForSelector('.op-review', { timeout: 40000 })
-const items = await page.locator('.op-review-item').count()
-const firstStem = await page.locator('.op-review-item .op-review-q').first().textContent()
-const answer = await page.locator('.op-review-item .op-review-answer').first().textContent()
-const firstOptions = await page.locator('.op-review-item').first().locator('.op-review-opt').allTextContents()
+await page.waitForSelector('.paper-review-page', { timeout: 40000 })
+const items = await page.locator('.paper-q-card').count()
+const firstStem = await page.locator('.paper-q-card .paper-q-stem').first().textContent()
+const answer = await page.locator('.paper-q-card .chip-success').first().textContent()
+const firstOptions = await page.locator('.paper-q-card').first().locator('.bank-item-options span').allTextContents()
 console.log('③ 题目数:', items)
 console.log('③ 首题题干:', firstStem?.trim())
 console.log('③ 首题选项:', firstOptions.slice(0, 4).map((s) => s.trim()).join(' | '))

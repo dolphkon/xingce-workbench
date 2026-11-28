@@ -1954,6 +1954,30 @@ html[data-theme='dark'] .pw-q-fav-flag { color: #fcd34d; }
 .bank-preview-title { font-weight: 600; font-size: calc(13px * var(--font-scale)); margin-bottom: 8px; }
 .bank-preview-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; line-height: 1.6; font-size: calc(13px * var(--font-scale)); }
 .bank-json-view { background: var(--surface-muted); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 480px; overflow: auto; font-size: calc(12px * var(--font-scale)); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+
+/* ---------- 文档转在线刷题 / 生成套卷（题库管理页内整页流程） ---------- */
+.document-to-paper-page .page-head { align-items: flex-start; }
+.paper-flow-intro { margin-top: 14px; }
+.paper-flow-steps { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.paper-flow-steps span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); color: var(--text-muted); font-size: calc(12px * var(--font-scale)); }
+.paper-flow-steps b { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: #fff; font-size: 11px; }
+.paper-review-page { margin-top: 14px; }
+.paper-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.paper-review-head h2 { margin: 0; font-size: calc(17px * var(--font-scale)); }
+.paper-review-head p { margin: 4px 0 0; }
+.paper-review-tip { margin: 12px 0; }
+.paper-review-list { margin: 12px 0; }
+.paper-review-list .bank-item:last-child { border-bottom: 1px solid var(--border); }
+.paper-review-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.bank-list .paper-q-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 8px; }
+.paper-q-card.confirmed { border-left: 3px solid #067647; }
+.paper-q-card.favorited { border-left: 3px solid #f59e0b; }
+.paper-q-confirmed { display: inline-flex; align-items: center; gap: 3px; color: #067647; font-size: calc(11px * var(--font-scale)); }
+.paper-q-id { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(11px * var(--font-scale)); color: var(--text-light); }
+.paper-q-stem b { margin-right: 4px; }
+.paper-q-analysis { margin-top: 7px; padding: 7px 10px; border-radius: 6px; background: var(--surface-muted); color: var(--text-light); font-size: calc(12px * var(--font-scale)); line-height: 1.6; }
+html[data-theme='dark'] .paper-q-confirmed { color: #6ee7b7; }
+@media (max-width: 700px) { .paper-review-actions { justify-content: stretch; } .paper-q-id { margin-left: 0; width: 100%; } }
 @media (max-width: 700px) {
   .bank-item-actions { gap: 6px; }
   .bank-item-id { margin-left: 0; width: 100%; }

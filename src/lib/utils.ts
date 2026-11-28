@@ -82,10 +82,17 @@ export function stripImagePlaceholder(text: string): string {
     .trim()
 }
 
-/**
- * 依据答案字母推断题目类别：单个字母为单选题，多个不同字母为多选题。
- * 答案为文本（填空/简答）或无字母时归为单选题。
- */
+/** 把试卷题的 title 拆成「共用材料 / 题干」，与题库材料字段互转 */
+export function splitQuizTitle(title: string): { material: string; stem: string } {
+  const parts = title.split('【题目】')
+  if (parts.length === 2) {
+    return { material: parts[0].replace(/^【共用材料】/, '').trim(), stem: parts[1].trim() }
+  }
+  return { material: '', stem: title.trim() }
+}
+
+/** 依据答案字母推断题目类别：单个字母为单选题，多个不同字母为多选题。
+ * 答案为文本（填空/简答）或无字母时归为单选题。 */
 export function questionCategory(answer?: string): '单选题' | '多选题' {
   const letters = (answer ?? '').toUpperCase().match(/[A-Z]/g) ?? []
   return new Set(letters).size > 1 ? '多选题' : '单选题'

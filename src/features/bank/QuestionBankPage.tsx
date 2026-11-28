@@ -10,6 +10,7 @@ import { richHtmlForPreview, richTextToPlain } from '../../lib/richText'
 import { formatQuestionText, pluralDays } from '../../lib/utils'
 import { BANK_CATEGORIES, BANK_MODULES, type BankQuestion } from '../../types'
 import BankForm from './BankForm'
+import DocumentToPaperFlow from '../paper/DocumentToPaperFlow'
 
 interface DraftImage { stored: string; ocr: string }
 
@@ -22,6 +23,8 @@ export default function QuestionBankPage() {
   const [editing, setEditing] = useState<BankQuestion | 'new' | null>(null)
   const [deleting, setDeleting] = useState<BankQuestion | null>(null)
   const [jsonView, setJsonView] = useState<BankQuestion | null>(null)
+  // 文档转在线刷题：占用整页，与题库列表互斥
+  const [docFlowOpen, setDocFlowOpen] = useState(false)
 
   // 图片识别弹窗
   const [importOpen, setImportOpen] = useState(false)
@@ -166,15 +169,25 @@ export default function QuestionBankPage() {
     URL.revokeObjectURL(url)
   }
 
+  if (docFlowOpen) {
+    return (
+      <DocumentToPaperFlow
+        onBack={() => setDocFlowOpen(false)}
+        onPushed={(paper) => navigate('/online-practice', { state: { activePaperId: paper.id } })}
+      />
+    )
+  }
+
   return (
     <>
       <div className="page-header">
         <div>
           <h1 className="page-title">题库管理</h1>
-          <p className="page-subtitle">上传题目图片，智能识别拆题并按 JSON 结构化入库（每题唯一 ID），可一键推送到错题编辑页</p>
+          <p className="page-subtitle">图片识别拆题按 JSON 结构化入库；也可上传 PDF / Word 生成套卷，逐题校对后人工推送到在线刷题</p>
         </div>
         <div className="header-actions">
           <button className="btn" onClick={exportJson}><Icon name="download" size={16} /> 导出 JSON</button>
+          <button className="btn" onClick={() => setDocFlowOpen(true)}><Icon name="filetext" size={16} /> 文档转在线刷题</button>
           <button className="btn btn-primary" onClick={openImport}><Icon name="sparkle" size={16} /> 图片识别入库</button>
           <button className="btn" onClick={() => setEditing('new')}><Icon name="plus" size={16} /> 手动新增</button>
         </div>
