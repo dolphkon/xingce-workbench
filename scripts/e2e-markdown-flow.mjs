@@ -31,6 +31,12 @@ zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${LINES.map(q).join('')}</w:body></w:document>`)
 fs.writeFileSync('/tmp/e2e-markdown-flow.docx', await zip.generateAsync({ type: 'nodebuffer' }))
 
+// 1×1 PNG，用于验证图片插入与原比例预览
+fs.writeFileSync('/tmp/e2e-md-material.png', Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+  'base64',
+))
+
 const browser = await chromium.launch({ executablePath: CHROME, headless: true })
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
 const errors = []
@@ -45,54 +51,76 @@ const mdText = await page.locator('.md-review-editor').inputValue()
 const blocks = (mdText.match(/## 第 \d+ 题/g) || []).length
 console.log('① Markdown 题块数:', blocks)
 console.log('① 噪音残留:', /复制必究|biguo368|共 39 页/.test(mdText))
+console.log('① 题干字段:', mdText.includes('题干：'), '材料字段:', mdText.includes('材料：'))
 const notice = await page.locator('.md-review-head p').textContent()
 console.log('① 生成方式:', notice?.trim())
 
-// 人工编辑：把 Markdown 改成一个干净的单题版本，验证编辑可被消费
+// 人工插入符号：工具栏「符号」→ 带圈数字 ①
+await page.locator('.md-review-actions button[title*="插入符号"]').click()
+await page.locator('.symbol-panel button[title="插入 ①"]').click()
+const afterSymbol = await page.locator('.md-review-editor').inputValue()
+console.log('② 符号插入:', afterSymbol.includes('①'))
+
+// 人工插入图片：上传截图 → DataURL + 原比例预览
+await page.locator('input[type=file][accept="image/*"]').setInputFiles('/tmp/e2e-md-material.png')
+await page.waitForTimeout(800)
+const afterImage = await page.locator('.md-review-editor').inputValue()
+console.log('② 图片插入调试:', afterImage.includes('![材料图]') ? '已写入' : '未写入', '错误提示:', await page.locator('.md-review .error-text').allTextContents())
+console.log('② 编辑器前 120 字:', afterImage.slice(0, 120).replace(/\n/g, '\\n'))
+await page.locator('.md-material-image').first().waitFor({ timeout: 5000 })
+const imageCount = await page.locator('.md-material-image').count()
+console.log('② 图片插入:', afterImage.includes('![材料图](data:image/png'), '预览数:', imageCount)
+const imgBox = await page.locator('.md-material-image img').first().boundingBox()
+console.log('② 图片预览尺寸:', imgBox ? `${Math.round(imgBox.width)}x${Math.round(imgBox.height)}` : '(无)')
+await page.screenshot({ path: '/tmp/xingce-markdown-editor.png', fullPage: true })
+
+// 阶段②：填入人工校验后的规范 Markdown（材料图片 + 符号选项），解析成题
 const edited = `# 人工校验版
 
 ## 第 1 题
 题型：单选题
-模块：常识判断
-答案：A
+模块：言语理解
+材料：图形推理材料 ![图形材料](data:image/png;base64,AAA)
+题干：以下对应表述正确的有：
 
-人工编辑后的题干：下列说法正确的是：
-
-A. 甲项正确
-B. 乙项错误
-C. 丙项正确
-D. 丁项错误
+① 第一项
+② 第二项
+③ 第三项
+④ 第四项
+答案：B
 
 ## 第 2 题
 题型：单选题
-模块：言语理解
-答案：B
-
-人工编辑后的第二题：下列选项正确的是：
+模块：常识判断
+材料：
+题干：下列说法正确的是：
 
 A. 甲
 B. 乙
 C. 丙
-D. 丁`
-await page.screenshot({ path: '/tmp/xingce-markdown-editor.png', fullPage: true })
+D. 丁
+答案：A`
 await page.locator('.md-review-editor').fill(edited)
-
-// 阶段②：解析 Markdown → 待确认题目
 await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
 await page.waitForSelector('.op-review', { timeout: 40000 })
 const items = await page.locator('.op-review-item').count()
 const firstStem = await page.locator('.op-review-item .op-review-q').first().textContent()
 const answer = await page.locator('.op-review-item .op-review-answer').first().textContent()
-console.log('② 题目数:', items)
-console.log('② 首题题干:', firstStem?.trim())
-console.log('② 首题答案:', answer?.trim())
+const firstOptions = await page.locator('.op-review-item').first().locator('.op-review-opt').allTextContents()
+console.log('③ 题目数:', items)
+console.log('③ 首题题干:', firstStem?.trim())
+console.log('③ 首题选项:', firstOptions.slice(0, 4).map((s) => s.trim()).join(' | '))
+console.log('③ 首题答案:', answer?.trim())
 
 await page.screenshot({ path: '/tmp/xingce-markdown-flow.png', fullPage: true })
 console.log('JS 错误:', errors.length ? errors.join(' | ') : '无')
 await browser.close()
 
 const ok = blocks >= 2 && !/复制必究|biguo368|共 39 页/.test(mdText)
-  && items === 2 && firstStem?.includes('下列说法正确的是') && answer?.includes('A')
+  && mdText.includes('题干：') && mdText.includes('材料：')
+  && afterSymbol.includes('①') && afterImage.includes('![材料图](data:image/png') && imageCount >= 1
+  && items === 2 && firstStem?.includes('以下对应表述正确的有') && answer?.includes('B')
+  && firstOptions.some((s) => s.includes('第二项'))
   && errors.length === 0
 console.log(ok ? '\nE2E PASS' : '\nE2E FAIL')
 process.exit(ok ? 0 : 1)

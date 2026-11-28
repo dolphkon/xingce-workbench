@@ -134,6 +134,7 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
     answer: item.answer,
     analysis: item.analysis,
     type: item.type || '其他',
+    images: item.images ?? [],
   })) : rules
 
   return source.map((question, index) => {
@@ -146,10 +147,11 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
     if (!rule) return clean(resolved)
     const options = resolved.options.map((option, i) => option.trim() || rule.options[i]?.trim() || '')
     const answer = resolved.answer || rule.answer || ''
+    const images = resolved.images?.length ? resolved.images : (rule.images ?? [])
     // 题干明显过短时以规则题干为准（规则保留原文更完整）
     const title = resolved.title.length < 8 && rule.title.length > resolved.title.length
       ? rule.title : resolved.title
-    return clean({ ...resolved, title, options, answer })
+    return clean({ ...resolved, title, options, answer, images })
   }).filter((question) => question.title.trim().length > 0)
 }
 

@@ -55,6 +55,25 @@ const cases = [
     expect: (g) => !g.stem.includes('未识别') && g.stem === '下列说法错误的是：' && g.answer === '',
     detail: (g) => JSON.stringify(g),
   },
+  {
+    name: '符号选项：题干末尾 ①②③④ 回填选项并从题干移除',
+    run: () => refineAtomicQuestion({
+      stem: '以下对应表述正确的有：\n① 第一项\n② 第二项\n③ 第三项\n④ 第四项',
+      options: ['第一项', '第二项', '第三项', '第四项'], answer: 'B', analysis: '', type: '常识',
+    }),
+    expect: (g) => g.stem === '以下对应表述正确的有：' && g.options[1] === '第二项'
+      && !g.stem.includes('①'),
+    detail: (g) => JSON.stringify(g),
+  },
+  {
+    name: '安全兜底：材料中的普通编号列表不被当选项删除',
+    run: () => refineAtomicQuestion({
+      stem: '材料说明：\n1. 第一点\n2. 第二点',
+      options: [], answer: '', analysis: '', type: '常识',
+    }),
+    expect: (g) => g.stem.includes('第一点') && g.stem.includes('第二点'),
+    detail: (g) => JSON.stringify(g),
+  },
 ]
 
 let failed = 0

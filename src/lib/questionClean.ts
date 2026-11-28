@@ -67,6 +67,40 @@ export function refineAtomicQuestion<T extends AtomicQuestion>(input: T): T {
     : ['', '', '', '']
   let answer = normalizeAnswer(String(input.answer ?? ''))
 
+  // ⓪ 题干末尾残留的 ①②③ / 1. / （1） 选项行：回填到选项并从题干移除。
+  // 仅在「连续 ≥2 行、序号递增、且位于题干末尾、与已识别选项一致」时才处理，
+  // 避免误删材料里的普通编号列表。
+  {
+    const lines = stem.split('\n')
+    const found: { line: number; index: number; text: string }[] = []
+    lines.forEach((line, i) => {
+      const marker = line.match(/^\s*([①②③④]|⑴|⑵|⑶|⑷|⒈|⒉|⒊|⒋|（[1-4]）|\([1-4]\)|[1-4][.．、:：)])\s*(.+)$/)
+      if (!marker) return
+      const groups = [['①', '②', '③', '④'], ['⑴', '⑵', '⑶', '⑷'], ['⒈', '⒉', '⒊', '⒋']]
+      const group = groups.find((g) => g.includes(marker[1]))
+      const index = group ? group.indexOf(marker[1])
+        : Number(marker[1].replace(/[（）()]/g, '').replace(/[.．、:：)]/g, '')) - 1
+      if (index >= 0 && index <= 3) found.push({ line: i, index, text: marker[2].trim() })
+    })
+    // 选项已识别时 ≥2 行即可清理残留；选项为空时必须凑齐 4 个才回填，避免误删材料列表
+    const coherent = found.length >= (options.filter(Boolean).length >= 2 ? 2 : 4)
+      && found[found.length - 1].line === lines.length - 1
+      && found[0].index === 0
+      && found.every((item, i) => i === 0 || item.line === found[i - 1].line + 1)
+    if (coherent) {
+      const compact = (s: string) => s.replace(/[\s，,。：:、；;]/g, '')
+      const consistent = options.filter(Boolean).length < 2
+        || options.every((value, i) => {
+          const text = found.find((f) => f.index === i)?.text ?? ''
+          return !value || !text || compact(value).includes(compact(text)) || compact(text).includes(compact(value))
+        })
+      if (consistent) {
+        options = options.map((value, i) => value || found.find((f) => f.index === i)?.text || '')
+        stem = lines.filter((_line, i) => !found.some((f) => f.line === i)).join('\n').trim()
+      }
+    }
+  }
+
   // ① 题干去行首题号
   stem = stripQuestionNumber(stem)
 

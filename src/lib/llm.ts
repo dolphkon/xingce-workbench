@@ -20,6 +20,8 @@ export interface LlmQuestion {
   answer: string
   analysis: string
   type: string
+  /** 材料/题干中的图片地址（Markdown ![](...) 原样保留） */
+  images?: string[]
 }
 
 /** 探测失败的可归类原因，用于给用户精确指引 */
@@ -431,15 +433,24 @@ function normalizeQuestion(item: unknown): LlmQuestion {
     }
   }
 
+  // 材料/题干中的图片地址原样保留，供题库和在线刷题原比例显示
+  const rawImages = obj.images ?? obj.materialImages
+  const images = Array.isArray(rawImages)
+    ? rawImages.map((v) => String(v ?? '').trim()).filter((v) => /^(data:image\/|https?:\/\/|attachment:)/i.test(v))
+    : []
+
   // 统一后处理：去题号/选项字母前缀、行内选项抽取、答案回填
-  return refineAtomicQuestion({
-    no,
-    stem,
-    options,
-    answer: String(obj.answer ?? obj.ans ?? '').replace(/[^A-Da-d]/g, '').toUpperCase(),
-    analysis: String(obj.analysis ?? obj.explanation ?? obj.parse ?? '').trim(),
-    type: String(obj.type ?? obj.module ?? obj.category ?? '').trim() || '其他',
-  })
+  return {
+    ...refineAtomicQuestion({
+      no,
+      stem,
+      options,
+      answer: String(obj.answer ?? obj.ans ?? '').replace(/[^A-Da-d]/g, '').toUpperCase(),
+      analysis: String(obj.analysis ?? obj.explanation ?? obj.parse ?? '').trim(),
+      type: String(obj.type ?? obj.module ?? obj.category ?? '').trim() || '其他',
+    }),
+    images,
+  }
 }
 
 /* -------------------------------------------------------------------------- */
