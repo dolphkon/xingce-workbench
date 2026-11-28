@@ -279,13 +279,15 @@ src/
     │   ├── FileViewer.tsx            # 应用内多格式文件阅读器（648 行）
     │   └── DocSketch.tsx             # 文档手写批注层
     ├── paper/
-    │   ├── OnlinePracticePage.tsx    # 上传→①AI 生成 Markdown 中间稿→人工校验→②AI 解析成题→逐题校对→组卷→试卷工作台→历史；另保留「直接拆题」快捷入口
-    │   ├── MarkdownReviewPage.tsx    # 【新增】套卷模板校验页：按部分/按页加载（左侧目录+加载更多）/逐页编辑回写/卷面预览/符号面板/粘贴上传图片原比例显示/自动排版/全文视图/下载上传 .md/确认解析
+    │   ├── OnlinePracticePage.tsx    # 在线刷题：套卷列表/工作台/开始刷题/历史/错题入库；文档转试卷流程已迁至题库管理页
+    │   ├── DocumentToPaperFlow.tsx   # 【新增】文档转在线刷题整页流程：上传→套卷模板校验→解析成题→逐题校对/JSON/编辑题库→人工推送
+    │   ├── MarkdownReviewPage.tsx    # 套卷模板校验页：按部分/按页加载（左侧目录+加载更多）/逐页编辑回写/卷面预览/符号面板/粘贴上传图片原比例显示/自动排版/全文视图/下载上传 .md/确认解析
+    │   ├── PaperQuestionCard.tsx     # 【新增】试卷题目卡片，与题库入库卡片同一版式（材料/图片/题干/选项/答案 + 校对/JSON/编辑题库/收藏/删除）
     │   ├── PaperWorkbench.tsx        # 我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
-    │   ├── QuestionReviewModal.tsx   # 【抽出】单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
+    │   ├── QuestionReviewModal.tsx   # 单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
     │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
-    ├── bank/                         # 【新增】题库后台管理
-    │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/列表筛选/JSON查看/推送错题
+    ├── bank/                         # 题库后台管理
+    │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/文档转在线刷题/列表筛选/JSON查看/推送错题
     │   └── BankForm.tsx              # 题库题目手动新增/编辑表单
     ├── mothers/
     │   ├── MothersPage.tsx           # 母题库列表
@@ -586,8 +588,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 | `/archive` | ArchivePage（归档库，原掌握库功能一致） |
 | `/mastered` | 重定向到 `/archive`（兼容旧链接） |
 | `/mistakes/practice` | PracticePage（专项刷题） |
-| `/online-practice` | OnlinePracticePage（在线刷题） |
-| `/question-bank` | QuestionBankPage（题库后台管理，顶部导航入口） |
+| `/online-practice` | OnlinePracticePage（在线刷题：套卷工作台与刷题，不再提供文档上传入口） |
+| `/question-bank` | QuestionBankPage（题库后台管理 + 文档转在线刷题整页流程） |
 | `/mistakes/:id` | MistakeDetail |
 | `/knowledge` | KnowledgePage（知识库单页工作台） |
 | `/knowledge/:id` | DocEditor（仅重定向到 `/knowledge?doc=:id`） |
@@ -596,7 +598,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 | `/plans` | PlansPage |
 | `*` | Dashboard（兜底） |
 
-Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / 母题库 / 学习计划，右侧有 GitHub 同步按钮 + 设置面板。
+Layout 顶部导航含 7 项：总览 / 错题库 / 知识库 / 在线刷题 / 题库管理 / 母题库 / 学习计划，右侧有 GitHub 同步按钮 + 设置面板。知识库侧栏「文档转刷题」链接指向 `/question-bank`。
 
 ---
 
@@ -616,18 +618,19 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 ### 9.2 文档转在线刷题（paper/）
 
-- **OnlinePracticePage.tsx**：视图 `list|markdown|upload|exam`。默认**两阶段套卷模板拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗，OCR 保留逐页 `pageTexts`）→ 阶段① `textToMarkdown`（AI 按「部分→页→题」固定模板生成 Markdown，页标记来自 OCR 真实页；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号，避免重置题号/末题丢失）→ `MarkdownReviewPage` 模拟试卷**按页加载**：左侧部分/页目录（默认 3 页，可加载更多）、右侧逐页编辑 + 卷面预览 + 自动排版 + 全文视图，支持符号/图片插入与下载上传 .md → 阶段② `markdownToQuestions`（AI 按模板解析成题并带回 `section`/`page`，规则兜底）→ 逐题校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
+- **DocumentToPaperFlow.tsx（入口在题库管理页）**：视图 `markdown|review|null`，占用整页。默认**两阶段套卷模板拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗，OCR 保留逐页 `pageTexts`）→ 阶段① `textToMarkdown`（AI 按「部分→页→题」固定模板生成 Markdown，页标记来自 OCR 真实页；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号，避免重置题号/末题丢失）→ `MarkdownReviewPage` 模拟试卷**按页加载**：左侧部分/页目录（默认 3 页，可加载更多）、右侧逐页编辑 + 卷面预览 + 自动排版 + 全文视图，支持符号/图片插入与下载上传 .md → 阶段② `markdownToQuestions`（AI 按模板解析成题并带回 `section`/`page`，规则兜底）→ 逐题校对预览：`PaperQuestionCard` 与题库入库卡片同一版式，展示材料/图片/题干/选项/答案，提供「校对」（`QuestionReviewModal`）、「确认无误」、「查看 JSON」、「编辑题库」（`BankForm` 预填并 `put('bank')`，再由 `bankQuestionToQuiz` 回写试卷）、删除；`splitQuizTitle` 拆【共用材料】/【题目】；每题确认标记 `confirmedIds` → 「推送到在线刷题」汇总弹窗 → `put('papers')` → 跳转 `/online-practice` 并自动选中新卷。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
+- **OnlinePracticePage.tsx**：只负责套卷工作台、刷题、历史与错题入库；不再渲染文档上传入口（按钮改为跳转 `/question-bank`）。推送到达时读取路由 state `activePaperId` 直接选中新卷。
 - **套卷模板中间层（lib/examTemplate.ts）**：固定层级 `## 第X部分 模块名` → `### 第 N 页` → `#### 第 N 题`（兼容旧 `## 第 N 题`，视为第 1 页；人工写成 `##### 第  4  题` 等多余 #/空格也识别）；`parseExamTemplate` 解析部分/页/题归属与行区间，并以人工校验后的「模块」为权威纠正冲突的部分标题（`canonicalSection`，如 `模块：常识` + `第一部分 言语理解与表达` → `第一部分 常识判断`）；`updateTemplatePage` 单页回写全文，`attachTemplateContext` 把部分/页附着到题目，`renderExamTemplate`/`formatExamTemplate` 按模板排版（统一回标准四级标题并保留原题号，不把 42/重置题号改成 1、2、3），`pageTextsToTemplate` 逐页 OCR 兜底，`templateStats` 统计规模。
 - **两阶段 Markdown 中间层（lib/markdownFlow.ts）**：题块标题统一由 `QUESTION_HEADING_RE` 识别，容忍 1~8 个 `#`、全角空格、`第4题` 等人工写法；题内字段顺序固定为 `题型：单选题` → `模块：言语理解` → `材料：`（可为空，可含 `![图形材料](data:image/...)`）→ `题干：`（显式字段，兼容旧写法「题干原文：」）→ 选项 → `答案：` → `解析：`；选项支持 `A./A．/B./C./D.`，也支持 `1./（1）/①/⑴/⒈` 等符号，按出现顺序映射 A–D；`MD_GENERATE_PROMPT` 把 OCR 噪音/跨页拼接/题号重置等约束前置并强约束题号标题恰好 4 个 `#`、模块优先于部分标题，`MD_PARSE_PROMPT` 专用于把人工校验后的 Markdown 转成题目 JSON（避免把字段行/题号当题干，section 随 module 纠正）；`splitMarkdownBlocks` 按题块切分（块外 `#` 标题不混入）；`ruleMarkdownToQuestions` 规则兜底解析；`questionsToMarkdown`/`questionToBlock` 序列化与下载；`mergeMarkdownWithRules` 对比规则题号锚点把 AI 漏掉的题补回中间稿。
 - **拆题环形倒计时（CircularProgress.tsx）**：上传解析期间用环形进度替代旧的线性进度条——外圈虚线 `cp-spin` 持续旋转表示「正在进行」；彩色 SVG 弧 `cp-arc`（`stroke-dashoffset` 按 percent 平滑过渡）显示进度；中心百分比 + 当前阶段；下方「已用时 mm:ss / 预计还需 ~mm:ss」（依据 percent 与 elapsed 估算，前 1 秒显示「计算中」）与 5 段阶段步骤条（准备文件→读取文本→OCR 识别→智能拆题→规则校验，done/active 高亮 + active 呼吸动画）；支持明暗主题、移动端纵向堆叠。E2E 验证：上传 docx 时 `.cp-wrap` 出现、spin 动画生效、阶段正确推进、解析完成后环形进度消失。
-- **试卷后台工作台（PaperWorkbench.tsx）**：原卡片网格「我的试卷」升级为左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「导入新试卷」），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题卡片显示题号 + 类别 chip（按答案推断）+ 题干 + 共用材料 + 图片 + A-D 选项 + 正确答案，支持收藏星标（`QuizQuestion.favorite`）、校对编辑（`QuestionReviewModal`）、删除、添加题目；确认组卷后自动选中新卷。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
+- **试卷后台工作台（PaperWorkbench.tsx）**：左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「从文档生成套卷」跳转题库管理页），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题统一使用 `PaperQuestionCard`（题库入库卡片版式），每题可校对编辑（`QuestionReviewModal`）、查看 JSON、`编辑题库`（`BankForm` + `put('bank')` + 回写试卷题）、收藏星标、删除，并支持添加题目。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
 - **PaperExamRunner.tsx**：复用 `.practice-exam/.pe-*/.pr-*` 全屏考试 UI——题目乱序、选项、标记、计时/暂停、答题卡跳题、字号、夜间模式、下载 Markdown 报告、交卷确认、成绩报告（含每题正确答案醒目标注）。
 
 ### 9.2.1 题库后台管理（bank/）【新增】
 
 - **顶部导航入口**：Layout `navItems` 中 `/question-bank`（icon `database`），路由见 8.2。
-- **QuestionBankPage.tsx**：题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR），支持**点击选择**与 **Ctrl/⌘+V 粘贴截图**（弹窗打开时 document `paste` 监听，剪贴板图片经 `addImageFiles` 压缩入列，500ms 防抖后自动调用 `parseImagesToBank` 开始识别；连续粘贴多张只识别一次）；`runParse(batch?)` 读 `draftImagesRef` 镜像 + `parsingRef` 防重，避免异步闭包拿到旧 state；实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
+- **QuestionBankPage.tsx**：顶部「文档转在线刷题」按钮占用整页渲染 `DocumentToPaperFlow`（与题库列表互斥），生成套卷后人工推送到在线刷题；题库列表 + 模块/类别/关键词筛选；「图片识别入库」弹窗——上传≤12 张图片（压缩图存储 + 原图 OCR），支持**点击选择**与 **Ctrl/⌘+V 粘贴截图**（弹窗打开时 document `paste` 监听，剪贴板图片经 `addImageFiles` 压缩入列，500ms 防抖后自动调用 `parseImagesToBank` 开始识别；连续粘贴多张只识别一次）；`runParse(batch?)` 读 `draftImagesRef` 镜像 + `parsingRef` 防重，避免异步闭包拿到旧 state；实时进度（OCR 0~35%、LLM 35~92%、规则兜底 92~100%）→ 识别结果预览（每题展示类别/模块/答案/题干/选项）→ 「确认入库」批量 `put('bank')`；「导出 JSON」；每题「查看 JSON」「编辑」「删除」「推送到错题」。
 - **BankForm.tsx**：手动新增/编辑——类别（单选/多选）、模块（六大固定）、材料（富文本编辑器）、题干、4 选项（支持 `SymbolPicker` 插入 1、2、3 或 ①②③ 等序号）、答案（>1 字母自动判多选）、解析、来源、图片（≤8）；失焦 `formatQuestionText`。
 - **材料富文本（适配图形推理/资料分析图表题）**：
   - `RichTextEditor.tsx`：`contentEditable` 编辑器 + 工具栏（加粗/斜体/下划线/无序列表/有序列表/清除格式/插入图片）；图片经 `compressImage` 压缩后以 DataURL 内嵌，插入时光标折叠到末尾避免误替换选中文字；图片右下角拖拽手柄用 Pointer Events 缩放（48~1200px），右上角 × 删除；所有输出经 DOMPurify 白名单过滤。`onPaste` 拦截剪贴板图片（`handlePaste`）走同一压缩+带控件插入逻辑（`insertImages`），使 Ctrl+V 粘贴的图片同样可拖拽缩放（纯文字粘贴保留浏览器默认行为）。
@@ -705,7 +708,8 @@ font-family: -apple-system, "PingFang SC", ...
 | `.fr-*` | 文件阅读器 |
 | `.practice-exam/.pe-*` | 粉笔风全屏刷题 |
 | `.pr-*` | 刷题报告页 |
-| `.op-*` | 在线刷题页（能力状态/校对/确认组卷） |
+| `.op-*` | 拆题流程通用（能力状态/校对/确认推送/环形进度） |
+| `.paper-flow-*` / `.paper-review-*` / `.paper-q-*` | 题库管理页内「文档转在线刷题」整页流程与套卷题目卡片（复用 `.bank-item-*` 版式） |
 | `.qs-*` / `.ds-*` | 题目草稿 / 文档批注手写层 |
 
 响应式断点：900px、700px、600px。
@@ -795,11 +799,11 @@ npm run test:all      # test:refine + build + test:e2e 一条命令跑完整质�
 单组 E2E 脚本（也可单独执行，`test:e2e` 已全部覆盖）：
 
 ```bash
-node scripts/e2e-workbench.mjs     # 试卷后台：套卷切换/收藏/编辑/新增题目
-node scripts/e2e-progress.mjs      # 环形拆题倒计时：阶段推进/动画/完成消失
-node scripts/e2e-split-quality.mjs # 真实 OCR 样本 DOCX 上传：题号重置/水印清除/答案回填/题数
-node scripts/e2e-markdown-flow.mjs # 两阶段流程：中间稿(字段/题块数/噪音/补全漏题)→符号与图片插入→人工编辑→解析成题→组卷
-node scripts/e2e-exam-template.mjs # 套卷模板：按页目录/切页/卷面预览→单页回写→自动排版→按模板解析→组卷后部分/页标签
+node scripts/e2e-workbench.mjs     # 试卷后台：套卷切换/收藏/编辑/新增题目（题库卡片版式）
+node scripts/e2e-progress.mjs      # 题库管理页进入文档转刷题：环形拆题倒计时阶段推进/动画/完成消失
+node scripts/e2e-split-quality.mjs # 题库管理页上传真实 OCR 样本 DOCX：题号重置/水印清除/答案回填/题数
+node scripts/e2e-markdown-flow.mjs # 两阶段流程：中间稿(字段/题块数/噪音/补全漏题)→符号与图片插入→人工编辑→解析成题→逐题校对
+node scripts/e2e-exam-template.mjs # 套卷模板：按页目录/切页/卷面预览→单页回写→自动排版→按模板解析→人工推送到在线刷题后部分/页标签
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -859,8 +863,8 @@ PORT=5173 npm run dev
 | 题目图片与题干布局 | ✅ 完整可用（2026-11-27） | 图片题干下方从左到右横排、与题干左对齐（flex-wrap）；题干前置类别标签，覆盖详情/专项刷题/试卷刷题/母题详情 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
-| **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；见 9.2.1 |
-| 文档转在线刷题 | ✅ 完整可用（大模型智能拆题） | 上传→AI 拆题→人工校对→组卷→无限刷题→错题入库 |
+| **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；兼作文档转在线刷题入口；见 9.2.1 / 9.2 |
+| 文档转在线刷题 | ✅ 完整可用（大模型智能拆题） | 入口已迁至题库管理页；上传→套卷模板→逐题校对/JSON/编辑题库→人工推送到在线刷题→无限刷题→错题入库 |
 | 学习计划 + 统计 | ✅ 完整可用 | 周历/计时/子任务/图表 |
 | 本地存储 + 双同步 | ✅ 完整可用 | IndexedDB 镜像、GitHub 同步、WorkBuddy 云同步 |
 | 主题/字号/移动端 | ✅ 完整可用 | 日/夜、三档字号、响应式 |
@@ -1056,10 +1060,22 @@ PORT=5173 npm run dev
   4. `examTemplate.ts` 的 TemplatePage 新增 `paper`/`id`/`paperTitle`，同一 PDF 中多套卷页码各自从 1 开始时不再并到同一页；`MarkdownReviewPage.tsx` 以 `paper:no` 作选中键，目录按套卷分组，回写按 id 精准定位；材料图插入定位改用共享题号正则，兼容 5/6 个 `#`。
 - **验证**：`typecheck` / `test:refine`（59/59，新增 5 项格式容错样本、4 项多套卷分页样本、1 项 AI 错编题号/臆造标题纠正样本）/ `build` 全过；新增 `npm run test:e2e` 统一入口（`scripts/e2e-runner.mjs`），实测 5 组 E2E 全部 PASS（工作台/倒计时/拆题质量/两阶段 Markdown/套卷模板），无 JS 报错。原 PDF 已用 `workbuddy-pdf` 逐页渲染核对：国务院常务会议题对应原文第 11 题，生成稿中被错编为第 43 题的问题由阶段①题号锚点对齐校验修复。
 
+### 16.2.14 文档转刷题入口迁移到题库管理 + 套卷卡片对齐题库版式（2026-11-28）
+- **需求**：把「文档转在线刷题」模块从在线刷题页移到题库管理页；生成套卷页面整页 UI 优化，每题卡片与题库管理「图片识别入库」保持一致；整套卷支持查看每题 JSON、编辑题库；人工推送到在线刷题。
+- **改造**：
+  1. 新增 `features/paper/DocumentToPaperFlow.tsx`：承接原 `OnlinePracticePage` 上传/解析/两阶段校验/逐题校对/组卷全部状态与逻辑，题库管理页顶部「文档转在线刷题」按钮整页渲染该组件，与题库列表互斥；解析完成后逐题校对页改为与题库管理同构的 `.card` + `.bank-list` 版式，页头展示步骤说明与能力状态条。
+  2. 新增 `features/paper/PaperQuestionCard.tsx`：统一试卷题与题库入库卡片视觉——类别/模块/答案/页码/部分 chip、材料、图片、题干、`A. …` 选项行、解析，操作区「校对 / 确认无误 / 查看 JSON / 编辑题库 / 收藏 / 删除」。`PaperWorkbench` 同步改用该卡片，在线刷题页不再渲染上传入口，改为跳转题库管理页；推送到达时读取路由 state `activePaperId` 自动选中新卷。
+  3. `lib/bankSync.ts` 新增 `quizToBankQuestion` / `bankQuestionToQuiz` 双向映射：按答案推断单选/多选、模块归一化到六大模块、材料与【题目】结构互转、保留试卷题 ID 与套卷 `section`/`page` 上下文；`utils.ts` 抽出 `splitQuizTitle`，题库与试卷卡片共用。
+  4. 逐题「查看 JSON」用 `bank-json-view` 弹窗展示题目原始 JSON；「编辑题库」用 `BankForm` 预填，`put('bank')` 后回写试卷题并标记已确认——该操作即题库人工矫正样本，后续按 P2 闭环把矫正样本沉淀到提示词/后处理规则与回归用例。
+  5. 组卷确认弹窗改为「确认组卷并推送到在线刷题」，`put('papers')` 后跳转 `/online-practice`；知识库侧栏「文档转刷题」链接指向 `/question-bank`。
+  6. E2E 5 组脚本同步改为从题库管理页进入文档转刷题流程，选择器切换到 `.paper-q-card` / `.paper-q-stem` / `.bank-item-options`，拆题质量断言改为只检查题干与材料文本（模块 chip 属合法标签）。
+- **验证**：`typecheck` / `build` 全过；`test:refine` 59/59；`npm run test:e2e` 5 组全部 PASS（试卷工作台、环形进度、拆题质量、两阶段 Markdown、套卷模板），无 JS 报错；人工核对套卷卡片与题库入库卡片版式一致。
+
 ### 16.3 最近提交历史
 
 ```
-3fd6e0b fix: 按人工校验样本优化套卷模板——题号容错/模块纠正/多套卷分页与原文题号对齐  ← HEAD
+f4c8a2f feat: 文档转刷题入口迁至题库管理页——套卷卡片对齐题库版式/查看JSON/编辑题库/人工推送  ← HEAD
+3fd6e0b fix: 按人工校验样本优化套卷模板——题号容错/模块纠正/多套卷分页与原文题号对齐
 b7d6b5e feat: 套卷固定模板编辑器——按页加载/卷面预览/自动排版/按模板组合成套卷
 5b40d00 feat: Markdown 中间稿字段规范化——材料图片原比例显示与符号选项/符号插入支持
 0b70269 feat: 两阶段拆题——AI 生成 Markdown 中间稿 → 人工校验排版 → AI 解析成题
