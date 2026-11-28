@@ -194,6 +194,7 @@ xingce-workbench/
 │   ├── test-paper-split.mjs          # 规则切题回归测试（5 项）
 │   ├── test-markdown-flow.mjs        # Markdown 中间层回归测试（20 项）
 │   ├── test-exam-template.mjs        # 套卷模板回归测试（21 项）
+│   ├── test-template-draft.mjs       # 结构化套卷模版草稿回归测试（8 项）
 │   ├── e2e-runner.mjs                # E2E 统一入口：启动/复用 5173 预览并顺序跑 5 组用例
 │   └── e2e-*.mjs                     # 5 组 Playwright 端到端用例（workbench/progress/split-quality/markdown-flow/exam-template）
 ├── dist/                             # 构建产物（部署用，生成即可）
@@ -244,7 +245,8 @@ src/
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（校验/合并 LLM 与规则结果；漏题时以规则为准）
 │   ├── paperSplit.ts                 # 【新增】可独立回归测试的规则切题引擎：题号锚点（支持任意起始/重置）/切块/答案表/题干规整
 │   ├── markdownFlow.ts               # 【新增】两阶段拆题 Markdown 中间层：字段规范（题号/题型/模块/材料/题干/选项/答案/解析）/提示词/切块（##/###/#### 兼容）/规则解析（符号选项+图片材料）/序列化/规则补全漏题
-│   ├── examTemplate.ts               # 【新增】套卷固定模板：部分→页→题解析/分页编辑器回写/模板上下文附着/自动排版/逐页 OCR 生成模板
+│   ├── examTemplate.ts               # 套卷固定模板：部分→页→题解析/分页编辑器回写/模板上下文附着/自动排版/逐页 OCR 生成模板（保留作 Markdown 序列化出口）
+│   ├── templateDraft.ts              # 【新增】结构化套卷草稿：原文题号锚点定题槽边界/AI 字段回填/稳定 ID/部分与页分组/题槽拆分/与 Markdown 双向转换
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
@@ -280,8 +282,9 @@ src/
     │   └── DocSketch.tsx             # 文档手写批注层
     ├── paper/
     │   ├── OnlinePracticePage.tsx    # 在线刷题：套卷列表/工作台/开始刷题/历史/错题入库；文档转试卷流程已迁至题库管理页
-    │   ├── DocumentToPaperFlow.tsx   # 【新增】文档转在线刷题整页流程：上传→套卷模板校验→解析成题→逐题校对/JSON/编辑题库→人工推送
-    │   ├── MarkdownReviewPage.tsx    # 套卷模板校验页：按部分/按页加载（左侧目录+加载更多）/逐页编辑回写/卷面预览/符号面板/粘贴上传图片原比例显示/自动排版/全文视图/下载上传 .md/确认解析
+    │   ├── DocumentToPaperFlow.tsx   # 文档转在线刷题整页流程：上传→题号锚点生成结构化模版→AI 回填字段→生成套卷→逐题校对/JSON/编辑题库→人工推送
+    │   ├── TemplateEditorPage.tsx    # 【新增】结构化套卷模版编辑器：部分/页目录 + 字段级题卡（题号/模块/材料/题干/选项/答案/解析/图片）+ 同源实时卷面预览 + 拆分粘连/增删题 + 文本视图导入导出
+    │   ├── MarkdownReviewPage.tsx    # 旧版 Markdown 文本校验页（保留文件，不再作为默认流程入口）
     │   ├── PaperQuestionCard.tsx     # 【新增】试卷题目卡片，与题库入库卡片同一版式（材料/图片/题干/选项/答案 + 校对/JSON/编辑题库/收藏/删除）
     │   ├── PaperWorkbench.tsx        # 我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
     │   ├── QuestionReviewModal.tsx   # 单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
@@ -618,7 +621,7 @@ Layout 顶部导航含 7 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 ### 9.2 文档转在线刷题（paper/）
 
-- **DocumentToPaperFlow.tsx（入口在题库管理页）**：视图 `markdown|review|null`，占用整页。默认**两阶段套卷模板拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗，OCR 保留逐页 `pageTexts`）→ 阶段① `textToMarkdown`（AI 按「部分→页→题」固定模板生成 Markdown，页标记来自 OCR 真实页；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号、按题干锚点纠正错编/重复题号，`repairMarkdownTemplate` 统一拆分内联标题、识别非标准部分标题、剔除页眉转场噪音并顺延重复题号）→ `MarkdownReviewPage` 模拟试卷**按页加载**：左侧部分/页目录（默认 3 页，可加载更多）、右侧逐页编辑 + 卷面预览 + 自动排版 + 全文视图，支持符号/图片插入与下载上传 .md → 阶段② `markdownToQuestions`（AI 按模板解析成题并带回 `section`/`page`，规则兜底）→ 逐题校对预览：`PaperQuestionCard` 与题库入库卡片同一版式，展示材料/图片/题干/选项/答案，提供「校对」（`QuestionReviewModal`）、「确认无误」、「查看 JSON」、「编辑题库」（`BankForm` 预填并 `put('bank')`，再由 `bankQuestionToQuiz` 回写试卷）、删除；`splitQuizTitle` 拆【共用材料】/【题目】；每题确认标记 `confirmedIds` → 「推送到在线刷题」汇总弹窗 → `put('papers')` → 跳转 `/online-practice` 并自动选中新卷。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
+- **DocumentToPaperFlow.tsx（入口在题库管理页）**：视图 `template|review|null`，占用整页。默认流程为「**原文题号生成结构化模版 → AI 填充字段 → 人工确认生成套卷**」：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗，OCR 保留逐页 `pageTexts`）→ `buildTemplateDraft` 逐页调用 `splitByQuestionNumbers` / `ruleParseBlock`，按原文题号锚点建立一题一槽（`TemplateQuestion` 带稳定 ID、题号、部分、模块、页码、材料/题干/选项/答案/解析/图片、原文来源），模块由 `inferModule` 从页眉/部分标题推断并归一到行测六大模块 → 后台调用 `structureTemplateFill`（严格 JSON、分批并发、超时降级）得到字段回填，`applyTemplateFill` 按「原文题号 + 出现顺序 + 题干锚点」对齐题槽；若回填文本自身含两个以上题号锚点则拒绝覆盖，防止模型再次把多题粘成一题 → `TemplateEditorPage` 以该对象为**唯一数据源**：左侧部分/页目录，中间逐题字段编辑（题号/模块/部分/页/材料/题干/四项/答案/解析/图片）与拆分粘连/增删/换页，右侧同源实时卷面预览，另有文本视图可导入导出标准 Markdown（旧链路兼容）→ 「生成套卷」用 `draftToQuestions` 直接产出题目，**不再对 Markdown 二次解析** → 逐题校对预览：`PaperQuestionCard` 与题库入库卡片同一版式，支持「校对」（`QuestionReviewModal`）、「确认无误」、「查看 JSON」、「编辑题库」（`BankForm` + `put('bank')`，`bankQuestionToQuiz` 回写试卷）、删除；每题确认标记 `confirmedIds` → 「推送到在线刷题」汇总弹窗 → `put('papers')` → 跳转 `/online-practice` 并自动选中新卷。顶部「直接拆题」按钮保留 `parseDocumentToQuestions` 一步链路；知识库文件同样走新流程；LLM 能力状态条 `.op-notice.ok/warn`，无 AI 时规则字段完整可用，用户仍可编辑并生成套卷。
 - **OnlinePracticePage.tsx**：只负责套卷工作台、刷题、历史与错题入库；不再渲染文档上传入口（按钮改为跳转 `/question-bank`）。推送到达时读取路由 state `activePaperId` 直接选中新卷。
 - **套卷模板中间层（lib/examTemplate.ts）**：固定层级 `## 第X部分 模块名` → `### 第 N 页` → `#### 第 N 题`（兼容旧 `## 第 N 题`，视为第 1 页；人工写成 `##### 第  4  题` 等多余 #/空格也识别）；`parseExamTemplate` 解析部分/页/题归属与行区间，并以人工校验后的「模块」为权威纠正冲突的部分标题（`canonicalSection`，如 `模块：常识` + `第一部分 言语理解与表达` → `第一部分 常识判断`）；`updateTemplatePage` 单页回写全文，`attachTemplateContext` 把部分/页附着到题目，`renderExamTemplate`/`formatExamTemplate` 按模板排版（统一回标准四级标题并保留原题号，不把 42/重置题号改成 1、2、3），`pageTextsToTemplate` 逐页 OCR 兜底，`templateStats` 统计规模。
 - **两阶段 Markdown 中间层（lib/markdownFlow.ts）**：题块标题统一由 `QUESTION_HEADING_RE` 识别，容忍 1~8 个 `#`、全角空格、`第4题` 等人工写法；题内字段顺序固定为 `题型：单选题` → `模块：言语理解` → `材料：`（可为空，可含 `![图形材料](data:image/...)`）→ `题干：`（显式字段，兼容旧写法「题干原文：」）→ 选项 → `答案：` → `解析：`；选项支持 `A./A．/B./C./D.`，也支持 `1./（1）/①/⑴/⒈` 等符号，按出现顺序映射 A–D；`MD_GENERATE_PROMPT` 把 OCR 噪音/跨页拼接/题号重置、一题一卡、选项不粘连、非标准部分标题、转场噪音丢弃等约束前置并强约束题号标题恰好 4 个 `#`、模块优先于部分标题，`MD_PARSE_PROMPT` 专用于把人工校验后的 Markdown 转成题目 JSON（避免把字段行/题号/结构标题当题干，section 随 module 纠正）；`splitMarkdownBlocks` 按题块切分（块外 `#` 标题不混入）；`ruleMarkdownToQuestions` 规则兜底解析；`questionsToMarkdown`/`questionToBlock` 序列化与下载；`mergeMarkdownWithRules` 对比规则题号锚点把 AI 漏掉的题补回中间稿，并按题干匹配纠正重复题号；`repairMarkdownTemplate` 在 AI 生成、Markdown 上传与阶段②解析三处统一修复排版结构。
@@ -710,6 +713,7 @@ font-family: -apple-system, "PingFang SC", ...
 | `.pr-*` | 刷题报告页 |
 | `.op-*` | 拆题流程通用（能力状态/校对/确认推送/环形进度） |
 | `.paper-flow-*` / `.paper-review-*` / `.paper-q-*` | 题库管理页内「文档转在线刷题」整页流程与套卷题目卡片（复用 `.bank-item-*` 版式） |
+| `.te-*` | 结构化套卷模版编辑器：左侧部分/页目录、中间字段级题卡、右侧同源卷面预览、文本视图 |
 | `.qs-*` / `.ds-*` | 题目草稿 / 文档批注手写层 |
 
 响应式断点：900px、700px、600px。
@@ -802,8 +806,8 @@ npm run test:all      # test:refine + build + test:e2e 一条命令跑完整质�
 node scripts/e2e-workbench.mjs     # 试卷后台：套卷切换/收藏/编辑/新增题目（题库卡片版式）
 node scripts/e2e-progress.mjs      # 题库管理页进入文档转刷题：环形拆题倒计时阶段推进/动画/完成消失
 node scripts/e2e-split-quality.mjs # 题库管理页上传真实 OCR 样本 DOCX：题号重置/水印清除/答案回填/题数
-node scripts/e2e-markdown-flow.mjs # 两阶段流程：中间稿(字段/题块数/噪音/补全漏题)→符号与图片插入→人工编辑→解析成题→逐题校对
-node scripts/e2e-exam-template.mjs # 套卷模板：按页目录/切页/卷面预览→单页回写→自动排版→按模板解析→人工推送到在线刷题后部分/页标签
+node scripts/e2e-markdown-flow.mjs # 结构化模版：题号重置/噪音清洗→题槽图片插入与卷面预览→文本导入→生成套卷与字段校对
+node scripts/e2e-exam-template.mjs # 结构化模版：按页目录/切页→字段编辑即时预览→模块归属重分组→生成套卷→人工推送后部分/页标签
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -819,7 +823,7 @@ PORT=5173 npm run dev
 - 通过 `page.goto('http://localhost:5173/#/...')` 访问 HashRouter 路由，`page.evaluate` 检查 DOM/localStorage/IndexedDB，`page.screenshot` 人工核对。
 - 技巧：dev server 下 `await import('/src/lib/db.ts')` 调 `put()` 注入测试数据（注入的 Mistake 必须带 `images:[]`）；上传用隐藏 input `input[aria-label="上传本地文件到文件夹"]` 的 `setInputFiles`；模拟 LLM 用拦截 `models`/`chat` 接口返回 SSE。
 - 验收标准：`npm run build` 通过（strict 类型检查）+ 无 `pageerror`。
-- 回归脚本：`scripts/e2e-runner.mjs` 统一入口（自动复用/启动 5173 dev server，顺序执行全部 5 组 `e2e-*.mjs`，一组失败即整轮失败）；也可单组执行 `node scripts/e2e-<name>.mjs`。覆盖试卷后台、环形进度、拆题质量、两阶段 Markdown 与套卷模板。
+- 回归脚本：`scripts/e2e-runner.mjs` 统一入口（自动复用/启动 5173 dev server，顺序执行全部 5 组 `e2e-*.mjs`，一组失败即整轮失败）；也可单组执行 `node scripts/e2e-<name>.mjs`。覆盖试卷后台、环形进度、拆题质量、结构化模版字段编辑/图片/文本导入、按页目录与推送。
 - **注意**：`npm install pdfjs-dist` 等会清掉未记录的 `playwright-core`，需重新安装。
 
 ---
@@ -864,7 +868,7 @@ PORT=5173 npm run dev
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
 | **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；兼作文档转在线刷题入口；见 9.2.1 / 9.2 |
-| 文档转在线刷题 | ✅ 完整可用（大模型智能拆题） | 入口已迁至题库管理页；上传→套卷模板→逐题校对/JSON/编辑题库→人工推送到在线刷题→无限刷题→错题入库 |
+| 文档转在线刷题 | ✅ 完整可用（大模型字段填充 + 规则题号锚点） | 入口在题库管理页；上传→结构化模版题槽→AI 回填→逐题校对/JSON/编辑题库→生成套卷→人工推送到在线刷题→无限刷题→错题入库 |
 | 学习计划 + 统计 | ✅ 完整可用 | 周历/计时/子任务/图表 |
 | 本地存储 + 双同步 | ✅ 完整可用 | IndexedDB 镜像、GitHub 同步、WorkBuddy 云同步 |
 | 主题/字号/移动端 | ✅ 完整可用 | 日/夜、三档字号、响应式 |
@@ -1081,10 +1085,22 @@ PORT=5173 npm run dev
   4. `paperParser.ts` 在阶段①生成后、阶段②解析前，以及 `DocumentToPaperFlow` 上传 `.md` 时统一调用修复函数；`MD_GENERATE_PROMPT` / `MD_PARSE_PROMPT` 增加一题一卡、选项拆行、非标准标题与转场噪音的硬约束；卷面预览 `.mdt-paper-q-head` 增加 `white-space: pre-wrap`，避免标题内联显示。
 - **验证**：`typecheck` / `build` 全过；`test:refine` 66/66（新增 5 项用户样本回归：内联标题上提、重复题号顺延、转场噪音剔除、非标准标题不污染题干、重复题号锚点回填；新增 2 项模板测试）；`npm run test:e2e` 5 组全部 PASS。用户完整样本 82 个题块的重复题号由 18 处降到 0。
 
+### 16.2.16 文档转套卷重构：结构化模版编辑器（2026-11-28）
+- **需求与问题**：用户上传 20MB 扫描版行测套卷后，截图仍显示「第 5 题」吞入十余道题、`## 其他（常识）` 粘在题干末尾、编辑区题号与下方卷面预览不一致。上一轮只是文本层补丁，未解决三源分歧。
+- **根因**：`MarkdownReviewPage` 同时维护 `pageEditorBody(page)`（编辑区文本）、`page.body`（解析输入）与 `ruleMarkdownToQuestions(page.body)`（预览），同一 Markdown 被解读三次；题块边界由 AI 生成的 Markdown 决定，模型一旦把多题写进一个 `####` 题块就无法可靠拆分；预览序号用 `index + 1` 而非原题号。
+- **重设计**：
+  1. 新增 `lib/templateDraft.ts`：题块边界**只由原文题号锚点**决定（`splitByQuestionNumbers` / `ruleParseBlock`），逐页生成 `TemplateQuestion` 题槽（稳定 ID + 题号/部分/模块/页码/材料/题干/选项/答案/解析/图片/原文来源），模块由页眉关键词推断并归一到行测六大模块；提供 `applyTemplateFill`、`splitTemplateQuestion`、`templateGroups`、`draftToQuestions`、`draftToMarkdown`、`markdownToDraft`。
+  2. `llm.ts` 新增 `TEMPLATE_FILL_PROMPT` + `structureTemplateFill()`：模型只输出每题字段的严格 JSON，复用分批并发/超时/降级；`applyTemplateFill` 按题号 → 出现顺序 → 题干锚点对齐题槽，遇到含两个以上题号锚点的回填文本直接拒绝，杜绝 AI 重新粘连题目。
+  3. 新增 `features/paper/TemplateEditorPage.tsx` 替代 `MarkdownReviewPage` 成为默认编辑器：左侧部分/页目录与题数，中间字段级题卡（题号、模块、部分、页码、材料、题干、A–D、答案、解析、图片）与增删/换页/按题号拆分，右侧由同一份 `TemplateDraft` 实时渲染卷面预览，另有「文本视图」导入导出标准 Markdown；修改模块或页码后自动跟随题槽移动到新分组，不会跳回第一页。
+  4. `DocumentToPaperFlow.tsx` 视图改为 `template|review|null`：上传 → 结构化题槽 → 后台 AI 填充 → 人工校对 → 「生成套卷」用 `draftToQuestions` 直接产出题目，不再二次解析 Markdown；保留「直接拆题」旧链路、`.md` 导入兼容与人工确认推送。
+  5. 样式新增 `.te-*`（三栏布局 + 响应式），旧 `.mdt-*` 保留仅为兼容。
+- **验证**：`typecheck` / `build` 全过；`test:refine` 74/74（新增 8 项结构化用例：粘连样本切题、42→2 题号重置、AI 按题号回填、重复题号顺序配对、粘连回填拒绝、人工拆题、Markdown 往返、模块归一）；`npm run test:all` 5 组 E2E 全部 PASS，无 JS 报错。用户上一轮 82 题样本导入为 82 个独立题槽，不再出现单题吞多题。
+
 ### 16.3 最近提交历史
 
 ```
-b9cba06 fix: 套卷模板排版修复——内联标题拆分/非标准部分识别/题号去重/转场噪音清洗  ← HEAD
+86ebc33 refactor: 文档转套卷改为结构化模版编辑器——原文题号定题槽边界/AI 仅回填字段/单数据源预览  ← HEAD
+b9cba06 fix: 套卷模板排版修复——内联标题拆分/非标准部分识别/题号去重/转场噪音清洗
 c13ece9 docs: 同步文档转刷题入口迁移的提交号与验证说明
 f4c8a2f feat: 文档转刷题入口迁至题库管理页——套卷卡片对齐题库版式/查看JSON/编辑题库/人工推送
 3fd6e0b fix: 按人工校验样本优化套卷模板——题号容错/模块纠正/多套卷分页与原文题号对齐
