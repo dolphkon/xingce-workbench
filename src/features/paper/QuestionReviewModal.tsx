@@ -1,8 +1,41 @@
 import { useState } from 'react'
 import { Icon, Modal } from '../../components/ui'
-import { inspectQuestion } from '../../lib/paperParser'
-import { formatStem } from '../../lib/paperSplit'
 import type { QuizQuestion } from '../../types'
+
+/** 题干规整：去每行题号前缀、合并被拆碎的短行 */
+function formatStem(stem: string): string {
+  const lines = stem
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\d{1,3}\s*[.．、,，)）]\s*/, '').replace(/^[.．、,，)）]\s+(?=\S)/, ''))
+    .filter(Boolean)
+  const merged: string[] = []
+  for (const line of lines) {
+    const prev = merged[merged.length - 1]
+    if (prev && !/[。！？；：.!?;:]$/.test(prev) && line.length < 26 && !/^[（(]/.test(line)) {
+      merged[merged.length - 1] = prev + line
+    } else {
+      merged.push(line)
+    }
+  }
+  return merged.join('\n').trim()
+}
+
+/** 字段可疑度提示：缺答案/选项不全/题干疑似粘连或含版式噪音 */
+function inspectQuestion(question: QuizQuestion) {
+  const missingAnswer = !question.answer.trim()
+  const filled = question.options.filter((option) => option.trim()).length
+  const incompleteOptions = filled > 0 && filled < 4
+  const tooLongStem = question.title.length > 280 && (incompleteOptions || missingAnswer)
+  const boilerplateSuspected = /(?:复制必备|复制必究|版权所有|密封线|条形码|监考老师|注意事项|重要提示|请按照要求在答题卡|biguo\d{3,})/i.test(question.title)
+  return {
+    missingAnswer,
+    incompleteOptions,
+    tooLongStem,
+    boilerplateSuspected,
+    needsReview: missingAnswer || incompleteOptions || tooLongStem || boilerplateSuspected,
+  }
+}
 
 /** 单题人工审核弹窗：题干、选项、答案、题型、解析均可编辑并即时校验 */
 export default function QuestionReviewModal({

@@ -280,7 +280,7 @@ export function parseQuestionText(raw: string): ParsedQuestionText {
   const answerMatch = text.match(
     /(?:正确|参考|标准)?答案(?:是|为)?\s*[:：]?\s*([A-Da-dＡ-Ｄ](?:\s*[、,，]\s*[A-Da-dＡ-Ｄ])*)/i,
   )
-  // 答案表："答案：1.D 2.B 3.C" —— 这里解析函数作用于单题块，取该块题号对应字母的兜底由 paperParser 处理
+  // 答案表："答案：1.D 2.B 3.C" —— 这里解析函数作用于单题块，只取该块的答案字母
   const answer = answerMatch
     ? answerMatch[1].replace(/[^A-Da-dＡ-Ｄ]/g, '').toUpperCase()
     : ''

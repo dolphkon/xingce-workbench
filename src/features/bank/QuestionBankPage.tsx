@@ -12,7 +12,6 @@ import { BANK_CATEGORIES, BANK_MODULES, type BankQuestion } from '../../types'
 import BankForm from './BankForm'
 import AnswerManager from './AnswerManager'
 import SmartComposePanel from './SmartComposePanel'
-import DocumentToPaperFlow from '../paper/DocumentToPaperFlow'
 
 interface DraftImage { stored: string; ocr: string }
 
@@ -26,8 +25,6 @@ export default function QuestionBankPage() {
   const [editing, setEditing] = useState<BankQuestion | 'new' | null>(null)
   const [deleting, setDeleting] = useState<BankQuestion | null>(null)
   const [jsonView, setJsonView] = useState<BankQuestion | null>(null)
-  // 文档转在线刷题：占用整页，与题库列表互斥
-  const [docFlowOpen, setDocFlowOpen] = useState(false)
   const [answerManagerOpen, setAnswerManagerOpen] = useState(false)
   const [composeOpen, setComposeOpen] = useState(false)
 
@@ -174,27 +171,17 @@ export default function QuestionBankPage() {
     URL.revokeObjectURL(url)
   }
 
-  if (docFlowOpen) {
-    return (
-      <DocumentToPaperFlow
-        onBack={() => setDocFlowOpen(false)}
-        onPushed={(paper) => navigate('/online-practice', { state: { activePaperId: paper.id } })}
-      />
-    )
-  }
-
   return (
     <>
       <div className="page-header">
         <div>
           <h1 className="page-title">题库管理</h1>
-          <p className="page-subtitle">图片识别拆题按 JSON 结构化入库；也可上传 PDF / Word 生成套卷，逐题校对后人工推送到在线刷题</p>
+          <p className="page-subtitle">图片识别拆题按 JSON 结构化入库；也可用智能组卷生成套卷推送到在线刷题</p>
         </div>
         <div className="header-actions">
           <button className="btn" onClick={exportJson}><Icon name="download" size={16} /> 导出 JSON</button>
           <button className="btn" onClick={() => setAnswerManagerOpen(true)}><Icon name="check" size={16} /> 答案管理</button>
           <button className="btn" onClick={() => setComposeOpen(true)}><Icon name="layers" size={16} /> 智能组卷</button>
-          <button className="btn" onClick={() => setDocFlowOpen(true)}><Icon name="filetext" size={16} /> 文档转在线刷题</button>
           <button className="btn btn-primary" onClick={openImport}><Icon name="sparkle" size={16} /> 图片识别入库</button>
           <button className="btn" onClick={() => setEditing('new')}><Icon name="plus" size={16} /> 手动新增</button>
         </div>

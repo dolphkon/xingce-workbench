@@ -66,13 +66,13 @@ export default function PaperWorkbench({
       <div className="op-section-head">
         <h2>我的试卷 <span className="op-count">{papers.length}</span></h2>
         <span className="pw-head-hint muted small">点击左侧套卷，在右侧校对与管理题目</span>
-        <button className="btn btn-sm pw-head-upload" onClick={onUpload}><Icon name="upload" size={14} /> 去生成套卷</button>
+        <button className="btn btn-sm pw-head-upload" onClick={onUpload}><Icon name="layers" size={14} /> 智能组卷</button>
       </div>
 
       {papers.length === 0 ? (
         <div className="op-empty">
           <Icon name="filetext" size={30} />
-          <p>还没有试卷。到题库管理页上传一份 PDF 或 Word 文档生成套卷吧。</p>
+          <p>还没有试卷。到题库管理页用智能组卷生成一套试卷吧。</p>
           <button className="btn btn-primary" onClick={onUpload}><Icon name="upload" size={15} /> 去题库管理</button>
         </div>
       ) : (
@@ -92,7 +92,7 @@ export default function PaperWorkbench({
                 </button>
               ))}
             </div>
-            <button className="pw-sidebar-add" onClick={onUpload}><Icon name="plus" size={14} /> 从文档生成套卷</button>
+            <button className="pw-sidebar-add" onClick={onUpload}><Icon name="plus" size={14} /> 智能组卷</button>
           </aside>
 
           {/* 右侧：该套卷后台编辑管理 */}

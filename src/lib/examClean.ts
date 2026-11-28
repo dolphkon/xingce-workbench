@@ -50,7 +50,7 @@ const PAGE_NUMBER_RE = /^\s*(?:第\s*\d{1,3}\s*页\s*共\s*\d{1,3}\s*页|[-—�
 /** 短乱码行：大小写字母数字混杂、长度 6~40、且无中文（OCR 常见水印串） */
 const GARBLED_LINE_RE = /^\s*[A-Za-z0-9?！?！*#@_~—-]{6,40}\s*$/
 
-/** 题号锚点：与 paperSplit 的 findQuestionAnchors 同风格（标点后允许空格） */
+/** 题号锚点：标点后允许空格 */
 const QUESTION_ANCHOR_RE = /(?:^|[^\d])(\d{1,3})\s*[.．、,，)）](?=\s*\S)/
 
 /**

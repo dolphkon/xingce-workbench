@@ -10,10 +10,6 @@ const BASE = `http://localhost:${PORT}/`
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const SCRIPTS = [
   'e2e-workbench.mjs',
-  'e2e-progress.mjs',
-  'e2e-split-quality.mjs',
-  'e2e-markdown-flow.mjs',
-  'e2e-exam-template.mjs',
 ]
 
 async function waitForServer(url, timeoutMs = 30000) {

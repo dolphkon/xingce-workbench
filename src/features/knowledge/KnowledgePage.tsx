@@ -432,8 +432,8 @@ export default function KnowledgePage() {
           <button className="fw-new-doc" onClick={() => void openNewDoc()}><Icon name="plus" size={15} /> 新建文档</button>
           <button className="fw-new-folder" onClick={() => openCreateFolder(isFolderSelected ? selected : null)} title="新建文件夹"><Icon name="folder" size={15} /></button>
         </div>
-        <Link className="fw-side-online-practice" to="/question-bank" title="文档转在线试卷刷题">
-          <Icon name="play" size={15} /> 文档转刷题 <Icon name="chevron" size={13} />
+        <Link className="fw-side-online-practice" to="/question-bank" title="进入在线题库">
+          <Icon name="play" size={15} /> 在线题库 <Icon name="chevron" size={13} />
         </Link>
         <div className="fw-tree">
           {keyword.trim() ? (

@@ -180,12 +180,12 @@ export default function OnlinePracticePage() {
       <div className="page-head">
         <div>
           <h1>在线刷题</h1>
-          <p className="muted">在题库管理页上传文档生成套卷后，在这里选择套卷开始刷题。答错的题自动进入错题库。</p>
+          <p className="muted">在题库管理页用智能组卷生成套卷后，在这里选择套卷开始刷题。答错的题自动进入错题库。</p>
         </div>
         <div className="op-head-actions">
           <button className="btn" onClick={() => setComposeOpen(true)}><Icon name="layers" size={16} /> 智能组卷</button>
           <button className="btn btn-primary" onClick={() => navigate('/question-bank')}>
-            <Icon name="upload" size={16} /> 去题库管理生成套卷
+            <Icon name="layers" size={16} /> 去题库管理智能组卷
           </button>
         </div>
       </div>
