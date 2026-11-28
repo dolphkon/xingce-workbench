@@ -42,21 +42,17 @@ await page.goto(BASE + '#/question-bank')
 await page.getByRole('button', { name: '文档转在线刷题' }).click()
 await page.waitForSelector('.document-to-paper-page')
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-split-quality.docx')
-// 当前默认走两阶段套卷模板：阶段①先出 Markdown，人工确认后再解析成题
-await page.waitForSelector('.md-review', { timeout: 40000 })
-await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
-await page.waitForSelector('.paper-review-page', { timeout: 40000 })
+// 新流程：原文题号锚点直接生成结构化题槽，AI 只回填字段
+await page.waitForSelector('.te-page', { timeout: 40000 })
 await page.waitForTimeout(400)
 
-// 只检查题干/材料文本：卡片上的「模块」chip 是合法标签，不属于试卷版式噪音
-const text = (await page.locator('.paper-q-card').evaluateAll((cards) => cards.map((card) => [
-  card.querySelector('.bank-item-material')?.textContent ?? '',
-  card.querySelector('.paper-q-stem')?.textContent ?? '',
-].join('\n'))).catch(() => [])).join('\n')
-const questionCount = await page.locator('.paper-q-card').count()
+// 只检查材料与题干字段：卡片上的模块/页码标签是合法结构信息
+const text = (await page.locator('.te-question-card').evaluateAll((cards) => cards.map((card) =>
+  [...card.querySelectorAll('textarea')].slice(0, 2).map((el) => el.value).join('\n')))).join('\n')
+const questionCount = await page.locator('.te-question-card').count()
 const banned = ['复制必究', 'biguo', '第 9 页', '参考时间', '言语理解与表达']
 const noise = banned.filter((k) => text.includes(k))
-// UI 会自动渲染 <b>1.</b> 序号，这里只检查原始大题号（42/43）是否漏进题干
+// UI 会渲染分页题号，这里只检查原始大题号（42/43）是否漏进题干
 const leakedNumber = /(?:^|\n)\s*(?:42|43)\s*\./.test(text)
 await page.screenshot({ path: '/tmp/xingce-split-quality.png', fullPage: true })
 

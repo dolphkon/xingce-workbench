@@ -4,21 +4,24 @@ import CircularProgress from '../../components/CircularProgress'
 import { useCollection } from '../../lib/hooks'
 import { put } from '../../lib/db'
 import { loadDocFile } from '../../lib/docFile'
-import { probeLlm, type LlmBlockReason, type LlmProbe } from '../../lib/llm'
 import {
-  extractDocumentText, markdownToQuestions, parseDocumentToQuestions,
-  parseFileKind, textToMarkdown, type ParseProgress,
+  probeLlm, structureTemplateFill, type LlmBlockReason, type LlmProbe, type LlmProgress,
+} from '../../lib/llm'
+import {
+  extractDocumentText, parseDocumentToQuestions, parseFileKind, type ParseProgress,
 } from '../../lib/paperParser'
-import { repairMarkdownTemplate } from '../../lib/markdownFlow'
+import {
+  applyTemplateFill, buildTemplateDraft, draftToQuestions, markdownToDraft, type TemplateDraft,
+} from '../../lib/templateDraft'
 import { bankQuestionToQuiz, quizToBankQuestion } from '../../lib/bankSync'
 import { uid } from '../../lib/utils'
 import type { BankQuestion, KnowledgeDoc, Paper, QuizQuestion } from '../../types'
 import BankForm from '../bank/BankForm'
-import MarkdownReviewPage, { type MarkdownDraftState } from './MarkdownReviewPage'
 import PaperQuestionCard from './PaperQuestionCard'
 import QuestionReviewModal from './QuestionReviewModal'
+import TemplateEditorPage from './TemplateEditorPage'
 
-type View = 'markdown' | 'review' | null
+type View = 'template' | 'review' | null
 
 interface Draft {
   questions: QuizQuestion[]
@@ -36,25 +39,31 @@ interface Props {
   onPushed: (paper: Paper) => void
 }
 
+const llmProgress = (progress: LlmProgress): ParseProgress => ({
+  percent: Math.max(1, Math.min(99, Math.round(progress.fraction * 100))),
+  stage: 'llm',
+  message: progress.message,
+})
+
 /**
- * 文档转在线刷题：上传 PDF/Word → AI 套卷模板 → 按页校验 → 解析成套卷 →
- * 逐题校对 / 查看 JSON / 编辑题库 → 人工推送到在线刷题。
- * 入口位于题库管理页，本组件占满整页。
+ * 文档转在线刷题：文档 → 题号锚点生成结构化模版 → AI 回填题槽字段 →
+ * 结构化编辑器人工校对 → 生成套卷 → 逐题校对 / JSON / 编辑题库 → 人工推送。
  */
 export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
   const { items: docs } = useCollection('docs')
   const [view, setView] = useState<View>(null)
   const [uploading, setUploading] = useState(false)
+  const [refilling, setRefilling] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<ParseProgress>({ percent: 0, stage: 'prepare', message: '' })
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft | null>(null)
   const [parseError, setParseError] = useState('')
   const [titleInput, setTitleInput] = useState('')
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const [confirmedIds, setConfirmedIds] = useState<string[]>([])
   const [showConfirmPush, setShowConfirmPush] = useState(false)
   const [llmProbe, setLlmProbe] = useState<LlmProbe | null>(null)
-  const [mdDraft, setMdDraft] = useState<MarkdownDraftState | null>(null)
-  const [mdParsing, setMdParsing] = useState(false)
   const [jsonIndex, setJsonIndex] = useState<number | null>(null)
   const [editingBank, setEditingBank] = useState<{ index: number; initial: BankQuestion } | null>(null)
   const [confirmDelQ, setConfirmDelQ] = useState<number | null>(null)
@@ -79,10 +88,50 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
     setView('review')
   }
 
+  /** AI 只回填题槽字段，不改变题块边界 */
+  const refillTemplate = async (base: TemplateDraft) => {
+    setRefilling(true)
+    setParseError('')
+    try {
+      const fills = await structureTemplateFill(base.rawText, undefined, (p) => setProgress(llmProgress(p)))
+      setTemplateDraft((current) => current && current.questions === base.questions
+        ? applyTemplateFill(current, fills)
+        : current)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI 填充失败'
+      setTemplateDraft((current) => current ? { ...current, llmMessage: message } : current)
+    } finally {
+      setRefilling(false)
+    }
+  }
+
+  const openTemplate = (extracted: Awaited<ReturnType<typeof extractDocumentText>>, meta: {
+    title: string; fileName: string; fileType: string; fileData: string
+  }) => {
+    const template = buildTemplateDraft({
+      text: extracted.text,
+      pageTexts: extracted.pageTexts,
+      title: meta.title,
+      fileName: meta.fileName,
+      fileType: meta.fileType,
+      fileData: meta.fileData,
+      textMethod: extracted.textMethod,
+      usedOcr: extracted.usedOcr,
+    })
+    setTemplateDraft(template)
+    setTitleInput(meta.title || meta.fileName.replace(/\.[^.]+$/, ''))
+    setDraft(null)
+    setConfirmedIds([])
+    setParseError('')
+    setView('template')
+    if (llmProbe?.available) void refillTemplate(template)
+    else setTemplateDraft((current) => current ? { ...current, llmMessage: llmProbe?.message } : current)
+  }
+
   const handleFile = async (file: File) => {
     setParseError('')
     setDraft(null)
-    setMdDraft(null)
+    setTemplateDraft(null)
     setReviewIndex(null)
     setConfirmedIds([])
     if (parseFileKind(file.name, file.type) === 'unsupported') {
@@ -104,11 +153,11 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
     }
   }
 
-  /** 两阶段流程入口：上传文档 → 提取文本 → 阶段①生成 Markdown 中间稿 */
+  /** 新流程入口：提取文档 → 原文题号生成结构化模版（随后 AI 回填字段） */
   const handleFileTwoStage = async (file: File) => {
     setParseError('')
     setDraft(null)
-    setMdDraft(null)
+    setTemplateDraft(null)
     setReviewIndex(null)
     setConfirmedIds([])
     if (parseFileKind(file.name, file.type) === 'unsupported') {
@@ -122,21 +171,12 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
       const fileData = loaded.fileData ?? ''
       if (!fileData) throw new Error('文件内容读取失败')
       const extracted = await extractDocumentText(fileData, file.name, file.type, setProgress)
-      const result = await textToMarkdown(extracted, setProgress)
-      setMdDraft({
-        markdown: result.markdown,
+      openTemplate(extracted, {
+        title: loaded.title,
         fileName: file.name,
         fileType: file.type || `application/${file.name.split('.').pop()}`,
         fileData,
-        defaultTitle: loaded.title,
-        usedLlm: result.usedLlm,
-        llmReason: result.llmReason,
-        llmMessage: result.llmMessage,
-        textMethod: result.textMethod,
-        usedOcr: result.usedOcr,
-        pageTexts: result.pageTexts,
       })
-      setView('markdown')
     } catch (err) {
       setParseError(err instanceof Error ? err.message : '解析失败，请重试')
     } finally {
@@ -144,38 +184,39 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
     }
   }
 
-  /** 阶段②：人工校验后的 Markdown → 待确认题目 */
-  const parseMarkdown = async () => {
-    if (!mdDraft) return
-    setMdParsing(true)
-    setParseError('')
+  /** 结构化题槽 → 待确认题目，直接生成套卷，不再二次解析 Markdown */
+  const generatePaper = () => {
+    if (!templateDraft) return
+    setGenerating(true)
     try {
-      const result = await markdownToQuestions(mdDraft.markdown, setProgress)
+      const questions = draftToQuestions(templateDraft)
       setDraft({
-        questions: result.questions,
-        method: `${mdDraft.textMethod}${mdDraft.usedOcr ? ' + OCR 回退' : ''} + ${result.usedLlm ? 'AI 解析 Markdown' : '规则解析 Markdown'} + 人工校对`,
-        fileName: mdDraft.fileName,
-        fileType: mdDraft.fileType,
-        fileData: mdDraft.fileData,
-        usedLlm: result.usedLlm,
-        llmReason: result.llmReason,
-        llmMessage: result.llmMessage,
+        questions,
+        method: `${templateDraft.textMethod} + ${templateDraft.usedLlm ? 'AI 字段填充' : '规则字段'} + 结构化模版 + 人工校对`,
+        fileName: templateDraft.fileName,
+        fileType: templateDraft.fileType || `application/${templateDraft.fileName.split('.').pop()}`,
+        fileData: templateDraft.fileData,
+        usedLlm: templateDraft.usedLlm,
+        llmMessage: templateDraft.llmMessage,
       })
-      setTitleInput(mdDraft.defaultTitle)
+      setTitleInput(templateDraft.title || titleInput)
       setConfirmedIds([])
       setView('review')
-    } catch (err) {
-      setParseError(err instanceof Error ? err.message : 'Markdown 解析失败')
     } finally {
-      setMdParsing(false)
+      setGenerating(false)
     }
   }
 
   const uploadMarkdownFile = async (file: File) => {
     try {
-      const text = repairMarkdownTemplate(await file.text())
-      if (!text) throw new Error('Markdown 文件为空')
-      setMdDraft((current) => current ? { ...current, markdown: text, defaultTitle: current.defaultTitle || file.name.replace(/\.md$/i, '') } : current)
+      const text = await file.text()
+      if (!text.trim()) throw new Error('Markdown 文件为空')
+      const template = markdownToDraft(text, templateDraft ?? {})
+      if (!template.questions.length) throw new Error('Markdown 中没有识别到题块')
+      setTemplateDraft(template)
+      setTitleInput(template.title || template.fileName || titleInput)
+      setParseError('')
+      setView('template')
     } catch (err) {
       setParseError(err instanceof Error ? err.message : 'Markdown 文件读取失败')
     }
@@ -199,6 +240,7 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
     }
     await put('papers', paper)
     setDraft(null)
+    setTemplateDraft(null)
     setConfirmedIds([])
     setShowConfirmPush(false)
     setView(null)
@@ -211,22 +253,10 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
       setProgress({ percent: 5, stage: 'prepare', message: '正在读取知识库文档…' })
       try {
         if (!doc.fileData) throw new Error('文档内容为空')
-        const extracted = await extractDocumentText(doc.fileData, doc.fileName || doc.title, doc.fileType || '', setProgress)
-        const result = await textToMarkdown(extracted, setProgress)
-        setMdDraft({
-          markdown: result.markdown,
-          fileName: doc.fileName || doc.title,
-          fileType: doc.fileType || '',
-          fileData: doc.fileData,
-          defaultTitle: doc.title,
-          usedLlm: result.usedLlm,
-          llmReason: result.llmReason,
-          llmMessage: result.llmMessage,
-          textMethod: result.textMethod,
-          usedOcr: result.usedOcr,
-          pageTexts: result.pageTexts,
-        })
-        setView('markdown')
+        const fileName = doc.fileName || doc.title
+        const fileType = doc.fileType || ''
+        const extracted = await extractDocumentText(doc.fileData, fileName, fileType, setProgress)
+        openTemplate(extracted, { title: doc.title, fileName, fileType, fileData: doc.fileData })
       } catch (err) {
         setParseError(err instanceof Error ? err.message : '解析失败')
       } finally {
@@ -249,11 +279,11 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
       <div className="page-head">
         <div>
           <h1>文档转在线刷题</h1>
-          <p className="muted">上传 PDF / Word → AI 生成套卷模板 → 按页校验排版 → 解析成套卷 → 逐题校对并推送到在线刷题。</p>
+          <p className="muted">上传 PDF / Word → 按原文题号生成结构化套卷模版 → AI 回填字段 → 人工校对生成套卷并推送。</p>
         </div>
         <div className="op-head-actions">
           <button className="btn" onClick={onBack}><Icon name="back" size={15} /> 返回题库管理</button>
-          <button className="btn" onClick={() => directInputRef.current?.click()} disabled={uploading} title="跳过 Markdown 校验，直接拆题（适合排版规整的文档）">
+          <button className="btn" onClick={() => directInputRef.current?.click()} disabled={uploading} title="跳过模版编辑，直接拆题（适合排版规整的文档）">
             <Icon name="bolt" size={15} /> 直接拆题
           </button>
           <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
@@ -288,22 +318,22 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
         <div className={`op-notice${llmProbe.available ? ' ok' : ' warn'}`}>
           <Icon name={llmProbe.available ? 'check' : 'info'} size={15} />
           {llmProbe.available
-            ? '大模型智能拆题已就绪：上传文档后 AI 先生成套卷模板，按页校验排版后再按模板解析成套卷。'
-            : `${llmProbe.message} 将用规则生成 Markdown，仍可人工校验排版后继续。`}
+            ? '大模型已就绪：上传后按原文题号生成题槽，AI 逐题回填字段；题块边界始终来自原文，不会被模型合并。'
+            : `${llmProbe.message} 将用规则拆题并填好字段，仍可人工校对并生成套卷。`}
         </div>
       ) : (
         <div className="op-notice"><Icon name="info" size={15} /> 正在检测智能拆题能力…</div>
       )}
 
       {parseError && <div className="error-text op-error">{parseError}</div>}
-      {(uploading || mdParsing) && <CircularProgress progress={progress} />}
+      {(uploading || refilling || generating) && <CircularProgress progress={progress} />}
 
       {view === null && !uploading && (
         <div className="card paper-flow-intro">
           <div className="card-body">
             <div className="paper-flow-steps">
               <span><b>1</b> 上传文档 / 选择知识库文档</span>
-              <span><b>2</b> 按页校验套卷模板</span>
+              <span><b>2</b> 原文题号生成结构化模版 + AI 填充</span>
               <span><b>3</b> 逐题校对、查看 JSON、编辑题库</span>
               <span><b>4</b> 人工推送到在线刷题</span>
             </div>
@@ -312,26 +342,28 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
         </div>
       )}
 
-      {view === 'markdown' && mdDraft && !uploading && !mdParsing && (
-        <MarkdownReviewPage
-          draft={mdDraft}
-          onMarkdownChange={(markdown) => setMdDraft((current) => current ? { ...current, markdown } : current)}
-          onBack={() => { setMdDraft(null); setView(null) }}
-          onParse={() => void parseMarkdown()}
-          parsing={mdParsing}
+      {view === 'template' && templateDraft && !uploading && (
+        <TemplateEditorPage
+          draft={templateDraft}
+          onChange={setTemplateDraft}
+          onBack={() => { setTemplateDraft(null); setView(null) }}
+          onGenerate={generatePaper}
+          generating={generating}
+          onRefill={() => void refillTemplate(templateDraft)}
+          refilling={refilling}
           onUploadMd={(file) => void uploadMarkdownFile(file)}
         />
       )}
 
-      {view === 'review' && draft && !uploading && !mdParsing && (
+      {view === 'review' && draft && !uploading && (
         <div className="card paper-review-page">
           <div className="card-body">
             <div className="paper-review-head">
               <div>
-                <h2>识别完成 · {draft.questions.length} 道题</h2>
+                <h2>套卷已生成 · {draft.questions.length} 道题</h2>
                 <p className="muted small">拆题方式：{draft.method}</p>
               </div>
-              <button className="btn" onClick={() => { setDraft(null); setView(null) }}><Icon name="back" size={15} /> 返回</button>
+              <button className="btn" onClick={() => { setDraft(null); setTemplateDraft(null); setView('template') }}><Icon name="back" size={15} /> 返回模版编辑</button>
             </div>
             <div className="form-field">
               <label className="form-label">试卷名称</label>
@@ -360,7 +392,7 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
             </div>
             <div className="paper-review-actions">
               <button className="btn" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={15} /> 重新上传</button>
-              <button className="btn" onClick={() => { setDraft(null); setView(null) }}><Icon name="back" size={15} /> 返回题库</button>
+              <button className="btn" onClick={() => { setDraft(null); setTemplateDraft(null); setView(null) }}><Icon name="back" size={15} /> 返回题库</button>
               <button className="btn btn-primary" onClick={() => setShowConfirmPush(true)} disabled={!draft.questions.length}>
                 <Icon name="play" size={16} /> 推送到在线刷题
               </button>
@@ -454,7 +486,7 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
             <div className="op-confirm-row"><span>套卷名称</span><b>{titleInput.trim() || draft.fileName.replace(/\.[^.]+$/, '')}</b></div>
             <div className="op-confirm-row"><span>题目总数</span><b>{draft.questions.length} 题</b></div>
             <div className="op-confirm-row"><span>已校对确认</span><b className="ok">{draft.questions.length - pendingCount} 题</b></div>
-            <div className="op-confirm-row"><span>拆题方式</span><b>{draft.usedLlm ? '大模型智能拆题 + 规则校验' : '规则拆题'}</b></div>
+            <div className="op-confirm-row"><span>拆题方式</span><b>{draft.usedLlm ? 'AI 字段填充 + 规则题号锚点' : '规则拆题'}</b></div>
             {pendingCount > 0 && (
               <div className="op-flag"><Icon name="info" size={14} /> 还有 {pendingCount} 道题未校对确认，推送后仍可在刷题页发现并修正。建议先逐题校对。</div>
             )}

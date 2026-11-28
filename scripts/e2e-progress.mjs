@@ -62,12 +62,12 @@ for (let i = 0; i < 40; i++) {
   }
   await page.waitForTimeout(120)
 }
-// 等待解析完成
-await page.waitForSelector('.paper-review-page', { timeout: 20000 }).catch(() => {})
+// 等待结构化模版生成完成
+await page.waitForSelector('.te-page', { timeout: 20000 }).catch(() => {})
 await page.waitForTimeout(400)
 const afterDone = {
-  reviewVisible: await page.locator('.paper-review-page').count() > 0,
-  questionCount: await page.locator('.paper-q-card').count(),
+  reviewVisible: await page.locator('.te-page').count() > 0,
+  questionCount: await page.locator('.te-question-card').count(),
   progressGone: await page.locator('.cp-wrap').count() === 0,
 }
 console.log(JSON.stringify({ progressSeen, snapshot, afterDone, errors }, null, 2))

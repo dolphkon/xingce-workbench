@@ -579,3 +579,58 @@ export async function structureMarkdown(
     signal, onProgress,
   )
 }
+
+/* -------------------------------------------------------------------------- */
+/* 结构化模版填充：AI 只回填字段，题块边界仍由原文题号锚点决定                  */
+/* -------------------------------------------------------------------------- */
+
+/** AI 回填项：按原文题号对齐到模版题槽 */
+export interface TemplateFillResult {
+  no?: number
+  module?: string
+  material?: string
+  stem?: string
+  options?: string[]
+  answer?: string
+  analysis?: string
+}
+
+const TEMPLATE_FILL_PROMPT = `你是公务员考试行测套卷的题库录入助手。输入是试卷原文片段（可能来自 OCR、含版式噪音），请为每一道题回填一条独立记录。
+只输出严格 JSON：{"questions":[{"no":1,"module":"政治理论","material":"","stem":"以下说法正确的是：","options":["","","",""],"answer":"B","analysis":""}]}。
+硬性规则：
+1. **一题一条**：原文每出现一个题号（按部分重置的题号同样算新题）就新起一条记录，绝不能把多道题塞进同一条；也不能把一道题拆成两条。题号可挤在句中或从任意序号起手（如 42.），务必逐个识别。
+2. no 回填原文该题的题号数字；module 只能是"政治理论""常识""言语理解""数量关系""判断推理""资料分析"之一，无法判断填"其他"。
+3. material 只写设问句之前的共用背景材料/文段/资料；stem 只写设问句本身，不能重复 material 内容。没有材料时 material 为空字符串。
+4. options 必须恰好 4 条、依次对应 A/B/C/D，正文不带"A."前缀；原文把四个选项挤在同一行（如 A.xx B.xx C.xx D.xx）时必须拆成 4 条。
+5. answer 只按原文标注（"答案：B"或末尾答案表）回填，不得靠选项内容推断；找不到填空字符串。analysis 只填原文解析，没有填空字符串。
+6. 页眉页码（"第X页 共Y页"）、水印乱码、推广串、密封线、考生须知、部分标题与题量参考时间等一律不写进任何字段。
+7. 不要臆造、概括或缩写原文；无法确定的字段留空字符串。若输入不是试题，questions 返回空数组。`
+
+function normalizeTemplateFill(item: unknown): TemplateFillResult {
+  const obj = (item ?? {}) as Record<string, unknown>
+  const rawNo = obj.no ?? obj.number ?? obj.num ?? obj.id
+  const parsedNo = typeof rawNo === 'number' ? rawNo : Number(String(rawNo ?? '').trim())
+  const bank = normalizeBankQuestion(item)
+  return {
+    no: Number.isFinite(parsedNo) && parsedNo > 0 ? Math.round(parsedNo) : undefined,
+    module: String(obj.module ?? obj.type ?? bank.module ?? '').trim(),
+    material: bank.material,
+    stem: bank.stem,
+    options: bank.options,
+    answer: bank.answer,
+    analysis: bank.analysis,
+  }
+}
+
+/** 阶段②：调用模型把原文回填为模版题槽字段；分批、并发、超时与降级复用通用流程 */
+export function structureTemplateFill(
+  text: string,
+  signal?: AbortSignal,
+  onProgress?: (p: LlmProgress) => void,
+): Promise<TemplateFillResult[]> {
+  return runStructure<TemplateFillResult>(
+    text, TEMPLATE_FILL_PROMPT, normalizeTemplateFill,
+    (item) => `${item.no ?? ''}|${(item.stem ?? '').slice(0, 48)}|${item.options?.[0]?.slice(0, 12) ?? ''}`,
+    signal, onProgress,
+  )
+}

@@ -90,61 +90,60 @@ await page.getByRole('button', { name: '文档转在线刷题' }).click()
 await page.waitForSelector('.document-to-paper-page')
 
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-exam-template.docx')
-await page.waitForSelector('.md-review', { timeout: 40000 })
-console.log('① 中间稿生成:', (await page.locator('.md-review-head p').textContent())?.trim())
+await page.waitForSelector('.te-page', { timeout: 40000 })
+console.log('① 结构化模版:', (await page.locator('.te-head p').textContent())?.trim())
 
-// 用固定模板替换中间稿，验证套卷编辑器行为
-await page.getByRole('button', { name: '全文视图' }).click()
-await page.locator('.md-review-editor').fill(TEMPLATE)
-await page.getByRole('button', { name: '返回分页视图' }).click()
-await page.locator('.mdt-page-tab').first().waitFor()
-
-const tabs = await page.locator('.mdt-page-tab').count()
-console.log('② 按页目录:', tabs, '页 ·', await page.locator('.mdt-section-title').allTextContents())
-const previewQs = await page.locator('.mdt-paper-q').count()
-console.log('② 当前页卷面预览:', previewQs, '题')
+// 固定模板通过文本视图导入，验证结构化题槽与按页目录
+await page.getByRole('button', { name: '文本视图' }).click()
+await page.locator('.te-textarea').fill(TEMPLATE)
+await page.getByRole('button', { name: '应用文本' }).click()
+await page.locator('.te-page-tab').first().waitFor()
+const tabs = await page.locator('.te-page-tab').count()
+const previewQs = await page.locator('.te-preview-question').count()
+const headerText = await page.locator('.te-head p').textContent()
+const totalCards = Number(headerText?.match(/(\d+) 题/)?.[1] ?? 0)
+console.log('② 按页目录:', tabs, '页 · 当前页', previewQs, '题 · 总题槽', totalCards)
 await page.screenshot({ path: '/tmp/xingce-exam-template-page.png', fullPage: true })
 
-// 切到第 2 页并编辑
-await page.locator('.mdt-page-tab', { hasText: '第 2 页' }).click()
-await page.locator('.mdt-loading').waitFor({ state: 'hidden' }).catch(() => {})
-const page2Before = await page.locator('.mdt-page-editor').inputValue()
-console.log('③ 第 2 页正文:', page2Before.includes('第二页的题目') ? '加载正确' : '加载错误')
-const editedPage2 = page2Before.replace('第二页的题目：', '人工修正后的第二页题目：')
-await page.locator('.mdt-page-editor').fill(editedPage2)
-await page.getByRole('button', { name: '全文视图' }).click()
-const full = await page.locator('.md-review-editor').inputValue()
-console.log('③ 分页回写:', full.includes('人工修正后的第二页题目') && full.includes('第一题设问') && full.includes('计算题') ? '仅目标页变更' : '回写异常')
+// 切到第 2 页并逐字段编辑
+await page.locator('.te-page-tab', { hasText: '第 2 页' }).click()
+await page.waitForTimeout(150)
+console.log('③ 选中页签:', await page.locator('.te-page-tab.active').allTextContents())
+const stemField = page.locator('.te-question-card').first().locator('textarea').nth(1)
+const page2Before = await stemField.inputValue()
+console.log('③ 当前卡片题干:', page2Before)
+await stemField.fill('人工修正后的第二页题目：')
+const previewText = await page.locator('.te-preview-stem').first().textContent()
+console.log('③ 字段编辑即时预览:', previewText?.includes('人工修正后的第二页题目'))
 await page.screenshot({ path: '/tmp/xingce-exam-template.png', fullPage: true })
 
-// 自动排版后结构仍完整
-await page.getByRole('button', { name: '自动排版' }).click()
-await page.getByRole('button', { name: '返回分页视图' }).click()
-const tabsAfter = await page.locator('.mdt-page-tab').count()
-console.log('④ 自动排版后页数:', tabsAfter)
+// 修改模块后目录自动重新分组
+await page.locator('.te-question-card').first().locator('.te-select').selectOption('数量关系')
+const sectionNames = await page.locator('.te-section-name').allTextContents()
+const page2Preview = await page.locator('.te-preview-question').count()
+console.log('④ 模块归属变更后部分:', sectionNames.join(' | '), '· 第2页预览', page2Preview, '题')
 
-// 阶段②：按模板解析成套卷
-await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
-await page.waitForSelector('.paper-review-page', { timeout: 40000 })
+// 结构化题槽直接生成套卷
+await page.getByRole('button', { name: '生成套卷' }).click()
+await page.waitForSelector('.paper-review-page', { timeout: 20000 })
 const items = await page.locator('.paper-q-card').count()
-console.log('⑤ 解析题目数:', items)
+console.log('⑤ 套卷题目数:', items)
 
 // 人工推送到在线刷题，并检查题目携带部分/页
 await page.getByRole('button', { name: '推送到在线刷题' }).click()
 await page.locator('.op-confirm-summary').waitFor()
 await page.getByRole('button', { name: '确认推送' }).last().click()
-await page.locator('.paper-q-card').first().waitFor({ timeout: 10000 })
-await page.waitForSelector('.online-practice-page')
+await page.waitForSelector('.online-practice-page', { timeout: 10000 })
 const chips = await page.locator('.paper-q-card .chip').allTextContents()
 console.log('⑥ 试卷题目标签:', chips.slice(0, 6).join(' | '))
 
 console.log('JS 错误:', errors.length ? errors.join(' | ') : '无')
 await browser.close()
 
-const ok = tabs === 3 && previewQs === 2 && page2Before.includes('第二页的题目')
-  && full.includes('人工修正后的第二页题目') && full.includes('计算题')
-  && tabsAfter === 3 && items === 4
-  && chips.some((s) => s.includes('第 1 页')) && chips.some((s) => s.includes('第二部分'))
+const ok = tabs === 3 && previewQs === 2 && totalCards === 4 && page2Before.includes('第二页的题目')
+  && (previewText ?? '').includes('人工修正后的第二页题目') && page2Preview === 1
+  && sectionNames.includes('数量关系') && items === 4
+  && chips.some((s) => s.includes('第 1 页')) && chips.some((s) => s.includes('数量关系'))
   && errors.length === 0
 console.log(ok ? '\nE2E PASS' : '\nE2E FAIL')
 process.exit(ok ? 0 : 1)
