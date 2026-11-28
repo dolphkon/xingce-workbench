@@ -16,6 +16,20 @@ interface ExamResult {
   marked: boolean
 }
 
+/** 本轮作答草稿：同一标签页刷新后自动恢复，交卷后清除 */
+const SESSION_KEY = 'xingce-paper-session-v1'
+interface PaperSession {
+  paperKey: string
+  ids: string[]
+  answers: Record<string, string>
+  textAnswers: Record<string, string>
+  marks: Record<string, boolean>
+  bookmarks: Record<string, boolean>
+  activeIndex: number
+  elapsed: number
+  savedAt: number
+}
+
 const normalize = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '')
 
 function shuffle<T>(input: T[]): T[] {
@@ -34,21 +48,41 @@ function shuffle<T>(input: T[]): T[] {
 export default function PaperExamRunner({
   title,
   questions,
+  sessionKey,
   onFinish,
   onExit,
 }: {
   title: string
   questions: QuizQuestion[]
+  /** 试卷 ID；传入后同标签页刷新可恢复作答进度 */
+  sessionKey?: string
   onFinish: (results: ExamResult[], elapsed: number) => void | Promise<void>
   onExit: () => void
 }) {
-  const [pool] = useState<QuizQuestion[]>(() => shuffle(questions))
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [textAnswers, setTextAnswers] = useState<Record<string, string>>({})
-  const [marks, setMarks] = useState<Record<string, boolean>>({})
-  const [bookmarks, setBookmarks] = useState<Record<string, boolean>>({})
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [elapsed, setElapsed] = useState(0)
+  const [initialSession] = useState<PaperSession | null>(() => {
+    if (!sessionKey) return null
+    try {
+      const raw = window.sessionStorage.getItem(SESSION_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as PaperSession
+      return parsed.paperKey === sessionKey ? parsed : null
+    } catch {
+      return null
+    }
+  })
+  const [pool] = useState<QuizQuestion[]>(() => {
+    if (!initialSession?.ids?.length) return shuffle(questions)
+    const byId = new Map(questions.map((item) => [item.id, item]))
+    const restored = initialSession.ids.map((id) => byId.get(id)).filter((item): item is QuizQuestion => Boolean(item))
+    // 题目集合变化（编辑/重生成）时不恢复旧草稿，避免答案错位
+    return restored.length === questions.length ? restored : shuffle(questions)
+  })
+  const [answers, setAnswers] = useState<Record<string, string>>(() => initialSession?.answers ?? {})
+  const [textAnswers, setTextAnswers] = useState<Record<string, string>>(() => initialSession?.textAnswers ?? {})
+  const [marks, setMarks] = useState<Record<string, boolean>>(() => initialSession?.marks ?? {})
+  const [bookmarks, setBookmarks] = useState<Record<string, boolean>>(() => initialSession?.bookmarks ?? {})
+  const [activeIndex, setActiveIndex] = useState(() => Math.min(initialSession?.activeIndex ?? 0, Math.max(0, questions.length - 1)))
+  const [elapsed, setElapsed] = useState(() => initialSession?.elapsed ?? 0)
   const [paused, setPaused] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -68,6 +102,31 @@ export default function PaperExamRunner({
     const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000)
     return () => window.clearInterval(timer)
   }, [reportOpen, paused])
+
+  // 作答进度写入 sessionStorage：刷新页面后可从同一题继续，不受云同步影响
+  useEffect(() => {
+    if (!sessionKey || reportOpen) return
+    const session: PaperSession = {
+      paperKey: sessionKey,
+      ids: pool.map((item) => item.id),
+      answers,
+      textAnswers,
+      marks,
+      bookmarks,
+      activeIndex,
+      elapsed,
+      savedAt: Date.now(),
+    }
+    try {
+      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    } catch {
+      // 隐私模式或配额不足时静默降级为不保存
+    }
+  }, [sessionKey, reportOpen, pool, answers, textAnswers, marks, bookmarks, activeIndex, elapsed])
+
+  const clearSession = () => {
+    try { window.sessionStorage.removeItem(SESSION_KEY) } catch { /* 忽略 */ }
+  }
 
   useEffect(() => {
     setFontIndex(readFontIndex())
@@ -114,6 +173,7 @@ export default function PaperExamRunner({
         return { id: item.id, title: item.title, chosen, answer: item.answer, correct, marked: Boolean(marks[item.id]) }
       })
       await onFinish(built, elapsed)
+      clearSession()
       setResults(built)
       setReportOpen(true)
       setPaused(true)
@@ -203,7 +263,11 @@ export default function PaperExamRunner({
         />
       )}
       {confirmExit && (
-        <ConfirmDialog message="退出后本轮作答进度将清空，确认退出练习吗？" onConfirm={onExit} onCancel={() => setConfirmExit(false)} />
+        <ConfirmDialog
+          message="本轮作答已自动保存，重新打开同一套卷可继续作答。确认退出练习吗？"
+          onConfirm={onExit}
+          onCancel={() => setConfirmExit(false)}
+        />
       )}
     </>
   )
@@ -212,6 +276,14 @@ export default function PaperExamRunner({
     const correctCount = results.filter((result) => result.correct).length
     const wrongCount = results.filter((result) => result.chosen && !result.correct).length
     const skippedCount = results.length - correctCount - wrongCount
+    const accuracy = results.length ? Math.round((correctCount / results.length) * 100) : 0
+    const modules = Array.from(new Set(pool.map((item) => item.type || '综合')))
+    const moduleStats = modules.map((name) => {
+      const indexes = pool.map((item, index) => (item.type || '综合') === name ? index : -1).filter((index) => index >= 0)
+      const correct = indexes.filter((index) => results[index]?.correct).length
+      const wrong = indexes.filter((index) => results[index]?.chosen && !results[index]?.correct).length
+      return { name, total: indexes.length, correct, wrong, skipped: indexes.length - correct - wrong }
+    })
     return (
       <div className={examClass}>
         {topbar}
@@ -223,6 +295,15 @@ export default function PaperExamRunner({
                 <div className="pr-score-cell">
                   <div className="pr-score-value blue">{correctCount}<span>/{results.length}</span></div>
                   <div className="pr-score-label">答对题目数</div>
+                </div>
+                <div className="pr-score-cell">
+                  <div
+                    className="pr-accuracy-ring"
+                    style={{ background: `conic-gradient(var(--primary) ${accuracy}%, var(--border) ${accuracy}% 100%)` }}
+                  >
+                    <b>{accuracy}%</b>
+                  </div>
+                  <div className="pr-score-label">正确率</div>
                 </div>
                 <div className="pr-score-cell">
                   <div className="pr-score-value">{formatClock(elapsed)}</div>
@@ -240,8 +321,21 @@ export default function PaperExamRunner({
                   <span>答对 <b className="blue">{correctCount}</b>题</span>
                   <span>答错 <b className="red">{wrongCount}</b>题</span>
                   <span>未答 <b>{skippedCount}</b>题</span>
+                  <span>正确率 <b className="blue">{accuracy}%</b></span>
                 </div>
               </div>
+              {moduleStats.map((module) => (
+                <div className="pr-module-row" key={module.name}>
+                  <span className="pr-module-icon pr-module-sub">✓</span>
+                  <b className="pr-module-name">{module.name}</b>
+                  <div className="pr-module-stats">
+                    <span>共 <b>{module.total}</b>题</span>
+                    <span>答对 <b className="blue">{module.correct}</b></span>
+                    <span>答错 <b className="red">{module.wrong}</b></span>
+                    <span>正确率 <b>{module.total ? Math.round((module.correct / module.total) * 100) : 0}%</b></span>
+                  </div>
+                </div>
+              ))}
             </section>
             <div className="pr-list">
               {results.map((result, index) => {

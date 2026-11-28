@@ -183,8 +183,16 @@ export interface QuizQuestion {
   /** 模块 / 题型名称 */
   type: string
   subType?: string
+  /** 二级题型（图形推理/定义判断/类比推理/逻辑判断等） */
+  subModule?: string
   point?: string
   images?: string[]
+  /** 是否依赖图形/表格（扫描件可用 imageNote 文字化描述） */
+  hasImage?: boolean
+  /** 图形/表格的文字说明 */
+  imageNote?: string
+  /** 原文题号，供批量答案导入与原件核对 */
+  no?: number
   /** 套卷模板：所属部分（如「第一部分 言语理解与表达」） */
   section?: string
   /** 套卷模板：原始页码 */
@@ -429,6 +437,16 @@ export interface BankQuestion {
   images: string[]
   /** 来源说明 */
   source?: string
+  /** 原文题号，供按题号批量导入答案与原题核对 */
+  no?: number
+  /** 二级题型（图形推理/定义判断/类比推理/逻辑判断等） */
+  subModule?: string
+  /** 来源 PDF 页码 */
+  sourcePage?: number
+  /** 是否依赖图形/表格 */
+  hasImage?: boolean
+  /** 图形/表格的文字描述 */
+  imageNote?: string
   createdAt: number
   updatedAt: number
 }

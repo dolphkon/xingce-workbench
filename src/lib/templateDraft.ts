@@ -333,6 +333,21 @@ export function templateStats(draft: TemplateDraft): { sections: number; pages: 
   }
 }
 
+/** 判断推理下的二级题型，按原文/部分标题推断，供题库按题型组卷 */
+const SUB_MODULE_PATTERNS: Array<[string, RegExp]> = [
+  ['图形推理', /图形推理|图形规律|图形类比/],
+  ['定义判断', /定义判断/],
+  ['类比推理', /类比推理/],
+  ['逻辑判断', /逻辑判断|逻辑推理/],
+]
+
+export function inferSubModule(module: string, text: string): string | undefined {
+  if (canonicalModule(module) !== '判断推理') return undefined
+  const value = String(text ?? '')
+  for (const [name, re] of SUB_MODULE_PATTERNS) if (re.test(value)) return name
+  return undefined
+}
+
 /** 结构化草稿 → 试卷题目（不再经过 Markdown 二次解析） */
 export function draftToQuestions(draft: TemplateDraft): QuizQuestion[] {
   return draft.questions.map((question) => ({
@@ -344,6 +359,9 @@ export function draftToQuestions(draft: TemplateDraft): QuizQuestion[] {
     answer: question.answer,
     analysis: question.analysis,
     type: question.module,
+    subModule: inferSubModule(question.module, `${question.section} ${question.source}`),
+    hasImage: question.images.length > 0,
+    no: question.no,
     section: canonicalSection(question.section, question.module),
     page: question.page,
     images: question.images,

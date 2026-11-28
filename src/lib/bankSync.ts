@@ -6,10 +6,10 @@
  * - 编辑：按 bankId 更新原题库记录，保留题库记录的 createdAt，避免重复入库；
  * - 从题库推送过来的错题：初始 bankId 就是原题库记录 ID，保存后更新原记录。
  */
-import { getById, put } from './db'
+import { getById, put, readCachedAll } from './db'
 import { formatQuestionText, questionCategory, splitQuizTitle, uid } from './utils'
 import { plainToRichText, richTextToPlain, sanitizeRichHtml } from './richText'
-import { BANK_MODULES, type BankCategory, type BankQuestion, type Mistake, type QuizQuestion } from '../types'
+import { BANK_MODULES, type BankCategory, type BankQuestion, type Mistake, type Paper, type QuizQuestion } from '../types'
 
 /** 把错题转成题库题目；existing 用于编辑时保留题库记录创建时间 */
 export function mistakeToBankQuestion(mistake: Mistake, existing?: BankQuestion): BankQuestion {
@@ -53,6 +53,11 @@ export function quizToBankQuestion(q: QuizQuestion, existing?: BankQuestion): Ba
     answer: cleanAnswer,
     analysis: formatQuestionText(q.analysis || ''),
     source: existing?.source || '在线试卷拆题',
+    no: q.no ?? existing?.no,
+    subModule: q.subModule ?? existing?.subModule,
+    sourcePage: q.page ?? existing?.sourcePage,
+    hasImage: (q.images?.length ?? 0) > 0,
+    imageNote: q.imageNote ?? existing?.imageNote,
     images: q.images ?? [],
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -69,12 +74,33 @@ export function bankQuestionToQuiz(b: BankQuestion, base?: QuizQuestion): QuizQu
     analysis: b.analysis,
     type: b.module,
     subType: base?.subType,
+    subModule: b.subModule ?? base?.subModule,
     point: base?.point,
+    hasImage: b.hasImage ?? b.images.length > 0,
+    imageNote: b.imageNote ?? base?.imageNote,
+    no: base?.no ?? b.no,
     images: b.images,
     section: base?.section,
     page: base?.page,
     favorite: base?.favorite,
   }
+}
+
+/**
+ * 把整份套卷的题目同步到在线题库，供按模块组卷与批量答案管理复用。
+ * 以试卷题 ID 作为题库 ID：重复推送同一份卷只更新记录，不会生成重复题。
+ */
+export async function syncPaperToBank(paper: Paper): Promise<{ synced: number; skipped: number }> {
+  const existing = new Map(readCachedAll('bank').map((item) => [item.id, item]))
+  let synced = 0
+  let skipped = 0
+  for (const question of paper.questions) {
+    if (!question.title.trim()) { skipped += 1; continue }
+    const previous = existing.get(question.id)
+    await put('bank', quizToBankQuestion(question, previous))
+    synced += 1
+  }
+  return { synced, skipped }
 }
 
 /** 同步错题到题库后台，返回实际使用的题库记录 ID */

@@ -5,6 +5,7 @@ import { bankQuestionToQuiz, quizToBankQuestion } from '../../lib/bankSync'
 import { uid } from '../../lib/utils'
 import type { BankQuestion, Paper, QuizQuestion } from '../../types'
 import BankForm from '../bank/BankForm'
+import AnswerManager from '../bank/AnswerManager'
 import PaperQuestionCard from './PaperQuestionCard'
 import QuestionReviewModal from './QuestionReviewModal'
 
@@ -17,6 +18,7 @@ interface Props {
   onDeletePaper: (paper: Paper) => void
   onRenamePaper: (paper: Paper, title: string) => void
   onSaveQuestion: (paper: Paper, index: number | null, question: QuizQuestion) => void
+  onSaveAnswers: (paper: Paper, answers: Record<string, string>) => void | Promise<void>
   onDeleteQuestion: (paper: Paper, index: number) => void
   onToggleFavorite: (paper: Paper, index: number) => void
   onExportPaper: (paper: Paper) => void
@@ -30,7 +32,7 @@ interface Props {
  */
 export default function PaperWorkbench({
   papers, activeId, onSelect, onStartExam, onShowHistory, onDeletePaper,
-  onRenamePaper, onSaveQuestion, onDeleteQuestion, onToggleFavorite, onExportPaper, onUpload,
+  onRenamePaper, onSaveQuestion, onSaveAnswers, onDeleteQuestion, onToggleFavorite, onExportPaper, onUpload,
 }: Props) {
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -38,10 +40,11 @@ export default function PaperWorkbench({
   const [confirmDelQ, setConfirmDelQ] = useState<number | null>(null)
   const [jsonIndex, setJsonIndex] = useState<number | null>(null)
   const [editingBank, setEditingBank] = useState<{ index: number; initial: BankQuestion } | null>(null)
+  const [answerManagerOpen, setAnswerManagerOpen] = useState(false)
 
   const active = papers.find((paper) => paper.id === activeId) ?? null
 
-  useEffect(() => { setRenaming(false); setEditing(null); setConfirmDelQ(null); setJsonIndex(null); setEditingBank(null) }, [activeId])
+  useEffect(() => { setRenaming(false); setEditing(null); setConfirmDelQ(null); setJsonIndex(null); setEditingBank(null); setAnswerManagerOpen(false) }, [activeId])
 
   const startRename = () => {
     if (!active) return
@@ -118,6 +121,7 @@ export default function PaperWorkbench({
                   </div>
                   <div className="pw-detail-actions">
                     <button className="btn btn-primary btn-sm" onClick={() => onStartExam(active)}><Icon name="play" size={14} /> 开始刷题</button>
+                    <button className="btn btn-sm" onClick={() => setAnswerManagerOpen(true)} title="批量导入 / 导出本卷答案"><Icon name="check" size={14} /> 答案管理</button>
                     <button className="btn btn-sm" onClick={() => onShowHistory(active.id)}><Icon name="clock" size={14} /> 历史</button>
                     <button className="icon-btn" title="重命名" onClick={startRename}><Icon name="edit" size={15} /></button>
                     <button className="icon-btn" title="导出 JSON" onClick={() => onExportPaper(active)}><Icon name="download" size={15} /></button>
@@ -181,6 +185,20 @@ export default function PaperWorkbench({
             }}
           />
         </Modal>
+      )}
+
+      {answerManagerOpen && active && (
+        <AnswerManager
+          title={`答案管理 · ${active.title}`}
+          targets={active.questions.map((question, index) => ({
+            id: question.id,
+            no: question.no ?? index + 1,
+            title: question.title,
+            answer: question.answer,
+          }))}
+          onClose={() => setAnswerManagerOpen(false)}
+          onApply={(answers) => onSaveAnswers(active, answers)}
+        />
       )}
 
       {confirmDelQ !== null && active && (

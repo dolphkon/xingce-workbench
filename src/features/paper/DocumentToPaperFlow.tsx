@@ -13,7 +13,7 @@ import {
 import {
   applyTemplateFill, buildTemplateDraft, draftToQuestions, markdownToDraft, type TemplateDraft,
 } from '../../lib/templateDraft'
-import { bankQuestionToQuiz, quizToBankQuestion } from '../../lib/bankSync'
+import { bankQuestionToQuiz, quizToBankQuestion, syncPaperToBank } from '../../lib/bankSync'
 import { uid } from '../../lib/utils'
 import type { BankQuestion, KnowledgeDoc, Paper, QuizQuestion } from '../../types'
 import BankForm from '../bank/BankForm'
@@ -63,6 +63,9 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const [confirmedIds, setConfirmedIds] = useState<string[]>([])
   const [showConfirmPush, setShowConfirmPush] = useState(false)
+  // 推送时同步写入在线题库，后续可按模块组卷与批量导入答案
+  const [syncToBank, setSyncToBank] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [llmProbe, setLlmProbe] = useState<LlmProbe | null>(null)
   const [jsonIndex, setJsonIndex] = useState<number | null>(null)
   const [editingBank, setEditingBank] = useState<{ index: number; initial: BankQuestion } | null>(null)
@@ -239,6 +242,14 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
       updatedAt: now,
     }
     await put('papers', paper)
+    if (syncToBank) {
+      setSyncing(true)
+      try {
+        await syncPaperToBank(paper)
+      } finally {
+        setSyncing(false)
+      }
+    }
     setDraft(null)
     setTemplateDraft(null)
     setConfirmedIds([])
@@ -478,7 +489,7 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
           footer={
             <>
               <button className="btn" onClick={() => setShowConfirmPush(false)}>再检查一下</button>
-              <button className="btn btn-primary" onClick={() => void savePaper()}><Icon name="play" size={15} /> 确认推送</button>
+              <button className="btn btn-primary" onClick={() => void savePaper()} disabled={syncing}><Icon name="play" size={15} /> {syncing ? '正在入库…' : '确认推送'}</button>
             </>
           }
         >
@@ -487,6 +498,10 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
             <div className="op-confirm-row"><span>题目总数</span><b>{draft.questions.length} 题</b></div>
             <div className="op-confirm-row"><span>已校对确认</span><b className="ok">{draft.questions.length - pendingCount} 题</b></div>
             <div className="op-confirm-row"><span>拆题方式</span><b>{draft.usedLlm ? 'AI 字段填充 + 规则题号锚点' : '规则拆题'}</b></div>
+            <label className="op-sync-bank">
+              <input type="checkbox" checked={syncToBank} onChange={(e) => setSyncToBank(e.target.checked)} />
+              <span><b>同步写入在线题库</b>：入库后可在题库管理页按模块组卷、批量导入答案，重复推送不会生成重复题目</span>
+            </label>
             {pendingCount > 0 && (
               <div className="op-flag"><Icon name="info" size={14} /> 还有 {pendingCount} 道题未校对确认，推送后仍可在刷题页发现并修正。建议先逐题校对。</div>
             )}

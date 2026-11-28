@@ -7,6 +7,7 @@ import { dateKey, formatClock, uid } from '../../lib/utils'
 import type { Mistake, Paper, PracticeRecord } from '../../types'
 import PaperExamRunner, { type ExamResult } from './PaperExamRunner'
 import PaperWorkbench from './PaperWorkbench'
+import SmartComposePanel from '../bank/SmartComposePanel'
 
 /** 在线刷题：浏览题库管理页推送来的套卷、逐题管理、刷题、错题入库与历史记录。
  *  文档转试卷流程已迁移到题库管理页（/question-bank）。 */
@@ -15,10 +16,13 @@ export default function OnlinePracticePage() {
   const navigate = useNavigate()
   const { items: papers, refresh: refreshPapers } = useCollection('papers')
   const { items: records, refresh: refreshRecords } = useCollection('practiceRecords')
+  const { items: bank } = useCollection('bank')
+  const { items: mistakes } = useCollection('mistakes')
 
   const [activePaper, setActivePaper] = useState<Paper | null>(null)
   const [historyPaperId, setHistoryPaperId] = useState<string | null>(null)
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null)
+  const [composeOpen, setComposeOpen] = useState(false)
   // 从题库管理页推送过来时，直接选中刚生成的套卷
   const [activePaperId, setActivePaperId] = useState<string | null>(
     () => (location.state as { activePaperId?: string } | null)?.activePaperId ?? null,
@@ -53,6 +57,15 @@ export default function OnlinePracticePage() {
   /** 收藏/取消收藏试卷中的一道题 */
   const toggleFavorite = async (paper: Paper, index: number) => {
     const questions = paper.questions.map((q, i) => i === index ? { ...q, favorite: !q.favorite } : q)
+    await put('papers', { ...paper, questions, updatedAt: Date.now() })
+    refreshPapers()
+  }
+
+  /** 批量回写本卷答案，一次写库完成 */
+  const saveAnswers = async (paper: Paper, answers: Record<string, string>) => {
+    const questions = paper.questions.map((question) => answers[question.id] === undefined
+      ? question
+      : { ...question, answer: answers[question.id] })
     await put('papers', { ...paper, questions, updatedAt: Date.now() })
     refreshPapers()
   }
@@ -149,8 +162,10 @@ export default function OnlinePracticePage() {
   if (activePaper) {
     return (
       <PaperExamRunner
+        key={activePaper.id}
         title={`在线练习（${activePaper.title}）`}
         questions={activePaper.questions}
+        sessionKey={activePaper.id}
         onFinish={finishExam}
         onExit={exitExam}
       />
@@ -168,6 +183,7 @@ export default function OnlinePracticePage() {
           <p className="muted">在题库管理页上传文档生成套卷后，在这里选择套卷开始刷题。答错的题自动进入错题库。</p>
         </div>
         <div className="op-head-actions">
+          <button className="btn" onClick={() => setComposeOpen(true)}><Icon name="layers" size={16} /> 智能组卷</button>
           <button className="btn btn-primary" onClick={() => navigate('/question-bank')}>
             <Icon name="upload" size={16} /> 去题库管理生成套卷
           </button>
@@ -183,6 +199,7 @@ export default function OnlinePracticePage() {
         onDeletePaper={setConfirmDeletePaper}
         onRenamePaper={(paper, title) => void renamePaper(paper, title)}
         onSaveQuestion={(paper, index, question) => void saveQuestion(paper, index, question)}
+        onSaveAnswers={(paper, answers) => void saveAnswers(paper, answers)}
         onDeleteQuestion={(paper, index) => void deleteQuestion(paper, index)}
         onToggleFavorite={(paper, index) => void toggleFavorite(paper, index)}
         onExportPaper={exportPaper}
@@ -205,6 +222,7 @@ export default function OnlinePracticePage() {
                     <div className="op-history-row">
                       <b>{dateKey(new Date(record.finishedAt))}</b>
                       <span className="op-history-score">正确 {record.correct}/{record.total}</span>
+                      <span className="op-history-rate">{record.total ? Math.round((record.correct / record.total) * 100) : 0}%</span>
                       <span className="muted small">用时 {formatClock(record.elapsed)}</span>
                     </div>
                     <div className="op-history-details">
@@ -220,6 +238,15 @@ export default function OnlinePracticePage() {
             )}
           </div>
         </div>
+      )}
+
+      {composeOpen && (
+        <SmartComposePanel
+          bank={bank}
+          mistakes={mistakes}
+          onClose={() => setComposeOpen(false)}
+          onComposed={(paper) => { refreshPapers(); setActivePaperId(paper.id) }}
+        />
       )}
 
       {confirmDeletePaper && (

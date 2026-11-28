@@ -10,6 +10,8 @@ import { richHtmlForPreview, richTextToPlain } from '../../lib/richText'
 import { formatQuestionText, pluralDays } from '../../lib/utils'
 import { BANK_CATEGORIES, BANK_MODULES, type BankQuestion } from '../../types'
 import BankForm from './BankForm'
+import AnswerManager from './AnswerManager'
+import SmartComposePanel from './SmartComposePanel'
 import DocumentToPaperFlow from '../paper/DocumentToPaperFlow'
 
 interface DraftImage { stored: string; ocr: string }
@@ -17,6 +19,7 @@ interface DraftImage { stored: string; ocr: string }
 export default function QuestionBankPage() {
   const navigate = useNavigate()
   const { items, error, refresh } = useCollection('bank')
+  const { items: mistakes } = useCollection('mistakes')
   const [keyword, setKeyword] = useState('')
   const [moduleFilter, setModuleFilter] = useState<string>('全部')
   const [categoryFilter, setCategoryFilter] = useState<string>('全部')
@@ -25,6 +28,8 @@ export default function QuestionBankPage() {
   const [jsonView, setJsonView] = useState<BankQuestion | null>(null)
   // 文档转在线刷题：占用整页，与题库列表互斥
   const [docFlowOpen, setDocFlowOpen] = useState(false)
+  const [answerManagerOpen, setAnswerManagerOpen] = useState(false)
+  const [composeOpen, setComposeOpen] = useState(false)
 
   // 图片识别弹窗
   const [importOpen, setImportOpen] = useState(false)
@@ -187,6 +192,8 @@ export default function QuestionBankPage() {
         </div>
         <div className="header-actions">
           <button className="btn" onClick={exportJson}><Icon name="download" size={16} /> 导出 JSON</button>
+          <button className="btn" onClick={() => setAnswerManagerOpen(true)}><Icon name="check" size={16} /> 答案管理</button>
+          <button className="btn" onClick={() => setComposeOpen(true)}><Icon name="layers" size={16} /> 智能组卷</button>
           <button className="btn" onClick={() => setDocFlowOpen(true)}><Icon name="filetext" size={16} /> 文档转在线刷题</button>
           <button className="btn btn-primary" onClick={openImport}><Icon name="sparkle" size={16} /> 图片识别入库</button>
           <button className="btn" onClick={() => setEditing('new')}><Icon name="plus" size={16} /> 手动新增</button>
@@ -350,6 +357,30 @@ export default function QuestionBankPage() {
         <Modal title="题目 JSON" onClose={() => setJsonView(null)} footer={<button className="btn" onClick={() => setJsonView(null)}>关闭</button>}>
           <pre className="bank-json-view">{JSON.stringify(jsonView, null, 2)}</pre>
         </Modal>
+      )}
+
+      {composeOpen && (
+        <SmartComposePanel
+          bank={items}
+          mistakes={mistakes}
+          onClose={() => setComposeOpen(false)}
+          onComposed={(paper) => navigate('/online-practice', { state: { activePaperId: paper.id } })}
+        />
+      )}
+
+      {answerManagerOpen && (
+        <AnswerManager
+          title="题库答案管理"
+          targets={items.map((item) => ({ id: item.id, no: item.no, title: item.stem, answer: item.answer }))}
+          onClose={() => setAnswerManagerOpen(false)}
+          onApply={async (answers) => {
+            const now = Date.now()
+            await Promise.all(items.map((item) => answers[item.id] === undefined
+              ? Promise.resolve()
+              : put('bank', { ...item, answer: answers[item.id], updatedAt: now })))
+            refresh()
+          }}
+        />
       )}
 
       {deleting && (

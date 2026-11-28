@@ -95,9 +95,14 @@
   "dev": "vite",
   "build": "tsc --noEmit && vite build",
   "preview": "vite preview",
-  "typecheck": "tsc --noEmit"
+  "typecheck": "tsc --noEmit",
+  "test:refine": "esbuild ... && node scripts/test-refine.mjs && ... && node scripts/test-template-draft.mjs && esbuild src/lib/answerBatch.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/answer-batch.mjs --log-level=error && node scripts/test-answer-batch.mjs",
+  "test:e2e": "node scripts/e2e-runner.mjs",
+  "test:all": "npm run test:refine && npm run build && npm run test:e2e"
 }
 ```
+
+`test:refine` 逐个把 lib 下的纯逻辑模块用 esbuild 打包到 `node_modules/.cache/` 再跑对应回归脚本（questionRefine / examClean / questionClean / paperSplit / markdownFlow / examTemplate / templateDraft / answerBatch）。`test:e2e` 由 `scripts/e2e-runner.mjs` 自动启停 Vite（统一 `E2E_BASE` / `CHROME_PATH` 环境变量）后依次跑 5 个浏览器用例。
 
 ### 2.4 TypeScript 配置要点（tsconfig.json）
 
@@ -252,7 +257,9 @@ src/
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
 │   ├── examClean.ts                  # 试卷版式噪音清洗：连续重复行去重 + 行内页码/推广水印剥离 + cleanExamText / sanitizeSharedMaterial / stripResidualBoilerplate
 │   ├── questionClean.ts              # 【新增】通用拆题规范化：refineAtomicQuestion 去题号/选项字母前缀、行内选项抽取、答案回填
-│   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）
+│   ├── bankSync.ts                   # 【新增】错题↔题库后台同步：mistakeToBankQuestion / syncMistakeToBank（按 bankId 更新原记录）；quizToBankQuestion / bankQuestionToQuiz / syncPaperToBank（套卷↔题库按题 ID 去重回写）
+│   ├── answerBatch.ts                # 【新增】答案批量导入/导出：parseAnswerText（1A/1.A/1、A/粘连串/纯字母串）+ applyAnswerImport（按题号或序号匹配，题号按部分重置时顺序分配、唯一题号取最后一次）+ exportAnswerText
+│   ├── paperComposer.ts              # 【新增】智能组卷：全真模拟/章节练习/随机练习/错题重练四模式，从题库按模块/数量/错题筛选生成 QuizQuestion[]
 │   ├── llm.ts                        # 免密钥大模型探测 + 分批拆题（含 structureQuestionsForBank）
 │   ├── pptxSlide.ts                  # 自研 PPTX OOXML 版式解析器（565 行）
 │   ├── markdown.ts                   # marked + DOMPurify 渲染
@@ -288,10 +295,12 @@ src/
     │   ├── PaperQuestionCard.tsx     # 【新增】试卷题目卡片，与题库入库卡片同一版式（材料/图片/题干/选项/答案 + 校对/JSON/编辑题库/收藏/删除）
     │   ├── PaperWorkbench.tsx        # 我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
     │   ├── QuestionReviewModal.tsx   # 单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
-    │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
+    │   └── PaperExamRunner.tsx       # 在线试卷考试运行器：答题卡/计时/草稿/标记收藏，sessionStorage 刷新恢复作答进度，交卷清草稿，成绩报告含正确率环 + 模块维度统计，报告可导出 Markdown
     ├── bank/                         # 题库后台管理
-    │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/文档转在线刷题/列表筛选/JSON查看/推送错题
-    │   └── BankForm.tsx              # 题库题目手动新增/编辑表单
+    │   ├── QuestionBankPage.tsx      # 顶部入口：图片识别入库/文档转在线刷题/列表筛选/JSON查看/推送错题/答案管理/智能组卷
+    │   ├── BankForm.tsx              # 题库题目手动新增/编辑表单
+    │   ├── AnswerManager.tsx         # 【新增】答案批量管理：答案表粘贴导入（匹配预览）+ 逐题录入 + 导出答案文本
+    │   └── SmartComposePanel.tsx     # 【新增】智能组卷面板：四模式选择 + 题量/模块配置 + 生成套卷并进入在线刷题
     ├── mothers/
     │   ├── MothersPage.tsx           # 母题库列表
     │   ├── MotherForm.tsx            # 母题录入/编辑（316 行）
@@ -347,6 +356,10 @@ interface QuizQuestion {           // 文档解析出的通用题
   analysis: string; type: string; subType?: string; point?: string; images?: string[];
   section?: string; page?: number;  // 套卷模板归属：部分名称 / 原始页码
   favorite?: boolean;               // 试卷后台管理中是否收藏（星标）
+  no?: number;                      // 原文题号（题号按部分重置时用于答案批量匹配）
+  subModule?: string;               // 行测细分模块（答案批量导入/智能组卷按模块筛选）
+  sourcePage?: number;              // 来源页码
+  hasImage?: boolean; imageNote?: string;  // 图片题标记与备注
 }
 
 interface Paper {                   // 文档转在线试卷
@@ -388,6 +401,8 @@ interface BankQuestion {
   analysis: string;           // 解析
   images: string[];           // 题目原图（压缩存储图）
   source?: string;
+  no?: number; subModule?: string; sourcePage?: number;  // 原文题号 / 细分模块 / 来源页（与 QuizQuestion 互通）
+  hasImage?: boolean; imageNote?: string;                // 图片题标记与备注
   createdAt: number; updatedAt: number;
 }
 ```
@@ -628,7 +643,10 @@ Layout 顶部导航含 7 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 - **拆题环形倒计时（CircularProgress.tsx）**：上传解析期间用环形进度替代旧的线性进度条——外圈虚线 `cp-spin` 持续旋转表示「正在进行」；彩色 SVG 弧 `cp-arc`（`stroke-dashoffset` 按 percent 平滑过渡）显示进度；中心百分比 + 当前阶段；下方「已用时 mm:ss / 预计还需 ~mm:ss」（依据 percent 与 elapsed 估算，前 1 秒显示「计算中」）与 5 段阶段步骤条（准备文件→读取文本→OCR 识别→智能拆题→规则校验，done/active 高亮 + active 呼吸动画）；支持明暗主题、移动端纵向堆叠。E2E 验证：上传 docx 时 `.cp-wrap` 出现、spin 动画生效、阶段正确推进、解析完成后环形进度消失。
 - **试卷后台工作台（PaperWorkbench.tsx）**：左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「从文档生成套卷」跳转题库管理页），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题统一使用 `PaperQuestionCard`（题库入库卡片版式），每题可校对编辑（`QuestionReviewModal`）、查看 JSON、`编辑题库`（`BankForm` + `put('bank')` + 回写试卷题）、收藏星标、删除，并支持添加题目。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
-- **PaperExamRunner.tsx**：复用 `.practice-exam/.pe-*/.pr-*` 全屏考试 UI——题目乱序、选项、标记、计时/暂停、答题卡跳题、字号、夜间模式、下载 Markdown 报告、交卷确认、成绩报告（含每题正确答案醒目标注）。
+- **PaperExamRunner.tsx**：复用 `.practice-exam/.pe-*/.pr-*` 全屏考试 UI——题目乱序、选项、标记/收藏、手写草稿、计时/暂停、答题卡跳题、字号、夜间模式、下载 Markdown 报告、交卷确认、成绩报告（含每题正确答案醒目标注）。本轮作答（题序/选择/文本答案/标记/收藏/当前题/用时）写入 `sessionStorage[xingce-paper-session-v1]`，同标签页刷新后从原题继续；题目集合变化（编辑/重生成）时不恢复旧草稿以防错位；交卷后清除草稿。成绩报告含答对/答错/未答数、正确率圆环（conic-gradient）、总用时，并按 `question.type` 输出分模块维度统计（共/对/错/正确率）。
+- **答案批量管理（AnswerManager.tsx + lib/answerBatch.ts）**：题库管理页与试卷工作台均可打开「答案管理」。支持把答案表（`1A 2B 3C`、`1.A`、`1、A`、`1A2B3C` 粘连串、纯字母串 `ABCD`、多行）一次性粘贴导入；匹配预览显示每条答案对应的题号/题干，可切换「按原文题号 / 按列表序号」两种对齐方式；题号按部分重置（各部分从 1 起）时同号题按出现顺序依次分配，题号唯一时重复答案取最后一次（末尾修正）；未匹配项单独列出、不覆盖已有答案；支持逐题录入与「导出答案文本」（缺失题号时用列表序号）。回归用例见 14。
+- **智能组卷（SmartComposePanel.tsx + lib/paperComposer.ts）**：题库管理页与在线刷题页均可打开「智能组卷」。四模式——全真模拟（按行测六大模块配额组满卷）、章节练习（指定单一模块）、随机练习（全库随机抽题）、错题重练（从错题库抽取）；可配置题量/模块，生成 `QuizQuestion[]` 套卷并直接进入在线刷题。
+- **套卷↔题库同步（lib/bankSync.ts）**：`quizToBankQuestion` / `bankQuestionToQuiz` 双向字段转换（含 no/subModule/sourcePage/hasImage/imageNote），`syncPaperToBank(paper)` 按题 ID 去重写回 `bank`；「推送到在线刷题」弹窗勾选「同步写入在线题库」后，套卷题目一并进入题库后台。
 
 ### 9.2.1 题库后台管理（bank/）【新增】
 
@@ -795,7 +813,7 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts + markdownFlow.ts + examTemplate.ts → 59 项回归用例（4 题库后处理 + 8 噪音清洗 + 8 通用拆题规范化 + 5 规则切题 + 15 Markdown 中间层 + 19 套卷模板，含 5 项人工校验样本 + 4 项多套卷分页样本 + 1 项 AI 错编题号/臆造标题纠正）
+npm run test:refine   # esbuild 逐个打包 questionRefine/examClean/questionClean/paperSplit/markdownFlow/examTemplate/templateDraft/answerBatch → 回归用例（4 题库后处理 + 8 噪音清洗 + 8 通用拆题规范化 + 5 规则切题 + 21 Markdown 中间层 + 21 套卷模板 + 8 结构化题槽 + 15 答案批量导入导出，含人工校验样本/多套卷分页样本/AI 错编题号纠正/题号重置匹配）
 npm run test:e2e      # scripts/e2e-runner.mjs 顺序启动本地预览并执行全部 5 组 E2E，任何一组失败即整轮失败
 npm run test:all      # test:refine + build + test:e2e 一条命令跑完整质量门禁
 ```
@@ -857,7 +875,7 @@ PORT=5173 npm run dev
 
 ## 16. 当前状态
 
-> 截至 2026-11-27，git 分支 `main`，工作区干净，HEAD = `650d4db`。
+> 截至 2026-11-28，git 分支 `main`。最近一批改动：在线题库能力补齐（答案批量管理、智能组卷四模式、答题引擎进度恢复与成绩报告、套卷↔题库双向同步），见 9.2 / 9.2.1。HEAD 提交号随发布更新。
 
 ### 16.1 功能状态
 
@@ -867,6 +885,10 @@ PORT=5173 npm run dev
 | 题目图片与题干布局 | ✅ 完整可用（2026-11-27） | 图片题干下方从左到右横排、与题干左对齐（flex-wrap）；题干前置类别标签，覆盖详情/专项刷题/试卷刷题/母题详情 |
 | 知识库 + 块编辑器 + 文件阅读器 | ✅ 完整可用 | 全格式预览、手写批注 |
 | 专项刷题 + 全屏考试 UI | ✅ 完整可用 | 答题卡/计时/标记/交卷/报告/下载 |
+| **答案批量管理** | ✅ **完整可用（2026-11-28）** | 答案表粘贴导入（题号按部分重置/唯一题号修正两种匹配）+ 匹配预览 + 逐题录入 + 导出；15 项回归用例 |
+| **智能组卷四模式** | ✅ **完整可用（2026-11-28）** | 全真模拟/章节练习/随机练习/错题重练，生成套卷直接刷题 |
+| **答题引擎 + 成绩报告** | ✅ **完整可用（2026-11-28）** | sessionStorage 刷新恢复作答进度、交卷清草稿；正确率环 + 分模块维度统计 + Markdown 报告导出 |
+| **套卷↔题库双向同步** | ✅ **完整可用（2026-11-28）** | 推送时勾选同步写入题库，按题 ID 去重回写 |
 | **题库后台管理（顶部）** | ✅ **完整可用（已线上验证）** | 图片识别→JSON 结构化入库（唯一 ID/类别/模块/材料/题干/选项）→推送错题编辑页；兼作文档转在线刷题入口；见 9.2.1 / 9.2 |
 | 文档转在线刷题 | ✅ 完整可用（大模型字段填充 + 规则题号锚点） | 入口在题库管理页；上传→结构化模版题槽→AI 回填→逐题校对/JSON/编辑题库→生成套卷→人工推送到在线刷题→无限刷题→错题入库 |
 | 学习计划 + 统计 | ✅ 完整可用 | 周历/计时/子任务/图表 |
