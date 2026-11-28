@@ -1,0 +1,200 @@
+/**
+ * 两阶段拆题的 Markdown 中间层。
+ *
+ * 阶段①：AI（或规则兜底）把清洗后的试卷文本整理成结构化 Markdown；
+ * 人工在页面上校验/编辑排版、下载 .md、再上传；
+ * 阶段②：AI（或规则兜底）把校验后的 Markdown 解析成待确认题目。
+ *
+ * 这样把「识别」与「结构化确认」解耦：OCR/AI 在阶段①出错了，人工可以直接改 Markdown，
+ * 不必重新上传整份文档，也不必在几十道题里逐个修补粘连题干。
+ */
+import type { QuizQuestion } from '../types'
+import {
+  ruleParseAll, formatStem, splitByQuestionNumbers, extractAnswerKey, ruleParseBlock,
+} from './paperSplit'
+import { stripResidualBoilerplate } from './examClean'
+import { uid } from './utils'
+
+/** 阶段①提示词：文本 → 结构化 Markdown */
+export const MD_GENERATE_PROMPT = `你是公务员考试（行测）试卷整理助手。把用户给的试卷文本（可能来自 OCR，含版式噪音）整理成规范的结构化 Markdown，方便人工逐题校对。
+
+只输出 Markdown 正文，不要输出 \`\`\` 代码块标记，不要任何解释或总结。
+
+格式规范（严格遵守）：
+# 试卷名称（可选，只输出一次）
+
+## 第 3 题
+题型：单选题
+模块：常识判断
+答案：B
+材料：设问前的背景材料原文（没有就不写这一行）
+
+题干原文……
+
+A. 选项正文
+B. 选项正文
+C. 选项正文
+D. 选项正文
+
+解析：解析原文（没有就不写这一行）
+
+硬性要求：
+1. 每遇到一个题号新起一个 "## 第 N 题" 块；题号用原文题号，可能从 42 开始，也可能按部分重置为 2、3，不要重新编号。
+2. 一题一拆，绝不能把两道题塞进同一块；跨页被拆开的同一道题要合并回同一块。
+3. 剥离版式噪音：水印「复制必究」「版权所有」、乱码串、「第 X 页 共 Y 页」、密封线/装订线、条形码粘贴说明、考生须知/重要提示/注意事项条目、「第 X 部分 言语理解」「（共 30 题，参考时间：28 分钟）」、推广串 biguo368 等。这些绝不写进材料/题干/选项/解析；同一行里的题目正文必须保留。
+4. 题干与选项完整保留原文，不要概括、缩写或臆造。四个选项各占一行、按 A/B/C/D 顺序；原文没有的选项留空行。
+5. 题型只能是「单选题」或「多选题」；模块只能是「政治理论」「常识」「言语理解」「数量关系」「判断推理」「资料分析」，不确定填「常识」。
+6. 答案只按原文标注（如「答案：B」或末尾答案表）回填，找不到就留空行。
+7. 材料只在有设问前背景（文段/数据/案例）时写，且不要把材料重复写进题干。
+8. 若输入不是试题（如纯讲义），输出空字符串。`
+
+/** 阶段②提示词：人工校验后的 Markdown → 题目 JSON */
+export const MD_PARSE_PROMPT = `你是行测题库录入助手。用户会给一份已人工校验过的结构化 Markdown 试卷，请把它转成严格 JSON。
+
+只输出 JSON，不要代码块标记、不要解释文字。顶层结构：{"questions":[{...}]}
+
+每道题必须用这些字段名（切勿用别名）：
+- no：数字题号
+- type：题型（单选题/多选题）
+- module：模块
+- material：材料原文，没有填空字符串
+- stem：题干设问原文（不含材料、不含选项、不含题型/答案等字段行）
+- options：长度恰好为 4 的字符串数组，依次对应 A/B/C/D，只填正文不带「A.」前缀
+- answer：答案字母（多选如 AB），没有填空字符串
+- analysis：解析文本，没有填空字符串
+
+要求：
+1. 每个 "## 第 N 题" 块恰好转一道题，不合并、不拆分，顺序保留。
+2. 「题型：」「模块：」「答案：」「材料：」字段行按值填入；题干取字段行之后、选项行之前的正文；解析取「解析：」后的内容。
+3. 选项行 "A. xxx" 等按字母放入对应下标；不要带字母前缀。原文留空的选项保持空字符串。
+4. 保留原文，不臆造、不缩写、不把上一题内容带进下一题。
+5. 若 Markdown 中没有题块，questions 返回空数组。`
+
+/** Markdown 题块 */
+export interface MdBlock { no: number; body: string }
+
+/** 去掉可能的代码块包裹，统一换行 */
+export function normalizeMarkdown(input: string): string {
+  let md = String(input ?? '').replace(/\r\n?/g, '\n').trim()
+  md = md.replace(/^```(?:markdown|md)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim()
+  // 合并题块之间多余的空行
+  md = md.replace(/\n{3,}/g, '\n\n')
+  return md
+}
+
+/** 按「## 第 N 题」切块；块外文本（如 # 标题）忽略 */
+export function splitMarkdownBlocks(md: string): MdBlock[] {
+  const lines = normalizeMarkdown(md).split('\n')
+  const blocks: { no: number; lines: string[] }[] = []
+  let current: { no: number; lines: string[] } | null = null
+  for (const line of lines) {
+    const match = line.match(/^\s*##\s*第?\s*(\d{1,3})\s*题/)
+    if (match) {
+      if (current) blocks.push(current)
+      current = { no: Number(match[1]), lines: [] }
+      continue
+    }
+    if (current) current.lines.push(line)
+  }
+  if (current) blocks.push(current)
+  return blocks.map((block) => ({ no: block.no, body: block.lines.join('\n').trim() }))
+}
+
+function readField(body: string, name: string): string {
+  const match = body.match(new RegExp(`^\\s*(?:[-*]\\s*)?${name}\\s*[:：]\\s*(.*)$`, 'm'))
+  return match ? match[1].trim() : ''
+}
+
+/** 规则兜底：把 Markdown 解析成题目（AI 不可用时使用） */
+export function ruleMarkdownToQuestions(md: string): QuizQuestion[] {
+  return splitMarkdownBlocks(md).map((block) => {
+    const lines = block.body.split('\n')
+    const stemLines: string[] = []
+    const analysisLines: string[] = []
+    let inAnalysis = false
+    const fieldRe = /^\s*(?:[-*]\s*)?(?:题型|模块|答案|材料)\s*[:：]/
+    const optionRe = /^\s*[A-Da-d]\s*[.．、:：]/
+    for (const line of lines) {
+      const analysisMatch = line.match(/^\s*(?:[-*]\s*)?解析\s*[:：]\s*(.*)$/)
+      if (analysisMatch) {
+        inAnalysis = true
+        if (analysisMatch[1].trim()) analysisLines.push(analysisMatch[1].trim())
+        continue
+      }
+      if (fieldRe.test(line) || optionRe.test(line)) { inAnalysis = false; continue }
+      if (inAnalysis) { if (line.trim()) analysisLines.push(line.trim()); continue }
+      if (line.trim()) stemLines.push(line.trim())
+    }
+    const options = ['A', 'B', 'C', 'D'].map((letter) => {
+      const match = block.body.match(new RegExp(`^\\s*${letter}\\s*[.．、:：]\\s*(.*)$`, 'm'))
+      return match ? match[1].trim() : ''
+    })
+    const answer = (readField(block.body, '答案') || block.body.match(/(?:正确|参考|标准)?\s*答案\s*[:：]\s*([A-Da-d]{1,4})/i)?.[1] || '').toUpperCase()
+    const type = readField(block.body, '题型') || '单选题'
+    const module = readField(block.body, '模块') || '常识'
+    const material = readField(block.body, '材料')
+    const analysis = analysisLines.join('\n') || readField(block.body, '解析')
+    const stem = stemLines.join('\n')
+    return {
+      id: uid(),
+      title: material ? `【共用材料】${material}\n【题目】${stem}` : formatStem(stem),
+      options,
+      answer,
+      analysis: stripResidualBoilerplate(analysis),
+      type: type.includes('多') ? `${module}·多选题` : module,
+    }
+  }).filter((question) => question.title.trim().length > 0)
+}
+
+/** 单题 → 标准 Markdown 块（题号用原文编号，支持重置/跳号） */
+export function questionToBlock(question: QuizQuestion, no: number): string {
+  const [material, stem] = question.title.includes('【题目】')
+    ? question.title.split('【题目】').map((part) => part.replace(/^【共用材料】/, '').trim())
+    : ['', question.title.trim()]
+  const type = /多选|AB|AC|AD|BC|BD|CD|ABC|ABD|ACD|BCD/.test(`${question.type}${question.answer}`) ? '多选题' : '单选题'
+  const module = question.type.replace(/[·•]?\s*(?:单选题|多选题)\s*$/, '').trim() || '常识'
+  const parts = [`## 第 ${no} 题`, `题型：${type}`, `模块：${module}`]
+  if (question.answer.trim()) parts.push(`答案：${question.answer.trim().toUpperCase()}`)
+  if (material) parts.push(`材料：${material}`)
+  parts.push('', stem, '')
+  question.options.slice(0, 4).forEach((option, i) => {
+    parts.push(`${String.fromCharCode(65 + i)}. ${option.trim()}`)
+  })
+  if (question.analysis.trim()) parts.push('', `解析：${question.analysis.trim()}`)
+  parts.push('')
+  return parts.join('\n')
+}
+
+/** 把题目序列化成标准 Markdown（下载、人工编辑的起点） */
+export function questionsToMarkdown(questions: QuizQuestion[], title = ''): string {
+  const parts: string[] = []
+  if (title.trim()) parts.push(`# ${title.trim()}`, '')
+  questions.forEach((question, index) => parts.push(questionToBlock(question, index + 1)))
+  return normalizeMarkdown(parts.join('\n'))
+}
+
+/**
+ * 用规则切题结果校验 AI 生成的 Markdown：
+ * AI 常把题号重置后的小序号题或末尾题漏掉（截图中的第 43 题、重置的第 2 题）。
+ * 规则按题号切分的召回更稳定，这里把 AI 漏掉的题号补回中间稿，保证人工校验前题目齐全。
+ */
+export function mergeMarkdownWithRules(aiMarkdown: string, rawText: string): string {
+  const aiBlocks = splitMarkdownBlocks(aiMarkdown)
+  const aiNos = new Set(aiBlocks.map((block) => block.no))
+  const answerKey = extractAnswerKey(rawText)
+  const missing = splitByQuestionNumbers(rawText)
+    .filter((block) => !aiNos.has(block.no))
+    .map((block) => ({ no: block.no, question: ruleParseBlock(block, answerKey) }))
+    .filter((item): item is { no: number; question: QuizQuestion } => Boolean(item.question))
+  if (!missing.length) return aiMarkdown
+  // 按原文顺序插回：题号小的在前，题号重置的（如 42→2）放对应位置之后
+  const extras = missing.map((item) => questionToBlock(item.question, item.no)).join('\n')
+  return normalizeMarkdown(`${aiMarkdown}\n\n${extras}`)
+}
+
+/** 无 AI 时的阶段①兜底：用规则切题结果生成 Markdown */
+export function ruleTextToMarkdown(text: string, title = ''): string {
+  const questions = ruleParseAll(text)
+  if (!questions.length) return ''
+  return questionsToMarkdown(questions, title)
+}

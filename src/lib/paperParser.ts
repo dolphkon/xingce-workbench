@@ -10,9 +10,15 @@
 import type { QuizQuestion } from '../types'
 import { extractPdfText, renderPdfPages } from './pdfText'
 import { recognizeImage } from './ocr'
-import { probeLlm, structureQuestions, type LlmBlockReason, type LlmQuestion } from './llm'
+import {
+  probeLlm, structureQuestions, generateMarkdown, structureMarkdown,
+  type LlmBlockReason, type LlmQuestion, type LlmProgress,
+} from './llm'
 import { cleanExamText, stripResidualBoilerplate } from './examClean'
 import { findQuestionAnchors, formatStem, ruleParseAll } from './paperSplit'
+import {
+  ruleTextToMarkdown, ruleMarkdownToQuestions, mergeMarkdownWithRules,
+} from './markdownFlow'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -147,6 +153,114 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
   }).filter((question) => question.title.trim().length > 0)
 }
 
+/** 阶段①结果：结构化 Markdown 中间稿 */
+export interface MarkdownDraft {
+  markdown: string
+  /** AI 是否真正参与生成（false 表示规则兜底） */
+  usedLlm: boolean
+  llmReason?: LlmBlockReason
+  llmMessage?: string
+  rawText: string
+  textMethod: string
+  usedOcr: boolean
+}
+
+/**
+ * 两阶段拆题 · 阶段①：清洗后的文本 → 结构化 Markdown 中间稿。
+ * AI 优先；能力不可用或调用失败时用规则切题结果拼 Markdown 兜底，保证 GitHub Pages 也能走通流程。
+ */
+export async function textToMarkdown(
+  extracted: ExtractResult,
+  onProgress: ProgressFn = noop,
+  options: ParseOptions = {},
+): Promise<MarkdownDraft> {
+  const { text, textMethod, usedOcr } = extracted
+  let markdown = ''
+  let usedLlm = false
+  let llmReason: LlmBlockReason | undefined
+  let llmMessage: string | undefined
+
+  const probe = await probeLlm()
+  if (!options.disableLlm && probe.available) {
+    try {
+      onProgress({ percent: 66, stage: 'llm', message: '正在用大模型整理 Markdown…' })
+      markdown = await generateMarkdown(text, options.signal, (p: LlmProgress) => {
+        onProgress({ percent: Math.min(92, 66 + Math.round(p.fraction * 26)), stage: 'llm', message: p.message })
+      })
+      if (markdown) {
+        onProgress({ percent: 93, stage: 'rules', message: '正在用规则校验题目完整性…' })
+        markdown = mergeMarkdownWithRules(markdown, text)
+      }
+      usedLlm = markdown.length > 0
+    } catch (err) {
+      const typed = err as Error & { reason?: LlmBlockReason }
+      llmReason = typed.reason ?? 'unknown'
+      llmMessage = typed.message || 'AI 整理失败，已用规则生成 Markdown'
+    }
+  } else if (!options.disableLlm) {
+    llmReason = probe.reason
+    llmMessage = probe.message
+  }
+
+  if (!markdown) {
+    onProgress({ percent: 84, stage: 'rules', message: '正在用规则生成 Markdown…' })
+    markdown = ruleTextToMarkdown(text)
+  }
+  if (!markdown) throw new Error('未能生成 Markdown 中间稿，请确认文档中包含「1. 题干 / A. 选项」格式的试题')
+
+  onProgress({ percent: 100, stage: 'done', message: 'Markdown 中间稿已生成，请人工校验排版' })
+  return { markdown, usedLlm, llmReason, llmMessage, rawText: text, textMethod, usedOcr }
+}
+
+/** 两阶段拆题 · 阶段②结果 */
+export interface MarkdownParseDraft {
+  questions: QuizQuestion[]
+  usedLlm: boolean
+  llmReason?: LlmBlockReason
+  llmMessage?: string
+}
+
+/**
+ * 两阶段拆题 · 阶段②：人工校验后的 Markdown → 待确认题目。
+ * 同样 AI 优先、规则兜底；mergeResults 用规则补全 AI 缺失字段并二次校验粘连。
+ */
+export async function markdownToQuestions(
+  markdown: string,
+  onProgress: ProgressFn = noop,
+  options: ParseOptions = {},
+): Promise<MarkdownParseDraft> {
+  const rules = ruleMarkdownToQuestions(markdown)
+  let llm: LlmQuestion[] = []
+  let usedLlm = false
+  let llmReason: LlmBlockReason | undefined
+  let llmMessage: string | undefined
+
+  const probe = await probeLlm()
+  if (!options.disableLlm && probe.available) {
+    try {
+      onProgress({ percent: 62, stage: 'llm', message: '正在用大模型解析 Markdown…' })
+      llm = await structureMarkdown(markdown, options.signal, (p) => {
+        onProgress({ percent: Math.min(92, 62 + Math.round(p.fraction * 30)), stage: 'llm', message: p.message })
+      })
+      usedLlm = llm.length > 0
+    } catch (err) {
+      const typed = err as Error & { reason?: LlmBlockReason }
+      llmReason = typed.reason ?? 'unknown'
+      llmMessage = typed.message || 'AI 解析失败，已用规则解析 Markdown'
+    }
+  } else if (!options.disableLlm) {
+    llmReason = probe.reason
+    llmMessage = probe.message
+  }
+
+  onProgress({ percent: 94, stage: 'rules', message: '正在校验并合并结果…' })
+  const questions = mergeResults(llm, rules)
+  if (questions.length === 0) throw new Error('未能从 Markdown 中解析出题目，请检查「## 第 N 题」与选项格式')
+
+  onProgress({ percent: 100, stage: 'done', message: `解析完成，共 ${questions.length} 道题` })
+  return { questions, usedLlm, llmReason, llmMessage }
+}
+
 /* -------------------------------------------------------------------------- */
 /* 主流程                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -159,13 +273,23 @@ export interface ParseOptions {
   signal?: AbortSignal
 }
 
-export async function parseDocumentToQuestions(
+export interface ExtractResult {
+  text: string
+  textMethod: string
+  usedOcr: boolean
+}
+
+/**
+ * 阶段零：只做「文档 → 清洗后文本」，不涉及切题。
+ * 两阶段流程（文本→Markdown→题目）与原有直拆流程共用这段提取逻辑。
+ */
+export async function extractDocumentText(
   fileData: string,
   fileName: string,
   fileType: string,
   onProgress: ProgressFn = noop,
   options: ParseOptions = {},
-): Promise<ParseResult> {
+): Promise<ExtractResult> {
   const kind = parseFileKind(fileName, fileType)
   if (kind === 'unsupported') throw new Error('仅支持 PDF 或 Word（.docx）文档')
 
@@ -206,10 +330,23 @@ export async function parseDocumentToQuestions(
 
   if (!text.trim()) throw new Error('未能从文档中提取到文字，请确认文档内容或改用可复制文本的版本')
 
-  // 文本清洗：移除试卷封面水印、密封线、条形码说明、注意事项等版式噪音，
-  // 避免它们被规则切题当成「共用材料」或被 LLM 当成题干背景
   onProgress({ percent: 60, stage: 'prepare', message: '正在清理试卷版式噪音…' })
   text = cleanExamText(text)
+  return { text, textMethod, usedOcr }
+}
+
+export async function parseDocumentToQuestions(
+  fileData: string,
+  fileName: string,
+  fileType: string,
+  onProgress: ProgressFn = noop,
+  options: ParseOptions = {},
+): Promise<ParseResult> {
+  const kind = parseFileKind(fileName, fileType)
+  if (kind === 'unsupported') throw new Error('仅支持 PDF 或 Word（.docx）文档')
+
+  const extracted = await extractDocumentText(fileData, fileName, fileType, onProgress, options)
+  const { text, textMethod, usedOcr } = extracted
 
   // 运行时探测大模型能力（不再用域名硬编码判断）
   onProgress({ percent: 64, stage: 'llm', message: '正在检测智能拆题能力…' })

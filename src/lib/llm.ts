@@ -11,6 +11,7 @@ import type { PublicLLMModel } from '@tencent-ai/workbuddy-cloud-sdk'
 import { getCloudForLlm } from './cloud'
 import { refineBankQuestion } from './questionRefine'
 import { refineAtomicQuestion } from './questionClean'
+import { MD_GENERATE_PROMPT, MD_PARSE_PROMPT, normalizeMarkdown } from './markdownFlow'
 
 export interface LlmQuestion {
   no?: number
@@ -439,4 +440,122 @@ function normalizeQuestion(item: unknown): LlmQuestion {
     analysis: String(obj.analysis ?? obj.explanation ?? obj.parse ?? '').trim(),
     type: String(obj.type ?? obj.module ?? obj.category ?? '').trim() || '其他',
   })
+}
+
+/* -------------------------------------------------------------------------- */
+/* 两阶段拆题：① 文本 → 结构化 Markdown　② Markdown → 题目                    */
+/* -------------------------------------------------------------------------- */
+
+/** 调用模型输出纯文本（不强制 JSON），用于生成 Markdown 中间稿 */
+async function generateRawChunk(
+  cloud: Awaited<ReturnType<typeof getCloudForLlm>>,
+  modelId: string,
+  text: string,
+  systemPrompt: string,
+  signal?: AbortSignal,
+  onToken?: (chars: number) => void,
+): Promise<string> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS)
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const stream = cloud.llm.chat.completions.create({
+      model: modelId,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text },
+      ],
+      stream: true,
+      temperature: 0.1,
+      max_tokens: 8192,
+      signal: controller.signal,
+    })
+    let raw = ''
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content
+      if (delta) { raw += delta; onToken?.(delta.length) }
+    }
+    return raw.replace(/^```(?:markdown|md)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim()
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
+ * 阶段①：把清洗后的试卷文本整理成结构化 Markdown 中间稿。
+ * 长文分批生成后拼接；每批失败时该批留空，由上层用规则兜底。
+ */
+export async function generateMarkdown(
+  text: string,
+  signal?: AbortSignal,
+  onProgress?: (p: LlmProgress) => void,
+): Promise<string> {
+  const probe = await probeLlm()
+  if (!probe.available) {
+    const err = new Error(probe.message) as Error & { reason?: LlmBlockReason }
+    err.reason = probe.reason
+    throw err
+  }
+  const cloud = await getCloudForLlm()
+  const models = await cloud.llm.models.list(signal)
+  const model = pickFastModel(models)
+  if (!model) throw new Error('暂无可用模型')
+
+  const chunks = chunkText(text, 9000)
+  const total = chunks.length
+  let doneCount = 0
+  let charCount = 0
+  let maxFraction = 0
+  const estTotalChars = Math.max(1, Math.round(text.length * 0.6))
+  const report = (fraction: number, message: string) => {
+    maxFraction = Math.max(maxFraction, Math.min(0.99, fraction))
+    onProgress?.({ done: doneCount, total, fraction: maxFraction, message })
+  }
+  report(0, `正在整理 Markdown，共 ${total} 批…`)
+
+  const results: string[] = new Array(total)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < total && !signal?.aborted) {
+      const idx = cursor++
+      try {
+        results[idx] = await generateRawChunk(cloud, model.id, chunks[idx], MD_GENERATE_PROMPT, signal, (n) => {
+          charCount += n
+          report(charCount / estTotalChars, `正在生成 Markdown… ${Math.round(maxFraction * 100)}%`)
+        })
+      } catch {
+        results[idx] = ''
+      }
+      doneCount += 1
+      report(doneCount / total, `已整理 ${doneCount}/${total} 批…`)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, total) }, worker))
+  if (signal?.aborted) throw new Error('已取消')
+
+  const merged = normalizeMarkdown(results.filter(Boolean).join('\n\n'))
+  if (!merged) {
+    const err = new Error('模型未能生成 Markdown 中间稿') as Error & { reason?: LlmBlockReason }
+    err.reason = 'invalid'
+    throw err
+  }
+  return merged
+}
+
+/**
+ * 阶段②：把人工校验后的 Markdown 解析成题目。
+ * 用专门的 Markdown 提示词，避免把字段行/题号当题干。
+ */
+export async function structureMarkdown(
+  markdown: string,
+  signal?: AbortSignal,
+  onProgress?: (p: LlmProgress) => void,
+): Promise<LlmQuestion[]> {
+  return runStructure<LlmQuestion>(
+    markdown, MD_PARSE_PROMPT, normalizeQuestion,
+    (item) => `${item.no ?? ''}|${item.stem.slice(0, 80)}`,
+    signal, onProgress,
+  )
 }

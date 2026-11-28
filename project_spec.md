@@ -238,6 +238,7 @@ src/
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（校验/合并 LLM 与规则结果；漏题时以规则为准）
 │   ├── paperSplit.ts                 # 【新增】可独立回归测试的规则切题引擎：题号锚点（支持任意起始/重置）/切块/答案表/题干规整
+│   ├── markdownFlow.ts               # 【新增】两阶段拆题 Markdown 中间层：格式规范/提示词/切块/规则解析/序列化/规则补全漏题
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
@@ -272,8 +273,9 @@ src/
     │   ├── FileViewer.tsx            # 应用内多格式文件阅读器（648 行）
     │   └── DocSketch.tsx             # 文档手写批注层
     ├── paper/
-    │   ├── OnlinePracticePage.tsx    # 上传→环形进度拆题→校对→组卷→试卷工作台→历史
-    │   ├── PaperWorkbench.tsx        # 【新增】我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
+    │   ├── OnlinePracticePage.tsx    # 上传→①AI 生成 Markdown 中间稿→人工校验→②AI 解析成题→逐题校对→组卷→试卷工作台→历史；另保留「直接拆题」快捷入口
+    │   ├── MarkdownReviewPage.tsx    # 【新增】两阶段拆题中间页：Markdown 编辑器/格式说明/下载上传 .md/题块计数/确认解析
+    │   ├── PaperWorkbench.tsx        # 我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
     │   ├── QuestionReviewModal.tsx   # 【抽出】单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
     │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
     ├── bank/                         # 【新增】题库后台管理
@@ -607,7 +609,8 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 ### 9.2 文档转在线刷题（paper/）
 
-- **OnlinePracticePage.tsx**：视图 `list|upload|exam`。上传 PDF/DOCX → `parseDocumentToQuestions` 带进度 → 人工校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`；从知识库文件文档直接创建；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。
+- **OnlinePracticePage.tsx**：视图 `list|markdown|upload|exam`。默认**两阶段拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗）→ 阶段① `textToMarkdown`（AI 按规则生成结构化 Markdown；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号，避免重置题号/末题丢失）→ `MarkdownReviewPage` 人工校验排版（编辑器直接改、下载/上传 .md、格式说明、题块计数）→ 阶段② `markdownToQuestions`（AI 解析 Markdown + 规则补全字段）→ 逐题校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
+- **两阶段 Markdown 中间层（lib/markdownFlow.ts）**：格式约定 `## 第 N 题` + `题型/模块/答案/材料` 字段行 + 题干 + `A./B./C./D.` 选项 + `解析`；`MD_GENERATE_PROMPT` 把 OCR 噪音/跨页拼接/题号重置等约束前置，`MD_PARSE_PROMPT` 专用于把人工校验后的 Markdown 转成题目 JSON（避免把字段行/题号当题干）；`splitMarkdownBlocks` 按题块切分（块外 `#` 标题不混入）；`ruleMarkdownToQuestions` 规则兜底解析；`questionsToMarkdown`/`questionToBlock` 序列化与下载；`mergeMarkdownWithRules` 对比规则题号锚点把 AI 漏掉的题补回中间稿。
 - **拆题环形倒计时（CircularProgress.tsx）**：上传解析期间用环形进度替代旧的线性进度条——外圈虚线 `cp-spin` 持续旋转表示「正在进行」；彩色 SVG 弧 `cp-arc`（`stroke-dashoffset` 按 percent 平滑过渡）显示进度；中心百分比 + 当前阶段；下方「已用时 mm:ss / 预计还需 ~mm:ss」（依据 percent 与 elapsed 估算，前 1 秒显示「计算中」）与 5 段阶段步骤条（准备文件→读取文本→OCR 识别→智能拆题→规则校验，done/active 高亮 + active 呼吸动画）；支持明暗主题、移动端纵向堆叠。E2E 验证：上传 docx 时 `.cp-wrap` 出现、spin 动画生效、阶段正确推进、解析完成后环形进度消失。
 - **试卷后台工作台（PaperWorkbench.tsx）**：原卡片网格「我的试卷」升级为左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「导入新试卷」），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题卡片显示题号 + 类别 chip（按答案推断）+ 题干 + 共用材料 + 图片 + A-D 选项 + 正确答案，支持收藏星标（`QuizQuestion.favorite`）、校对编辑（`QuestionReviewModal`）、删除、添加题目；确认组卷后自动选中新卷。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
@@ -776,8 +779,9 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts → 23 项回归用例（4 题库后处理 + 8 噪音清洗 + 6 通用拆题规范化 + 5 规则切题）
+npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts + markdownFlow.ts → 31 项回归用例（4 题库后处理 + 8 噪音清洗 + 6 通用拆题规范化 + 5 规则切题 + 8 Markdown 中间层）
 node scripts/e2e-split-quality.mjs  # 真实 OCR 样本 DOCX 上传 E2E：验证题号重置/水印清除/答案回填/题数
+node scripts/e2e-markdown-flow.mjs  # 两阶段流程 E2E：上传→Markdown 中间稿(题块数/噪音/补全漏题)→人工编辑→解析成题→逐题校对→组卷
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -993,10 +997,22 @@ PORT=4179 npm run dev
   - `llm.ts`：`SYSTEM_PROMPT` / `BANK_SYSTEM_PROMPT` 新增「一题一拆、任意起始题号、题号重置、OCR 重复行、行内噪音只剥离保正文」强约束，在线刷题提示词补 few-shot 示例。
 - **验证**：`typecheck` / `test:refine`（23/23：4+8+6+5）/ `build` 全过；E2E（`scripts/e2e-split-quality.mjs`，把截图真实 OCR 文本做成 DOCX 上传）验证切出 3 题（含题号重置的 `2.`）、水印/页码/推广串零残留、答案 C/B 正确回填、选项分行、无 JS 报错；截图确认视觉整洁。回归用例已把本次人工矫正样本固化，同类错误不再复现。
 
+### 16.2.10 两阶段拆题：AI 生成 Markdown 中间稿 → 人工校验 → AI 解析成题（2026-11-28）
+- **背景**：用户反馈截图里第 3 题混进第 4/5/6 题、题号残留，且「为什么未用 AI 拆题」。实测 AI 探针已就绪，根因是**流程架构**：原链路「OCR 文本 → AI 一次性吐题目 JSON」在扫描版跨页/题号重置/水印混排下易漏题或粘连，且 `mergeResults` 在规则题数 > AI×1.2 时直接以规则为准；原始文本到题目之间**没有可人工编辑的中间产物**，出错只能重传整份文档。
+- **改造**：新增两阶段流程（默认），把「识别」与「结构化确认」解耦——
+  1. 阶段零 `extractDocumentText`：PDF 文本层/OCR + 噪音清洗，独立出来复用；
+  2. 阶段① `textToMarkdown`：AI（`generateMarkdown`，分批并发 + token 级进度）按 `MD_GENERATE_PROMPT` 生成结构化 Markdown；`mergeMarkdownWithRules` 用规则题号锚点补全 AI 漏掉的题（E2E 实测 AI 只出 2 题时自动补回第 3 题）；AI 不可用时 `ruleTextToMarkdown` 兜底；
+  3. `MarkdownReviewPage`：人工在编辑器直接改排版（拆粘连、改题号/选项），支持下载/上传 `.md`、格式说明、题块计数；修改即时保存；
+  4. 阶段② `markdownToQuestions`：AI（`structureMarkdown` + `MD_PARSE_PROMPT`）把校验后的 Markdown 解析成题目，`mergeResults` 用规则补全字段并校验粘连；规则兜底 `ruleMarkdownToQuestions`；
+  5. 进入原有逐题校对 → 确认组卷。顶部保留「直接拆题」快捷入口走原一步链路；知识库文件同样走两阶段。
+- **验证**：`typecheck` / `test:refine`（31/31，新增 8 项 Markdown 中间层用例：去代码块/切块/题号重置/字段落地/往返一致/规则补全漏题/无 AI 兜底）/ `build` 全过；E2E `scripts/e2e-markdown-flow.mjs` 实测阶段①生成 3 题块（含规则补回的题号重置题）、噪音零残留，人工编辑 Markdown 后阶段②解析出 2 题且题干/答案正确，无 JS 报错；截图确认编辑器与校对页视觉整洁。
+- 按项目约定，本次「截图人工矫正 → 优化拆题能力」的样本已固化为回归用例与提示词约束，同类错误不再复现。
+
 ### 16.3 最近提交历史
 
 ```
-0c5b8d5 fix: 扫描版试卷拆题紊乱修复——噪音清洗/题号重置锚点/LLM漏题兜底/提示词强约束  ← HEAD
+(待提交) feat: 两阶段拆题——AI 生成 Markdown 中间稿 → 人工校验排版 → AI 解析成题  ← HEAD
+0c5b8d5 fix: 扫描版试卷拆题紊乱修复——噪音清洗/题号重置锚点/LLM漏题兜底/提示词强约束
 6fb4697 feat: 拆题环形倒计时进度 + 我的试卷后台工作台（左列表右编辑管理）
 d860b72 feat: 通用拆题规范化——去题号/选项字母前缀、行内选项抽取、答案回填
 de9f974 feat: PDF识别多策略清洗试卷版式噪音，修复AI拆题排版紊乱

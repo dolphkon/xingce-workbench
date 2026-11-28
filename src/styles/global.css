@@ -1823,6 +1823,31 @@ html[data-theme='dark'] .cp-step.active { color: #0b1220; }
   .cp-wrap { flex-direction: column; align-items: flex-start; gap: 14px; }
 }
 
+/* ---------- 两阶段拆题 · Markdown 中间稿校验 ---------- */
+.op-head-actions { display: flex; align-items: center; gap: 8px; }
+.md-review { padding: 18px; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.md-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.md-review-head h2 { margin: 0 0 4px; font-size: calc(18px * var(--font-scale)); }
+.md-review-tip { display: flex; align-items: flex-start; gap: 9px; flex-wrap: wrap; padding: 11px 13px; margin-bottom: 12px; border: 1px solid var(--primary-light); border-radius: 8px; background: var(--primary-light); color: var(--text); font-size: calc(13px * var(--font-scale)); line-height: 1.65; }
+.md-review-tip > span { flex: 1; min-width: 240px; }
+.md-review-tip .btn { margin-left: auto; }
+.md-review-tip code { padding: 1px 5px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+.md-review-help { padding: 14px 16px; margin-bottom: 12px; border: 1px dashed var(--border); border-radius: 9px; background: var(--surface-muted); }
+.md-help-title { font-weight: 700; margin-bottom: 8px; font-size: calc(13px * var(--font-scale)); }
+.md-review-help pre { margin: 0 0 10px; padding: 12px 14px; border-radius: 7px; background: var(--code-bg, #1e293b); color: var(--code-text, #e2e8f0); overflow: auto; font-size: calc(12px * var(--font-scale)); line-height: 1.6; }
+.md-review-help ul { margin: 0; padding-left: 20px; color: var(--text-light); font-size: calc(12px * var(--font-scale)); line-height: 1.8; }
+.md-review-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.md-review-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.md-review-count { color: var(--text-light); font-size: calc(12px * var(--font-scale)); }
+.md-review-editor { display: block; width: 100%; min-height: 420px; padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-muted); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(13px * var(--font-scale)); line-height: 1.75; resize: vertical; tab-size: 2; }
+.md-review-editor:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+.md-review-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+@media (max-width: 700px) {
+  .op-head-actions { flex-direction: column; align-items: stretch; }
+  .md-review-editor { min-height: 340px; font-size: 12px; }
+  .md-review-footer { flex-direction: column; align-items: stretch; }
+}
+
 /* ---------- 我的试卷后台工作台（左列表 + 右管理） ---------- */
 .pw-head-hint { margin-left: 2px; }
 .pw-head-upload { margin-left: auto; }

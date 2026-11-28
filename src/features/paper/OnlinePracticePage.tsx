@@ -6,15 +6,18 @@ import { put, readCachedAll, remove } from '../../lib/db'
 import { loadDocFile } from '../../lib/docFile'
 import { probeLlm, type LlmBlockReason, type LlmProbe } from '../../lib/llm'
 import {
-  inspectQuestion, parseDocumentToQuestions, parseFileKind, type ParseProgress,
+  extractDocumentText, inspectQuestion, markdownToQuestions, parseDocumentToQuestions,
+  parseFileKind, textToMarkdown, type ParseProgress,
 } from '../../lib/paperParser'
+import { normalizeMarkdown } from '../../lib/markdownFlow'
 import { dateKey, formatClock, uid } from '../../lib/utils'
 import type { KnowledgeDoc, Mistake, Paper, PracticeRecord, QuizQuestion } from '../../types'
 import PaperExamRunner, { type ExamResult } from './PaperExamRunner'
 import QuestionReviewModal from './QuestionReviewModal'
 import PaperWorkbench from './PaperWorkbench'
+import MarkdownReviewPage, { type MarkdownDraftState } from './MarkdownReviewPage'
 
-type View = 'list' | 'upload' | 'exam'
+type View = 'list' | 'markdown' | 'upload' | 'exam'
 
 /** 把题干拆成「共用材料 / 题目正文」两段，便于清晰排版 */
 function splitStem(title: string): { material: string; stem: string } {
@@ -56,7 +59,10 @@ export default function OnlinePracticePage() {
   const [confirmedIds, setConfirmedIds] = useState<string[]>([])
   const [showConfirmPaper, setShowConfirmPaper] = useState(false)
   const [llmProbe, setLlmProbe] = useState<LlmProbe | null>(null)
+  const [mdDraft, setMdDraft] = useState<MarkdownDraftState | null>(null)
+  const [mdParsing, setMdParsing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const directInputRef = useRef<HTMLInputElement>(null)
 
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null)
   // 后台工作台当前选中的套卷
@@ -107,6 +113,83 @@ export default function OnlinePracticePage() {
       setParseError(err instanceof Error ? err.message : '解析失败，请重试')
     } finally {
       setUploading(false)
+    }
+  }
+
+  /** 两阶段流程入口：上传文档 → 提取文本 → 阶段①生成 Markdown 中间稿 */
+  const handleFileTwoStage = async (file: File) => {
+    setParseError('')
+    setDraft(null)
+    setMdDraft(null)
+    setReviewIndex(null)
+    setConfirmedIds([])
+    if (parseFileKind(file.name, file.type) === 'unsupported') {
+      setParseError('仅支持 PDF 或 Word（.docx）文档，请选择对应格式的文件。')
+      return
+    }
+    setUploading(true)
+    setProgress({ percent: 5, stage: 'prepare', message: '正在读取文件…' })
+    try {
+      const loaded = await loadDocFile(file)
+      const fileData = loaded.fileData ?? ''
+      if (!fileData) throw new Error('文件内容读取失败')
+      const extracted = await extractDocumentText(fileData, file.name, file.type, setProgress)
+      const result = await textToMarkdown(extracted, setProgress)
+      setMdDraft({
+        markdown: result.markdown,
+        fileName: file.name,
+        fileType: file.type || `application/${file.name.split('.').pop()}`,
+        fileData,
+        defaultTitle: loaded.title,
+        usedLlm: result.usedLlm,
+        llmReason: result.llmReason,
+        llmMessage: result.llmMessage,
+        textMethod: result.textMethod,
+        usedOcr: result.usedOcr,
+      })
+      setView('markdown')
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : '解析失败，请重试')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  /** 阶段②：人工校验后的 Markdown → 待确认题目 */
+  const parseMarkdown = async () => {
+    if (!mdDraft) return
+    setMdParsing(true)
+    setParseError('')
+    try {
+      const result = await markdownToQuestions(mdDraft.markdown, setProgress)
+      setDraft({
+        questions: result.questions,
+        method: `${mdDraft.textMethod}${mdDraft.usedOcr ? ' + OCR 回退' : ''} + ${result.usedLlm ? 'AI 解析 Markdown' : '规则解析 Markdown'} + 人工校对`,
+        fileName: mdDraft.fileName,
+        fileType: mdDraft.fileType,
+        fileData: mdDraft.fileData,
+        usedLlm: result.usedLlm,
+        llmReason: result.llmReason,
+        llmMessage: result.llmMessage,
+      })
+      setTitleInput(mdDraft.defaultTitle)
+      setConfirmedIds([])
+      setView('upload')
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Markdown 解析失败')
+    } finally {
+      setMdParsing(false)
+    }
+  }
+
+  /** 导入人工编辑好的 .md 文件续改 */
+  const uploadMarkdownFile = async (file: File) => {
+    try {
+      const text = normalizeMarkdown(await file.text())
+      if (!text) throw new Error('Markdown 文件为空')
+      setMdDraft((current) => current ? { ...current, markdown: text, defaultTitle: current.defaultTitle || file.name.replace(/\.md$/i, '') } : current)
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Markdown 文件读取失败')
     }
   }
 
@@ -260,8 +343,21 @@ export default function OnlinePracticePage() {
       setProgress({ percent: 5, stage: 'prepare', message: '正在读取知识库文档…' })
       try {
         if (!doc.fileData) throw new Error('文档内容为空')
-        const result = await parseDocumentToQuestions(doc.fileData, doc.fileName || doc.title, doc.fileType || '', setProgress)
-        applyResult(result, doc.fileName || doc.title, doc.fileType || '', doc.fileData, doc.title)
+        const extracted = await extractDocumentText(doc.fileData, doc.fileName || doc.title, doc.fileType || '', setProgress)
+        const result = await textToMarkdown(extracted, setProgress)
+        setMdDraft({
+          markdown: result.markdown,
+          fileName: doc.fileName || doc.title,
+          fileType: doc.fileType || '',
+          fileData: doc.fileData,
+          defaultTitle: doc.title,
+          usedLlm: result.usedLlm,
+          llmReason: result.llmReason,
+          llmMessage: result.llmMessage,
+          textMethod: result.textMethod,
+          usedOcr: result.usedOcr,
+        })
+        setView('markdown')
       } catch (err) {
         setParseError(err instanceof Error ? err.message : '解析失败')
       } finally {
@@ -296,13 +392,29 @@ export default function OnlinePracticePage() {
       <div className="page-head">
         <div>
           <h1>在线刷题</h1>
-          <p className="muted">上传 PDF 或 Word 文档，智能拆题后逐题人工校对、确认组卷。同一文档可反复练习，答错的题自动进入错题库。</p>
+          <p className="muted">上传 PDF 或 Word → AI 生成 Markdown 中间稿 → 人工校验排版 → 解析成题目逐题确认组卷。答错的题自动进入错题库。</p>
         </div>
-        <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-          <Icon name="upload" size={16} /> {uploading ? '解析中…' : '上传文档'}
-        </button>
+        <div className="op-head-actions">
+          <button className="btn" onClick={() => directInputRef.current?.click()} disabled={uploading} title="跳过 Markdown 校验，直接拆题（适合排版规整的文档）">
+            <Icon name="bolt" size={15} /> 直接拆题
+          </button>
+          <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            <Icon name="upload" size={16} /> {uploading ? '解析中…' : '上传文档'}
+          </button>
+        </div>
         <input
           ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) void handleFileTwoStage(file)
+            event.target.value = ''
+          }}
+        />
+        <input
+          ref={directInputRef}
           type="file"
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           hidden
@@ -319,8 +431,8 @@ export default function OnlinePracticePage() {
         <div className={`op-notice${llmProbe.available ? ' ok' : ' warn'}`}>
           <Icon name={llmProbe.available ? 'check' : 'info'} size={15} />
           {llmProbe.available
-            ? '大模型智能拆题已就绪：上传文档后将优先用 AI 结构化拆题，再经人工校对。'
-            : `${llmProbe.message} 规则拆题同样可用，识别后仍可逐题校对确认。`}
+            ? '大模型智能拆题已就绪：上传文档后 AI 先生成 Markdown 中间稿，人工校验排版后再解析成题目逐题确认。'
+            : `${llmProbe.message} 将用规则生成 Markdown，仍可人工校验排版后继续。`}
         </div>
       ) : (
         <div className="op-notice"><Icon name="info" size={15} /> 正在检测智能拆题能力…</div>
@@ -328,9 +440,20 @@ export default function OnlinePracticePage() {
 
       {parseError && <div className="error-text op-error">{parseError}</div>}
 
-      {uploading && <CircularProgress progress={progress} />}
+      {(uploading || mdParsing) && <CircularProgress progress={progress} />}
 
-      {view === 'upload' && draft && !uploading && (
+      {view === 'markdown' && mdDraft && !uploading && !mdParsing && (
+        <MarkdownReviewPage
+          draft={mdDraft}
+          onMarkdownChange={(markdown) => setMdDraft((current) => current ? { ...current, markdown } : current)}
+          onBack={() => { setMdDraft(null); setView('list') }}
+          onParse={() => void parseMarkdown()}
+          parsing={mdParsing}
+          onUploadMd={(file) => void uploadMarkdownFile(file)}
+        />
+      )}
+
+      {view === 'upload' && draft && !uploading && !mdParsing && (
         <div className="op-review">
           <div className="op-review-head">
             <div>
@@ -391,6 +514,7 @@ export default function OnlinePracticePage() {
           </div>
           <div className="op-review-actions">
             <button className="btn" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={15} /> 重新上传</button>
+            <button className="btn" onClick={() => { setDraft(null); setMdDraft(null); setView('list') }}><Icon name="back" size={15} /> 返回列表</button>
             <button className="btn btn-primary" onClick={() => setShowConfirmPaper(true)}><Icon name="layers" size={16} /> 确认组卷</button>
           </div>
         </div>
