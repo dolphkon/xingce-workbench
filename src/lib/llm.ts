@@ -22,6 +22,9 @@ export interface LlmQuestion {
   type: string
   /** 材料/题干中的图片地址（Markdown ![](...) 原样保留） */
   images?: string[]
+  /** 套卷模板归属 */
+  page?: number
+  section?: string
 }
 
 /** 探测失败的可归类原因，用于给用户精确指引 */
@@ -438,9 +441,15 @@ function normalizeQuestion(item: unknown): LlmQuestion {
   const images = Array.isArray(rawImages)
     ? rawImages.map((v) => String(v ?? '').trim()).filter((v) => /^(data:image\/|https?:\/\/|attachment:)/i.test(v))
     : []
+  const pageRaw = obj.page ?? obj.pageNo
+  const page = typeof pageRaw === 'number' ? pageRaw
+    : (pageRaw !== undefined && /^\d+$/.test(String(pageRaw).trim()) ? Number(pageRaw) : undefined)
+  const section = String(obj.section ?? '').trim()
 
   // 统一后处理：去题号/选项字母前缀、行内选项抽取、答案回填
   return {
+    page,
+    section,
     ...refineAtomicQuestion({
       no,
       stem,

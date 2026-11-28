@@ -19,6 +19,7 @@ import { findQuestionAnchors, formatStem, ruleParseAll } from './paperSplit'
 import {
   ruleTextToMarkdown, ruleMarkdownToQuestions, mergeMarkdownWithRules,
 } from './markdownFlow'
+import { attachTemplateContext, formatExamTemplate, pageTextsToTemplate } from './examTemplate'
 import { uid } from './utils'
 
 export type ParseStage = 'prepare' | 'text' | 'ocr' | 'llm' | 'rules' | 'done'
@@ -135,6 +136,8 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
     analysis: item.analysis,
     type: item.type || '其他',
     images: item.images ?? [],
+    section: item.section,
+    page: item.page,
   })) : rules
 
   return source.map((question, index) => {
@@ -148,10 +151,12 @@ function mergeResults(llm: LlmQuestion[], rules: QuizQuestion[]): QuizQuestion[]
     const options = resolved.options.map((option, i) => option.trim() || rule.options[i]?.trim() || '')
     const answer = resolved.answer || rule.answer || ''
     const images = resolved.images?.length ? resolved.images : (rule.images ?? [])
+    const section = resolved.section || rule.section || ''
+    const page = resolved.page ?? rule.page
     // 题干明显过短时以规则题干为准（规则保留原文更完整）
     const title = resolved.title.length < 8 && rule.title.length > resolved.title.length
       ? rule.title : resolved.title
-    return clean({ ...resolved, title, options, answer, images })
+    return clean({ ...resolved, title, options, answer, images, section, page })
   }).filter((question) => question.title.trim().length > 0)
 }
 
@@ -165,6 +170,8 @@ export interface MarkdownDraft {
   rawText: string
   textMethod: string
   usedOcr: boolean
+  /** 逐页原文（OCR 时按真实页边界），供套卷模板按页生成 */
+  pageTexts: string[]
 }
 
 /**
@@ -176,7 +183,7 @@ export async function textToMarkdown(
   onProgress: ProgressFn = noop,
   options: ParseOptions = {},
 ): Promise<MarkdownDraft> {
-  const { text, textMethod, usedOcr } = extracted
+  const { text, textMethod, usedOcr, pageTexts } = extracted
   let markdown = ''
   let usedLlm = false
   let llmReason: LlmBlockReason | undefined
@@ -186,7 +193,10 @@ export async function textToMarkdown(
   if (!options.disableLlm && probe.available) {
     try {
       onProgress({ percent: 66, stage: 'llm', message: '正在用大模型整理 Markdown…' })
-      markdown = await generateMarkdown(text, options.signal, (p: LlmProgress) => {
+      const aiText = pageTexts.length > 1
+        ? pageTexts.map((part, i) => `【第 ${i + 1} 页】\n${part}`).join('\n\n')
+        : text
+      markdown = await generateMarkdown(aiText, options.signal, (p: LlmProgress) => {
         onProgress({ percent: Math.min(92, 66 + Math.round(p.fraction * 26)), stage: 'llm', message: p.message })
       })
       if (markdown) {
@@ -205,13 +215,19 @@ export async function textToMarkdown(
   }
 
   if (!markdown) {
-    onProgress({ percent: 84, stage: 'rules', message: '正在用规则生成 Markdown…' })
-    markdown = ruleTextToMarkdown(text)
+    onProgress({ percent: 84, stage: 'rules', message: '正在用规则生成套卷模板…' })
+    markdown = pageTexts.length > 1 ? pageTextsToTemplate(pageTexts) : ruleTextToMarkdown(text)
   }
   if (!markdown) throw new Error('未能生成 Markdown 中间稿，请确认文档中包含「1. 题干 / A. 选项」格式的试题')
 
-  onProgress({ percent: 100, stage: 'done', message: 'Markdown 中间稿已生成，请人工校验排版' })
-  return { markdown, usedLlm, llmReason, llmMessage, rawText: text, textMethod, usedOcr }
+  // AI 输出若未按套卷模板分层，用已有中间稿规整成模板（不回退到原始文本，保留 AI 矫正结果）
+  if (usedLlm && !/^#{2,4}\s*第[一二三四五六七八九十\d]+部分/m.test(markdown)) {
+    const formatted = formatExamTemplate(markdown)
+    if (formatted) markdown = formatted
+  }
+
+  onProgress({ percent: 100, stage: 'done', message: '套卷模板中间稿已生成，请人工按页校验排版' })
+  return { markdown, usedLlm, llmReason, llmMessage, rawText: text, textMethod, usedOcr, pageTexts }
 }
 
 /** 两阶段拆题 · 阶段②结果 */
@@ -256,8 +272,8 @@ export async function markdownToQuestions(
   }
 
   onProgress({ percent: 94, stage: 'rules', message: '正在校验并合并结果…' })
-  const questions = mergeResults(llm, rules)
-  if (questions.length === 0) throw new Error('未能从 Markdown 中解析出题目，请检查「## 第 N 题」与选项格式')
+  const questions = attachTemplateContext(mergeResults(llm, rules), markdown)
+  if (questions.length === 0) throw new Error('未能从 Markdown 中解析出题目，请检查「#### 第 N 题」与选项格式')
 
   onProgress({ percent: 100, stage: 'done', message: `解析完成，共 ${questions.length} 道题` })
   return { questions, usedLlm, llmReason, llmMessage }
@@ -279,6 +295,8 @@ export interface ExtractResult {
   text: string
   textMethod: string
   usedOcr: boolean
+  /** 按真实页边界切分的文本；OCR 时每页一项，其他来源整篇一项 */
+  pageTexts: string[]
 }
 
 /**
@@ -300,6 +318,7 @@ export async function extractDocumentText(
   let text = ''
   let usedOcr = false
   let textMethod = ''
+  let pageTexts: string[] = []
 
   if (kind === 'pdf') {
     onProgress({ percent: 18, stage: 'text', message: '正在提取 PDF 文本层…' })
@@ -321,7 +340,9 @@ export async function extractDocumentText(
         })
         ocrParts.push(await recognizeImage(pages[i]))
       }
-      text = ocrParts.join('\n\n')
+      // 保留真实页边界：每页单独清洗后作为套卷模板的一页
+      pageTexts = ocrParts.map((part) => cleanExamText(part))
+      text = pageTexts.join('\n\n')
       textMethod = 'PDF 逐页 OCR'
     }
   } else {
@@ -334,7 +355,8 @@ export async function extractDocumentText(
 
   onProgress({ percent: 60, stage: 'prepare', message: '正在清理试卷版式噪音…' })
   text = cleanExamText(text)
-  return { text, textMethod, usedOcr }
+  if (!pageTexts.length) pageTexts = [text]
+  return { text, textMethod, usedOcr, pageTexts }
 }
 
 export async function parseDocumentToQuestions(

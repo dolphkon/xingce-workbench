@@ -185,6 +185,10 @@ export interface QuizQuestion {
   subType?: string
   point?: string
   images?: string[]
+  /** 套卷模板：所属部分（如「第一部分 言语理解与表达」） */
+  section?: string
+  /** 套卷模板：原始页码 */
+  page?: number
   /** 是否在试卷管理中收藏（星标） */
   favorite?: boolean
 }

@@ -138,6 +138,8 @@ export default function PaperWorkbench({
                         <div className="pw-question-head">
                           <span className="pw-q-num">{index + 1}.</span>
                           <span className={`stem-category${category === '多选题' ? ' stem-category-multi' : ''}`}>{category}</span>
+                          {question.page ? <span className="chip">第 {question.page} 页</span> : null}
+                          {question.section ? <span className="chip">{question.section}</span> : null}
                           {question.favorite && <span className="pw-q-fav-flag"><Icon name="star" size={12} /> 已收藏</span>}
                           <span className="spacer" />
                           <button

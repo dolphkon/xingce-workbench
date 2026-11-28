@@ -47,7 +47,9 @@ await page.waitForSelector('.online-practice-page')
 // 阶段①：上传文档 → 生成 Markdown 中间稿
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-markdown-flow.docx')
 await page.waitForSelector('.md-review', { timeout: 40000 })
+await page.getByRole('button', { name: '全文视图' }).click()
 const mdText = await page.locator('.md-review-editor').inputValue()
+await page.getByRole('button', { name: '返回分页视图' }).click()
 const blocks = (mdText.match(/## 第 \d+ 题/g) || []).length
 console.log('① Markdown 题块数:', blocks)
 console.log('① 噪音残留:', /复制必究|biguo368|共 39 页/.test(mdText))
@@ -58,13 +60,13 @@ console.log('① 生成方式:', notice?.trim())
 // 人工插入符号：工具栏「符号」→ 带圈数字 ①
 await page.locator('.md-review-actions button[title*="插入符号"]').click()
 await page.locator('.symbol-panel button[title="插入 ①"]').click()
-const afterSymbol = await page.locator('.md-review-editor').inputValue()
+const afterSymbol = await page.locator('.mdt-page-editor').inputValue()
 console.log('② 符号插入:', afterSymbol.includes('①'))
 
 // 人工插入图片：上传截图 → DataURL + 原比例预览
 await page.locator('input[type=file][accept="image/*"]').setInputFiles('/tmp/e2e-md-material.png')
 await page.waitForTimeout(800)
-const afterImage = await page.locator('.md-review-editor').inputValue()
+const afterImage = await page.locator('.mdt-page-editor').inputValue()
 console.log('② 图片插入调试:', afterImage.includes('![材料图]') ? '已写入' : '未写入', '错误提示:', await page.locator('.md-review .error-text').allTextContents())
 console.log('② 编辑器前 120 字:', afterImage.slice(0, 120).replace(/\n/g, '\\n'))
 await page.locator('.md-material-image').first().waitFor({ timeout: 5000 })
@@ -100,6 +102,7 @@ B. 乙
 C. 丙
 D. 丁
 答案：A`
+await page.getByRole('button', { name: '全文视图' }).click()
 await page.locator('.md-review-editor').fill(edited)
 await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
 await page.waitForSelector('.op-review', { timeout: 40000 })

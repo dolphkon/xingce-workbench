@@ -238,7 +238,8 @@ src/
 │   ├── ocr.ts                        # tesseract.js 中文 OCR + 题目结构化（293 行）
 │   ├── paperParser.ts                # 文档→题库四重解析引擎（校验/合并 LLM 与规则结果；漏题时以规则为准）
 │   ├── paperSplit.ts                 # 【新增】可独立回归测试的规则切题引擎：题号锚点（支持任意起始/重置）/切块/答案表/题干规整
-│   ├── markdownFlow.ts               # 【新增】两阶段拆题 Markdown 中间层：字段规范（题号/题型/模块/材料/题干/选项/答案/解析）/提示词/切块/规则解析（符号选项+图片材料）/序列化/规则补全漏题
+│   ├── markdownFlow.ts               # 【新增】两阶段拆题 Markdown 中间层：字段规范（题号/题型/模块/材料/题干/选项/答案/解析）/提示词/切块（##/###/#### 兼容）/规则解析（符号选项+图片材料）/序列化/规则补全漏题
+│   ├── examTemplate.ts               # 【新增】套卷固定模板：部分→页→题解析/分页编辑器回写/模板上下文附着/自动排版/逐页 OCR 生成模板
 │   ├── bankParser.ts                 # 题库图片识别引擎：OCR→LLM/rule 拆为 BankQuestion JSON
 │   ├── richText.ts                   # 【新增】材料富文本工具：DOMPurify 白名单过滤、富文本↔纯文本、预览专用清洗（去编辑器控件/固定尺寸）、按缩放宽度重绘提取内嵌图片
 │   ├── questionRefine.ts             # 拆题后处理：文段/设问拆分、单行选项切分、答案回填、类别/模块校正
@@ -274,7 +275,7 @@ src/
     │   └── DocSketch.tsx             # 文档手写批注层
     ├── paper/
     │   ├── OnlinePracticePage.tsx    # 上传→①AI 生成 Markdown 中间稿→人工校验→②AI 解析成题→逐题校对→组卷→试卷工作台→历史；另保留「直接拆题」快捷入口
-    │   ├── MarkdownReviewPage.tsx    # 【新增】两阶段拆题中间页：Markdown 编辑器/符号面板插入①②③/粘贴上传图片按原比例生成 DataURL/材料图片原比例预览放大/格式说明/下载上传 .md/题块计数/确认解析
+    │   ├── MarkdownReviewPage.tsx    # 【新增】套卷模板校验页：按部分/按页加载（左侧目录+加载更多）/逐页编辑回写/卷面预览/符号面板/粘贴上传图片原比例显示/自动排版/全文视图/下载上传 .md/确认解析
     │   ├── PaperWorkbench.tsx        # 我的试卷后台工作台：左侧套题列表 + 右侧该卷题目后台编辑管理（校对/收藏/增删/改名/导出/开始刷题）
     │   ├── QuestionReviewModal.tsx   # 【抽出】单题校对弹窗（题干/选项/答案/题型/解析编辑与校验），上传校对与试卷工作台共用
     │   └── PaperExamRunner.tsx       # 在线试卷考试运行器
@@ -334,6 +335,7 @@ interface Mistake {
 interface QuizQuestion {           // 文档解析出的通用题
   id: string; title: string; options: string[]; answer: string;
   analysis: string; type: string; subType?: string; point?: string; images?: string[];
+  section?: string; page?: number;  // 套卷模板归属：部分名称 / 原始页码
   favorite?: boolean;               // 试卷后台管理中是否收藏（星标）
 }
 
@@ -609,8 +611,9 @@ Layout 顶部导航含 6 项：总览 / 错题库 / 知识库 / 在线刷题 / �
 
 ### 9.2 文档转在线刷题（paper/）
 
-- **OnlinePracticePage.tsx**：视图 `list|markdown|upload|exam`。默认**两阶段拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗）→ 阶段① `textToMarkdown`（AI 按规则生成结构化 Markdown；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号，避免重置题号/末题丢失）→ `MarkdownReviewPage` 人工校验排版（编辑器直接改、下载/上传 .md、格式说明、题块计数）→ 阶段② `markdownToQuestions`（AI 解析 Markdown + 规则补全字段）→ 逐题校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
-- **两阶段 Markdown 中间层（lib/markdownFlow.ts）**：字段顺序固定为 `## 第 N 题` → `题型：单选题` → `模块：言语理解` → `材料：`（可为空，可含 `![图形材料](data:image/...)`）→ `题干：`（显式字段，兼容旧写法「题干原文：」）→ 选项 → `答案：` → `解析：`；选项支持 `A./B./C./D.`，也支持 `1./（1）/①/⑴/⒈` 等符号，按出现顺序映射 A–D；`MD_GENERATE_PROMPT` 把 OCR 噪音/跨页拼接/题号重置等约束前置，`MD_PARSE_PROMPT` 专用于把人工校验后的 Markdown 转成题目 JSON（避免把字段行/题号当题干）；`splitMarkdownBlocks` 按题块切分（块外 `#` 标题不混入）；`ruleMarkdownToQuestions` 规则兜底解析；`questionsToMarkdown`/`questionToBlock` 序列化与下载；`mergeMarkdownWithRules` 对比规则题号锚点把 AI 漏掉的题补回中间稿。
+- **OnlinePracticePage.tsx**：视图 `list|markdown|upload|exam`。默认**两阶段套卷模板拆题**：上传 PDF/DOCX → `extractDocumentText`（文本层/OCR + 噪音清洗，OCR 保留逐页 `pageTexts`）→ 阶段① `textToMarkdown`（AI 按「部分→页→题」固定模板生成 Markdown，页标记来自 OCR 真实页；`mergeMarkdownWithRules` 用规则切题补全 AI 漏掉的题号，避免重置题号/末题丢失）→ `MarkdownReviewPage` 模拟试卷**按页加载**：左侧部分/页目录（默认 3 页，可加载更多）、右侧逐页编辑 + 卷面预览 + 自动排版 + 全文视图，支持符号/图片插入与下载上传 .md → 阶段② `markdownToQuestions`（AI 按模板解析成题并带回 `section`/`page`，规则兜底）→ 逐题校对预览（`QuestionReviewModal`：题干 textarea 保留换行、4 选项可编辑、答案 A-D 校验、题型、解析、删除；`splitStem` 拆【共用材料】/【题目】；`inspectQuestion` 标黄待审核）→ 每题「确认无误」或校对保存标记 `confirmedIds` → 「确认组卷」汇总弹窗 → `put('papers')`。顶部「直接拆题」按钮保留原 `parseDocumentToQuestions` 一步到位链路（适合排版规整文档）；知识库文件文档同样走两阶段；历史记录弹窗；LLM 能力状态条 `.op-notice.ok/warn`。两阶段均 AI 优先、规则兜底，GitHub Pages 无 AI 时规则生成 Markdown 仍可编辑续改。
+- **套卷模板中间层（lib/examTemplate.ts）**：固定层级 `## 第X部分 模块名` → `### 第 N 页` → `#### 第 N 题`（兼容旧 `## 第 N 题`，视为第 1 页）；`parseExamTemplate` 解析部分/页/题归属与行区间，`updateTemplatePage` 单页回写全文，`attachTemplateContext` 把部分/页附着到题目，`renderExamTemplate`/`formatExamTemplate` 按模板排版，`pageTextsToTemplate` 逐页 OCR 兜底，`templateStats` 统计规模。
+- **两阶段 Markdown 中间层（lib/markdownFlow.ts）**：题块标题接受 `##`/`###`/`####`；题内字段顺序固定为 `题型：单选题` → `模块：言语理解` → `材料：`（可为空，可含 `![图形材料](data:image/...)`）→ `题干：`（显式字段，兼容旧写法「题干原文：」）→ 选项 → `答案：` → `解析：`；选项支持 `A./B./C./D.`，也支持 `1./（1）/①/⑴/⒈` 等符号，按出现顺序映射 A–D；`MD_GENERATE_PROMPT` 把 OCR 噪音/跨页拼接/题号重置等约束前置，`MD_PARSE_PROMPT` 专用于把人工校验后的 Markdown 转成题目 JSON（避免把字段行/题号当题干）；`splitMarkdownBlocks` 按题块切分（块外 `#` 标题不混入）；`ruleMarkdownToQuestions` 规则兜底解析；`questionsToMarkdown`/`questionToBlock` 序列化与下载；`mergeMarkdownWithRules` 对比规则题号锚点把 AI 漏掉的题补回中间稿。
 - **拆题环形倒计时（CircularProgress.tsx）**：上传解析期间用环形进度替代旧的线性进度条——外圈虚线 `cp-spin` 持续旋转表示「正在进行」；彩色 SVG 弧 `cp-arc`（`stroke-dashoffset` 按 percent 平滑过渡）显示进度；中心百分比 + 当前阶段；下方「已用时 mm:ss / 预计还需 ~mm:ss」（依据 percent 与 elapsed 估算，前 1 秒显示「计算中」）与 5 段阶段步骤条（准备文件→读取文本→OCR 识别→智能拆题→规则校验，done/active 高亮 + active 呼吸动画）；支持明暗主题、移动端纵向堆叠。E2E 验证：上传 docx 时 `.cp-wrap` 出现、spin 动画生效、阶段正确推进、解析完成后环形进度消失。
 - **试卷后台工作台（PaperWorkbench.tsx）**：原卡片网格「我的试卷」升级为左右分栏（`.pw-workbench`，桌面 260px 侧栏 + 详情，≤860px 堆叠）——左侧套题列表（选中蓝底高亮、显示题数与文件名、底部「导入新试卷」），右侧为选中试卷的后台编辑管理：标题（双击或铅笔重命名）、开始刷题 / 历史 / 导出 JSON / 删除试卷；逐题卡片显示题号 + 类别 chip（按答案推断）+ 题干 + 共用材料 + 图片 + A-D 选项 + 正确答案，支持收藏星标（`QuizQuestion.favorite`）、校对编辑（`QuestionReviewModal`）、删除、添加题目；确认组卷后自动选中新卷。所有改动经 `put('papers')` + `refreshPapers()` 即时持久化。E2E 验证：套卷切换、收藏、编辑保存、添加题目全部生效且无报错。
 - **finishExam**：答错按题目 id 去重写入 mistakes（已存在累加 reviewCount，source 标注「XX（在线试卷）」），写一条 PracticeRecord；一份试卷可无限次刷。
@@ -779,9 +782,10 @@ font-family: -apple-system, "PingFang SC", ...
 仓库内已固化**拆题后处理回归测试**（无需额外依赖）：
 
 ```bash
-npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts + markdownFlow.ts → 39 项回归用例（4 题库后处理 + 8 噪音清洗 + 8 通用拆题规范化 + 5 规则切题 + 14 Markdown 中间层）
+npm run test:refine   # esbuild 打包 questionRefine.ts + examClean.ts + questionClean.ts + paperSplit.ts + markdownFlow.ts + examTemplate.ts → 49 项回归用例（4 题库后处理 + 8 噪音清洗 + 8 通用拆题规范化 + 5 规则切题 + 14 Markdown 中间层 + 10 套卷模板）
 node scripts/e2e-split-quality.mjs  # 真实 OCR 样本 DOCX 上传 E2E：验证题号重置/水印清除/答案回填/题数
-node scripts/e2e-markdown-flow.mjs  # 两阶段流程 E2E：上传→Markdown 中间稿(字段/题块数/噪音/补全漏题)→符号插入→图片插入与原比例预览→人工编辑→解析成题→逐题校对→组卷
+node scripts/e2e-markdown-flow.mjs  # 两阶段流程 E2E：上传→中间稿(字段/题块数/噪音/补全漏题)→符号插入→图片插入与原比例预览→人工编辑→解析成题→逐题校对→组卷
+node scripts/e2e-exam-template.mjs  # 套卷模板 E2E：上传→套卷模板→按页目录/切页/卷面预览→单页编辑回写→自动排版→按模板解析→组卷后题目带部分/页标签
 ```
 
 覆盖 4 个场景：① 文段/设问/选项全塞进 stem 的言语理解题还原为人工矫正结构；② 选项带字母前缀且答案藏在解析里；③ 多选答案 AD 自动改类别；④ 资料分析数据材料 + 设问拆分。
@@ -1018,10 +1022,21 @@ PORT=4179 npm run dev
   5. `MarkdownReviewPage.tsx`：新增符号面板（光标处插入 ①②③/⑴/1. 等）、图片粘贴与上传（Canvas 按原始宽高比生成 PNG，最长边 1600px，不拉伸不裁剪，自动挂到「材料：」行）、材料图片原比例预览与点击放大、格式说明更新；修正符号面板在左侧工具栏溢出视口的问题。
 - **验证**：`typecheck` / `test:refine`（39/39，新增符号选项、图片材料、字段顺序、旧写法兼容等 8 个用例）/ `build` 全过；E2E（`scripts/e2e-markdown-flow.mjs`）实测阶段①生成 3 题块且题干/材料字段齐全、噪音零残留；符号插入生效、图片插入后原比例预览出现、阶段②解析出 2 题且符号选项正确映射 A–D、题干不再残留符号行、无 JS 报错。
 
+### 16.2.12 套卷固定模板编辑器：模拟试卷按页加载、按模板组合成套卷（2026-11-28）
+- **背景**：中间稿是自由 Markdown，题目与试卷的「部分 / 页码」层级丢失，人工校验只能全文滚动，无法模拟真实试卷按页翻阅。
+- **改造**：
+  1. 新增 `lib/examTemplate.ts`：固定模板 `## 第X部分` → `### 第 N 页` → `#### 第 N 题`；解析题块归属与行区间、单页回写全文、模板上下文附着、自动排版、逐页 OCR 文本生成模板；旧 `## 第 N 题` 兼容为第 1 页。
+  2. `markdownFlow.ts`：两阶段提示词改为套卷模板规范（阶段②新增 `page`/`section` 字段），题块切分接受 `##`/`###`/`####`，规则解析跳过部分/页标题防止混入题干。
+  3. `paperParser.ts`：`ExtractResult` 新增 `pageTexts`（OCR 逐页保留真实页边界）；AI 文本带 `【第 N 页】` 分页标记；规则兜底按页生成模板，AI 未按模板输出时用已有中间稿规整；阶段②把模板上下文附着到题目。
+  4. `llm.ts` / `types.ts`：`LlmQuestion` 与 `QuizQuestion` 新增 `page`/`section`，合并时规则补全；试卷工作台每题显示「第 N 页 / 部分」标签。
+  5. `MarkdownReviewPage.tsx`：改为套卷编辑器——左侧部分分组与页码目录（全局按页加载，默认 3 页，逐批加载）、切页加载动画、右侧逐页编辑 + 卷面预览、自动排版、全文视图、符号/图片插入与材料预览。
+- **验证**：`typecheck` / `test:refine`（49/49，新增 10 项套卷模板用例）/ `build` 全过；E2E（`scripts/e2e-exam-template.mjs`）实测按页目录 3 页/2 部分、卷面预览 2 题、切页加载正确、单页编辑只回写目标页、自动排版后页数不变、解析出 4 题、组卷后题目带「第 1 页 / 第一部分」标签、无 JS 报错；`e2e-markdown-flow.mjs` 同步适配分页视图后仍通过。
+
 ### 16.3 最近提交历史
 
 ```
-5b40d00 feat: Markdown 中间稿字段规范化——材料图片原比例显示与符号选项/符号插入支持  ← HEAD
+(待提交) feat: 套卷固定模板编辑器——按页加载/卷面预览/自动排版/按模板组合成套卷  ← HEAD
+5b40d00 feat: Markdown 中间稿字段规范化——材料图片原比例显示与符号选项/符号插入支持
 0b70269 feat: 两阶段拆题——AI 生成 Markdown 中间稿 → 人工校验排版 → AI 解析成题
 0c5b8d5 fix: 扫描版试卷拆题紊乱修复——噪音清洗/题号重置锚点/LLM漏题兜底/提示词强约束
 6fb4697 feat: 拆题环形倒计时进度 + 我的试卷后台工作台（左列表右编辑管理）

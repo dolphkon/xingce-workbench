@@ -20,16 +20,18 @@ import { stripResidualBoilerplate } from './examClean'
 import { uid } from './utils'
 
 /** 阶段①提示词：文本 → 结构化 Markdown */
-export const MD_GENERATE_PROMPT = `你是公务员考试（行测）试卷整理助手。把用户给的试卷文本（可能来自 OCR，含版式噪音）整理成规范的结构化 Markdown，方便人工逐题校对。
+export const MD_GENERATE_PROMPT = `你是公务员考试（行测）试卷整理助手。把用户给的试卷文本（可能来自 OCR，含版式噪音）整理成【套卷固定模板】的 Markdown，模拟真实试卷按部分、按页排版，方便人工逐页校验。
 
 只输出 Markdown 正文，不要输出 \`\`\` 代码块标记，不要任何解释或总结。
 
-格式规范（严格遵守，字段顺序不可调换）：
+模板层级（严格遵守，不可调换）：
 # 试卷名称（可选，只输出一次）
 
-## 第 3 题
+## 第一部分 言语理解与表达
+### 第 1 页
+#### 第 3 题
 题型：单选题
-模块：常识判断
+模块：言语理解
 材料：设问前的背景材料原文（没有就写「材料：」并留空）
 题干：以下对应表述正确的有：
 
@@ -40,10 +42,14 @@ D. 选项正文
 答案：B
 解析：解析原文（没有就不写这一行）
 
+### 第 2 页
+#### 第 4 题
+...
+
 硬性要求：
-1. 每遇到一个题号新起一个 "## 第 N 题" 块；题号用原文题号，可能从 42 开始，也可能按部分重置为 2、3，不要重新编号。
-2. 一题一拆，绝不能把两道题塞进同一块；跨页被拆开的同一道题要合并回同一块。
-3. 剥离版式噪音：水印「复制必究」「版权所有」、乱码串、「第 X 页 共 Y 页」、密封线/装订线、条形码粘贴说明、考生须知/重要提示/注意事项条目、「第 X 部分 言语理解」「（共 30 题，参考时间：28 分钟）」、推广串 biguo368 等。这些绝不写进材料/题干/选项/解析；同一行里的题目正文必须保留。
+1. 按原文「第X部分 / 模块标题」输出 "## 第X部分 模块名"；同一部分内按页输出 "### 第 N 页"。输入中的「【第 N 页】」是分页标记，必须据此输出对应页码；没有标记时按每页约 8 题顺序估算分页。每道题输出 "#### 第 N 题"，题号用原文题号，可能从 42 开始，也可能按部分重置为 2、3，不要重新编号。
+2. 一题一拆，绝不能把两道题塞进同一块；跨页被拆开的同一道题要合并回同一块，放在题目开始的那一页。
+3. 剥离版式噪音：水印「复制必究」「版权所有」、乱码串、「第 X 页 共 Y 页」、密封线/装订线、条形码粘贴说明、考生须知/重要提示/注意事项条目、「（共 30 题，参考时间：28 分钟）」、推广串 biguo368 等。这些绝不写进材料/题干/选项/解析；同一行里的题目正文必须保留。
 4. 题干必须写 "题干：" 字段前缀，不要写成「题干原文：」；题干只写设问，不要重复材料内容。
 5. 材料可以为空（写成「材料：」后留空）；若原文是图形推理等图片题，材料里写 "![图形材料](原文图片地址)" 保留图片引用，不要臆造图片内容或把图形描述成文字题干。
 6. 题干、材料、选项里的序号符号（1.、2.、①、②、⑴ 等）必须原样保留，不要擅自改成 ABCD。四个选项各占一行、按原文顺序；优先用 A./B./C./D. 标记，若原文就是 ①/1. 等符号则保留该符号。原文没有的选项留空行。
@@ -66,13 +72,16 @@ export const MD_PARSE_PROMPT = `你是行测题库录入助手。用户会给一
 - answer：答案字母（多选如 AB），没有填空字符串
 - analysis：解析文本，没有填空字符串
 - images：字符串数组，材料或题干中 "![...](地址)" 图片的地址原样放入，没有填空数组
+- page：数字，该题所在 "### 第 N 页" 的页码；没有页标记时填 1
+- section：字符串，该题所在 "## 第X部分 模块名" 的部分名称；没有时填空字符串
 
 要求：
-1. 每个 "## 第 N 题" 块恰好转一道题，不合并、不拆分，顺序保留。
-2. 「题型：」「模块：」「答案：」「材料：」「题干：」字段行按值填入；题干取「题干：」之后、选项行之前的正文；解析取「解析：」后的内容。
-3. 选项行可能是 "A. xxx" "1. xxx" "① xxx" 等形式，按出现顺序依次放入 options 下标 0/1/2/3；不要带前缀。原文留空的选项保持空字符串。
-4. 保留原文中的 ①②③、⑴、1. 等序号符号，不要规范化、不要臆造、不把上一题内容带进下一题。
-5. 若 Markdown 中没有题块，questions 返回空数组。`
+1. 每个 "#### 第 N 题"（兼容旧格式 "## 第 N 题"）块恰好转一道题，不合并、不拆分，顺序保留。
+2. 按部分标题与页标题归属，把 section / page 填入对应题目；同一页的题目 page 相同。
+3. 「题型：」「模块：」「答案：」「材料：」「题干：」字段行按值填入；题干取「题干：」之后、选项行之前的正文；解析取「解析：」后的内容。
+4. 选项行可能是 "A. xxx" "1. xxx" "① xxx" 等形式，按出现顺序依次放入 options 下标 0/1/2/3；不要带前缀。原文留空的选项保持空字符串。
+5. 保留原文中的 ①②③、⑴、1. 等序号符号，不要规范化、不要臆造、不把上一题内容带进下一题。
+6. 若 Markdown 中没有题块，questions 返回空数组。`
 
 /** Markdown 题块 */
 export interface MdBlock { no: number; body: string }
@@ -86,13 +95,13 @@ export function normalizeMarkdown(input: string): string {
   return md
 }
 
-/** 按「## 第 N 题」切块；块外文本（如 # 标题）忽略 */
+/** 按「## / ### / #### 第 N 题」切块；套卷模板层级与旧格式均支持 */
 export function splitMarkdownBlocks(md: string): MdBlock[] {
   const lines = normalizeMarkdown(md).split('\n')
   const blocks: { no: number; lines: string[] }[] = []
   let current: { no: number; lines: string[] } | null = null
   for (const line of lines) {
-    const match = line.match(/^\s*##\s*第?\s*(\d{1,3})\s*题/)
+    const match = line.match(/^\s*#{2,4}\s*第?\s*(\d{1,3})\s*题/)
     if (match) {
       if (current) blocks.push(current)
       current = { no: Number(match[1]), lines: [] }
@@ -162,7 +171,10 @@ export function ruleMarkdownToQuestions(md: string): QuizQuestion[] {
     let inAnalysis = false
     const options = ['', '', '', '']
     const fieldRe = /^\s*(?:[-*]\s*)?(?:题型|模块|答案|材料|题干(?:原文)?)\s*[:：]/
+    // 套卷模板的结构行（部分/页标题）不能混入上一题题干
+    const structuralRe = /^\s*(?:#{2,4}\s*第[一二三四五六七八九十\d]+部分|#{2,4}\s*第?\s*\d{1,3}\s*页|<!--\s*PAGE\s*[:：]?\s*\d{1,3}\s*-->)/i
     for (const line of lines) {
+      if (structuralRe.test(line)) { inAnalysis = false; continue }
       const analysisMatch = line.match(/^\s*(?:[-*]\s*)?解析\s*[:：]\s*(.*)$/)
       if (analysisMatch) {
         inAnalysis = true
@@ -207,8 +219,8 @@ export function ruleMarkdownToQuestions(md: string): QuizQuestion[] {
   }).filter((question) => question.title.trim().length > 0)
 }
 
-/** 单题 → 标准 Markdown 块（题号用原文编号，支持重置/跳号） */
-export function questionToBlock(question: QuizQuestion, no: number): string {
+/** 单题 → 标准 Markdown 块（题号用原文编号，支持重置/跳号）；heading 可指定 ## / #### */
+export function questionToBlock(question: QuizQuestion, no: number, heading = '##'): string {
   const [material, stem] = question.title.includes('【题目】')
     ? question.title.split('【题目】').map((part) => part.replace(/^【共用材料】/, '').trim())
     : ['', question.title.trim()]
@@ -219,7 +231,7 @@ export function questionToBlock(question: QuizQuestion, no: number): string {
     .map((src) => `![图形材料](${src})`)
   const materialText = [material, ...materialImages].filter(Boolean).join(' ')
   const parts = [
-    `## 第 ${no} 题`,
+    `${heading} 第 ${no} 题`,
     `题型：${type}`,
     `模块：${module}`,
     `材料：${materialText}`,

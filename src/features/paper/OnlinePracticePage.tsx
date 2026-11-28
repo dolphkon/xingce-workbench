@@ -146,6 +146,7 @@ export default function OnlinePracticePage() {
         llmMessage: result.llmMessage,
         textMethod: result.textMethod,
         usedOcr: result.usedOcr,
+        pageTexts: result.pageTexts,
       })
       setView('markdown')
     } catch (err) {
@@ -356,6 +357,7 @@ export default function OnlinePracticePage() {
           llmMessage: result.llmMessage,
           textMethod: result.textMethod,
           usedOcr: result.usedOcr,
+          pageTexts: result.pageTexts,
         })
         setView('markdown')
       } catch (err) {
@@ -392,7 +394,7 @@ export default function OnlinePracticePage() {
       <div className="page-head">
         <div>
           <h1>在线刷题</h1>
-          <p className="muted">上传 PDF 或 Word → AI 生成 Markdown 中间稿 → 人工校验排版 → 解析成题目逐题确认组卷。答错的题自动进入错题库。</p>
+          <p className="muted">上传 PDF 或 Word → AI 生成套卷模板 → 按页校验排版 → 按模板解析成套卷并逐题确认。答错的题自动进入错题库。</p>
         </div>
         <div className="op-head-actions">
           <button className="btn" onClick={() => directInputRef.current?.click()} disabled={uploading} title="跳过 Markdown 校验，直接拆题（适合排版规整的文档）">
@@ -431,7 +433,7 @@ export default function OnlinePracticePage() {
         <div className={`op-notice${llmProbe.available ? ' ok' : ' warn'}`}>
           <Icon name={llmProbe.available ? 'check' : 'info'} size={15} />
           {llmProbe.available
-            ? '大模型智能拆题已就绪：上传文档后 AI 先生成 Markdown 中间稿，人工校验排版后再解析成题目逐题确认。'
+            ? '大模型智能拆题已就绪：上传文档后 AI 先生成套卷模板，按页校验排版后再按模板解析成套卷。'
             : `${llmProbe.message} 将用规则生成 Markdown，仍可人工校验排版后继续。`}
         </div>
       ) : (
