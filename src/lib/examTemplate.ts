@@ -71,18 +71,29 @@ const SECTION_KEYWORDS: Record<string, string[]> = {
   资料分析: ['资料', '材料', '统计图', '统计表'],
 }
 
+/** 从「其他（常识）」这类非标准标题中还原模块名 */
+function sectionModule(section: string): string {
+  const s = String(section ?? '').trim()
+  const paren = s.match(/[（(]([^）)]{1,16})[）)]/)?.[1] ?? ''
+  if (MODULE_TO_SECTION[paren]) return paren
+  return Object.keys(MODULE_TO_SECTION).find((name) => s.includes(name)) ?? ''
+}
+
 function questionModule(question: QuizQuestion): string {
   return question.type.replace(/[·•]?\s*(?:单选题|多选题)\s*$/, '').trim()
 }
 
 /** 模块是人工校验后的权威字段，部分标题与之冲突时按模块纠正 */
 export function canonicalSection(section: string, module: string): string {
-  const m = String(module ?? '').trim()
-  if (!m) return String(section ?? '').trim()
-  const canonical = MODULE_TO_SECTION[m] ?? m
   const s = String(section ?? '').trim()
+  const m = String(module ?? '').trim() || sectionModule(s)
+  if (!m) return s
+  const canonical = MODULE_TO_SECTION[m] ?? m
   if (!s) return canonical
   const keywords = SECTION_KEYWORDS[m] ?? [m]
+  const hasPrefix = /^第[一二三四五六七八九十百\d]+(?:部分|章|篇)/.test(s)
+  // 无部分序号的裸模块标题（如「其他（常识）」）直接归一，带序号的标题保留原表述
+  if (!hasPrefix && Object.keys(MODULE_TO_SECTION).some((name) => s.includes(name))) return canonical
   if (keywords.some((keyword) => s.includes(keyword))) return s
   const prefix = s.match(/^第[一二三四五六七八九十百\d]+(?:部分|章|篇)/)?.[0]
   return prefix ? `${prefix} ${canonical}` : canonical

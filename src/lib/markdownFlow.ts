@@ -55,7 +55,11 @@ D. 选项正文
 6. 题干、材料、选项里的序号符号（1.、2.、①、②、⑴ 等）必须原样保留，不要擅自改成 ABCD。四个选项各占一行、按原文顺序；优先用 A./B./C./D. 标记，若原文就是 ①/1. 等符号则保留该符号。原文没有的选项留空行。
 7. 题型只能是「单选题」或「多选题」；模块只能是「政治理论」「常识」「言语理解」「数量关系」「判断推理」「资料分析」，不确定填「常识」。模块的判断优先于部分标题：若该题内容与所在部分标题不符（例如常识题出现在言语部分），必须把「模块：」改成正确模块，并把该题归入对应部分；不要为了贴合部分标题而错填模块。
 8. 答案只按原文标注（如「答案：B」或末尾答案表）回填，写在选项之后；找不到就写「答案：」并留空。
-9. 若输入不是试题（如纯讲义），输出空字符串。`
+9. 若输入不是试题（如纯讲义），输出空字符串。
+10. 部分标题只能是「## 第X部分 模块名」或「## 模块名」（如「## 常识判断」「## 其他」），绝不能写成「## 其他（常识）」这种混合标题；模块名与字段「模块：」保持一致。
+11. 每个题块只能有一个「#### 第 N 题」标题，题块正文里绝不能再出现任何「第 N 题」「## 标题」「### 第 N 页」字样；遇到下一道题或「一、图形推理」「二、定义判断」等题型小标题，必须结束当前题块并另起题块/部分标题。
+12. 选项必须从 A. 开始各占一行；原文形如「FA.3 B.5A.3 B.5C.6 D.12」的粘连串要按语义拆成 A./B./C./D. 四行，不能整串塞进题干或单个选项。
+13. 「第 X 页 共 Y 页」「第X部分结束，请继续做第Y部分」「※※※」「公考资料每日更新记录」等转场/页眉噪音必须整行丢弃，不能粘进题干、材料或答案。`
 
 /** 阶段②提示词：人工校验后的 Markdown → 题目 JSON */
 export const MD_PARSE_PROMPT = `你是行测题库录入助手。用户会给一份已人工校验过的结构化 Markdown 试卷，请把它转成严格 JSON。
@@ -82,7 +86,8 @@ export const MD_PARSE_PROMPT = `你是行测题库录入助手。用户会给一
 4. 选项行可能是 "A. xxx" "1. xxx" "① xxx" 等形式，按出现顺序依次放入 options 下标 0/1/2/3；不要带前缀。原文留空的选项保持空字符串。
 5. 保留原文中的 ①②③、⑴、1. 等序号符号，不要规范化、不要臆造、不把上一题内容带进下一题。
 6. 若 Markdown 中没有题块，questions 返回空数组。
-7. section 与 module 不一致时以 module 为准纠正 section（常识→常识判断，言语理解→言语理解与表达，政治理论→政治理论/常识判断），并保留原部分序号前缀（如「第一部分 常识判断」）。`
+7. section 与 module 不一致时以 module 为准纠正 section（常识→常识判断，言语理解→言语理解与表达，政治理论→政治理论/常识判断），并保留原部分序号前缀（如「第一部分 常识判断」）；人工写出的「## 其他（常识）」「## 常识」等非标准标题也要识别为部分标题，绝不能当作题干正文。
+8. 若题块内混入「第 N 题」「## 标题」「### 第 N 页」等结构行，先剔除这些行再取字段；一题一题输出，不复述题号标题。`
 
 /**
  * 模板结构行统一识别。
@@ -90,8 +95,20 @@ export const MD_PARSE_PROMPT = `你是行测题库录入助手。用户会给一
  * 这里统一容忍 1~8 个 #、全角空格及「第4题」写法，避免分页目录/题数统计漏题。
  */
 export const QUESTION_HEADING_RE = /^[ \t]*#{1,8}[ \t]*第?[ \t\u3000]*(\d{1,3})[ \t\u3000]*题/
-export const SECTION_HEADING_RE = /^[ \t]*#{1,8}[ \t]*(第[一二三四五六七八九十百\d]+(?:部分|章|篇)[^\n]*)$/
+const SECTION_MODULE_NAMES = '常识判断|常识|政治理论|言语理解与表达|言语理解|数量关系|判断推理|图形推理|定义判断|类比推理|逻辑判断|资料分析|其他'
+/** 部分标题：既认「第X部分 模块名」，也认人工/AI 常写的「## 常识判断」「## 其他（常识）」 */
+export const SECTION_HEADING_RE = new RegExp(
+  String.raw`^[ \t]*#{1,8}[ \t]*((?:第[一二三四五六七八九十百\d]+(?:部分|章|篇)[^\n]*|(?:${SECTION_MODULE_NAMES})(?:[（(][^）)]{0,16}[）)])?))$`,
+  'i',
+)
 export const PAGE_HEADING_RE = /^[ \t]*#{1,8}[ \t]*第?[ \t\u3000]*(\d{1,3})[ \t\u3000]*页[ \t]*$|^<!--\s*PAGE\s*[:：]?\s*(\d{1,3})\s*-->/im
+/** 试卷转场/页眉噪音：AI 常把这些行粘进题干或题块之间 */
+export const TRANSITION_NOISE_RE = /^(?:第[一二三四五六七八九十百\d]+部分结束[^\n]*|第\s*[\d\s]+\s*页\s*共\s*[\d\s]+\s*页|※+[^\n]*|公考资料每日更新记录[^\n]*)$/i
+const PAPER_HEADING_RE = /^[ \t]*#[ \t]+(?!#)(.+)$/
+const INLINE_STRUCTURE_RE = new RegExp(
+  String.raw`\s+(?=#{1,8}[ \t]+(?:第[一二三四五六七八九十百\d]+(?:部分|章|篇)|第[ \t\u3000]*\d+[ \t\u3000]*[题页]|(?:${SECTION_MODULE_NAMES})(?:[（(]|\s|$)))`,
+  'i',
+)
 
 /** Markdown 题块 */
 export interface MdBlock { no: number; body: string }
@@ -103,6 +120,105 @@ export function normalizeMarkdown(input: string): string {
   // 合并题块之间多余的空行
   md = md.replace(/\n{3,}/g, '\n\n')
   return md
+}
+
+/** 内联拆出的标题先打标记，稍后上提到下一道题目之前，避免留在上一题选项中间 */
+const INLINE_HEADING_MARK = '\u0001'
+
+/** 把粘在正文末尾的「## 其他（常识）」等结构标记拆成独立行 */
+function splitInlineStructure(line: string): string[] {
+  if (!INLINE_STRUCTURE_RE.test(line)) return [line]
+  const parts = line.split(INLINE_STRUCTURE_RE).map((part) => part.trim()).filter(Boolean)
+  if (parts.length <= 1) return [line]
+  return parts.map((part, index) => index === 0 ? part : `${INLINE_HEADING_MARK}${part}`)
+}
+
+/** 统一标题层级与空格，避免「##### 第5题」「## 其他（常识）」破坏目录与预览 */
+function normalizeHeadingLine(line: string): string {
+  const marked = line.startsWith(INLINE_HEADING_MARK)
+  const clean = marked ? line.slice(INLINE_HEADING_MARK.length) : line
+  const question = clean.match(QUESTION_HEADING_RE)
+  let normalized = clean
+  if (question) normalized = `#### 第 ${Number(question[1])} 题`
+  else {
+    const page = clean.match(PAGE_HEADING_RE)
+    if (page) normalized = `### 第 ${Number(page[1] ?? page[2])} 页`
+    else {
+      const section = clean.match(SECTION_HEADING_RE)
+      if (section) normalized = `## ${section[1].trim()}`
+      else {
+        const paper = clean.match(PAPER_HEADING_RE)
+        if (paper) normalized = `# ${paper[1].trim()}`
+      }
+    }
+  }
+  return marked ? `${INLINE_HEADING_MARK}${normalized}` : normalized
+}
+
+/** 内联拆出的标题上提到下一道题目之前 */
+function hoistInlineHeadings(lines: string[]): string[] {
+  const out: string[] = []
+  const pending: string[] = []
+  for (const line of lines) {
+    if (line.startsWith(INLINE_HEADING_MARK)) {
+      pending.push(line.slice(INLINE_HEADING_MARK.length))
+      continue
+    }
+    if (pending.length && QUESTION_HEADING_RE.test(line)) {
+      out.push(...pending)
+      pending.length = 0
+    }
+    out.push(line)
+  }
+  if (pending.length) {
+    const lastQuestion = out.map((line) => QUESTION_HEADING_RE.test(line)).lastIndexOf(true)
+    out.splice(lastQuestion >= 0 ? lastQuestion : out.length, 0, ...pending)
+  }
+  return out
+}
+
+/**
+ * 同一套卷内题号重复时顺延补齐。
+ * 题号可能按部分重置（如 42 → 2），因此只在「大幅回落且该号未出现过」时开启新段；
+ * 完全相同的小号重复（5 → 5）一律视为 AI 误写，避免多道题被解析成同一题。
+ */
+function dedupeQuestionHeadings(lines: string[]): string[] {
+  let scope = 'default'
+  let lastNo = 0
+  const seen = new Map<string, Set<number>>()
+  const max = new Map<string, number>()
+  return lines.map((line) => {
+    if (PAPER_HEADING_RE.test(line)) { scope = `paper:${line.trim()}`; lastNo = 0; return line }
+    const question = line.match(QUESTION_HEADING_RE)
+    if (!question) return line
+    let no = Number(question[1])
+    const used = seen.get(scope) ?? new Set<number>()
+    if (lastNo >= 20 && no <= 8 && !used.has(no)) { used.clear(); lastNo = 0 }
+    if (used.has(no)) {
+      no = Math.max(max.get(scope) ?? 0, no) + 1
+      while (used.has(no)) no += 1
+    }
+    used.add(no)
+    seen.set(scope, used)
+    max.set(scope, Math.max(max.get(scope) ?? 0, no))
+    lastNo = no
+    return `#### 第 ${no} 题`
+  })
+}
+
+/**
+ * 修复 AI/人工编辑常见的排版错误：
+ * 1. 拆开粘在题干末尾的标题标记；
+ * 2. 统一套卷/部分/页/题标题层级；
+ * 3. 丢弃页眉与转场噪音；
+ * 4. 同一部分内重复题号顺延，避免多道题被当成同一题覆盖。
+ */
+export function repairMarkdownTemplate(md: string): string {
+  const lines = hoistInlineHeadings(normalizeMarkdown(md).split('\n')
+    .flatMap(splitInlineStructure)
+    .map(normalizeHeadingLine))
+    .filter((line) => !TRANSITION_NOISE_RE.test(line.trim()))
+  return normalizeMarkdown(dedupeQuestionHeadings(lines).join('\n'))
 }
 
 /** 按「第 N 题」标题切块；容忍 1~8 个 #、多余空格与全角空格 */
@@ -184,7 +300,7 @@ export function ruleMarkdownToQuestions(md: string): QuizQuestion[] {
     // 套卷模板的结构行（部分/页/题号标题）不能混入上一题题干
     // 套卷模板的结构行（套卷标题/部分/页/题号标题）不能混入上一题题干
     const structuralRe = new RegExp(
-      `^[ \\t]*#[ \\t]+(?!#)|${SECTION_HEADING_RE.source}|${PAGE_HEADING_RE.source}|${QUESTION_HEADING_RE.source}`,
+      `^[ \\t]*#{1,8}[ \\t]|${SECTION_HEADING_RE.source}|${PAGE_HEADING_RE.source}|${QUESTION_HEADING_RE.source}`,
       'i',
     )
     for (const line of lines) {
@@ -285,18 +401,27 @@ export function mergeMarkdownWithRules(aiMarkdown: string, rawText: string): str
   const ruleNos = new Set(ruleBlocks.map((block) => block.no))
   const ruleByNo = new Map(ruleBlocks.map((block) => [block.no, block]))
 
+  const usedNos = new Set<number>()
+  /** 按题干锚点回查原文题块；已占用的题号不再命中，避免重复题号反复回填同一道题 */
+  const findRuleByStem = (stem: string) => {
+    if (stem.length < 8) return undefined
+    const candidates = ruleBlocks.filter((rule) => !usedNos.has(rule.no))
+    return candidates.find((rule) => compactText(rule.text).includes(stem))
+      ?? candidates.find((rule) => compactText(rule.text).includes(stem.slice(0, 12)))
+  }
+
   const aligned = splitMarkdownBlocks(aiMarkdown).map((block): string | null => {
     let no = block.no
     const stem = compactText(readField(block.body, '题干')).slice(0, 30)
-    if (!ruleNos.has(no)) {
-      // 题号不在原文锚点中：用题干前 30 字回查真实题号
-      const matched = ruleBlocks.find((rule) => compactText(rule.text).includes(stem) && stem.length >= 8)
-      if (!matched) return null
-      no = matched.no
-    }
+    const matched = findRuleByStem(stem)
+    if (matched) no = matched.no
+    else if (!ruleNos.has(no)) return null
+    // 题号重复且题干无法回查时保留 AI 文本，由后续 repairMarkdownTemplate 顺延编号
+    const keepAsIs = !matched && usedNos.has(no)
+    usedNos.add(no)
     const ruleBlock = ruleByNo.get(no)
     const inRaw = Boolean(ruleBlock && stem.length >= 8 && compactText(ruleBlock.text).includes(stem))
-    if (!inRaw && ruleBlock) {
+    if (!keepAsIs && !inRaw && ruleBlock) {
       const question = ruleParseBlock(ruleBlock, answerKey)
       if (question) return questionToBlock(question, no, '####')
     }
@@ -313,7 +438,7 @@ export function mergeMarkdownWithRules(aiMarkdown: string, rawText: string): str
     if (!heading) return true
     const name = heading[1].trim()
     // 部分/页标题是模板结构行，保留；套卷名必须能在原文找到，避免模型臆造新试卷
-    if (/^第[一二三四五六七八九十百\d]+(?:部分|章|篇)/.test(name) || /^第[ \t]*\d+[ \t]*页$/.test(name)) return true
+    if (SECTION_HEADING_RE.test(`## ${name}`) || /^第[ \t]*\d+[ \t]*页$/.test(name)) return true
     return compactRaw.includes(compactText(name))
   }).join('\n')
 
@@ -323,7 +448,7 @@ export function mergeMarkdownWithRules(aiMarkdown: string, rawText: string): str
     .map((block) => ({ no: block.no, question: ruleParseBlock(block, answerKey) }))
     .filter((item): item is { no: number; question: QuizQuestion } => Boolean(item.question))
   const extras = missing.map((item) => questionToBlock(item.question, item.no)).join('\n')
-  return normalizeMarkdown([sanitized, extras].filter(Boolean).join('\n\n'))
+  return repairMarkdownTemplate([sanitized, extras].filter(Boolean).join('\n\n'))
 }
 
 /** 无 AI 时的阶段①兜底：用规则切题结果生成 Markdown */

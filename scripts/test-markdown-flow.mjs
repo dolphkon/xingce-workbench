@@ -1,6 +1,7 @@
 import {
   normalizeMarkdown, splitMarkdownBlocks, ruleMarkdownToQuestions, questionsToMarkdown,
   ruleTextToMarkdown, mergeMarkdownWithRules, parseOptionLine, extractMarkdownImages,
+  repairMarkdownTemplate,
 } from '../node_modules/.cache/markdown-flow.mjs'
 
 const MD = `# 行测套题
@@ -30,6 +31,34 @@ B. 上层建筑反作用于经济基础
 C. 二者毫无关联
 D. 上层建筑的性质由经济基础决定
 答案：ABD`
+
+/** 用户真实样本的典型排版错误：内联标题 + 同部分重复题号 + 转场噪音 */
+const FORMAT_SAMPLE = `#### 第 4 题
+题型：单选题
+模块：常识
+材料：
+题干：矛盾的同一性和斗争性相结合，下列表述错误的一项是： ## 其他（常识）
+
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：D
+
+第 2 3 页共 3 9 页
+第四部分结束，请继续做第五部分! ※※※
+
+#### 第 5 题
+题型：单选题
+模块：常识
+材料：
+题干：第一道第五题
+
+#### 第 5 题
+题型：单选题
+模块：常识
+材料：
+题干：第二道第五题`
 
 const cases = [
   {
@@ -190,6 +219,74 @@ D.丁
     run: () => extractMarkdownImages('普通材料文本'),
     expect: (g) => g.text === '普通材料文本' && g.images.length === 0,
     detail: (g) => JSON.stringify(g),
+  },
+  {
+    name: '用户样本：内联模块标题拆行并上提到下一题之前',
+    run: () => repairMarkdownTemplate(FORMAT_SAMPLE),
+    expect: (md) => !md.includes('的一项是： ##')
+      && md.indexOf('## 其他（常识）') < md.indexOf('#### 第 5 题')
+      && md.indexOf('## 其他（常识）') > md.lastIndexOf('答案：D'),
+    detail: (md) => md.slice(0, 240),
+  },
+  {
+    name: '用户样本：同部分重复题号顺延为第 5/6 题',
+    run: () => splitMarkdownBlocks(repairMarkdownTemplate(FORMAT_SAMPLE)).map((b) => b.no),
+    expect: (nos) => nos.join(',') === '4,5,6',
+    detail: (nos) => nos.join(','),
+  },
+  {
+    name: '用户样本：页眉与转场噪音整行剔除',
+    run: () => repairMarkdownTemplate(FORMAT_SAMPLE),
+    expect: (md) => !md.includes('第 2 3 页共 3 9 页') && !md.includes('第四部分结束'),
+    detail: (md) => md.slice(0, 240),
+  },
+  {
+    name: '用户样本：非标准标题不污染题干',
+    run: () => ruleMarkdownToQuestions(repairMarkdownTemplate(FORMAT_SAMPLE)),
+    expect: (qs) => qs.length === 3 && qs.every((q) => !q.title.includes('其他（常识）')),
+    detail: (qs) => JSON.stringify(qs.map((q) => q.title)),
+  },
+  {
+    name: '用户样本：重复题号按题干锚点分别回填原文题块',
+    run: () => {
+      const ai = `#### 第 1 题
+题型：单选题
+模块：常识
+材料：
+题干：甲题：下列说法正确的一项是：
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：A
+
+#### 第 1 题
+题型：单选题
+模块：常识
+材料：
+题干：乙题：下列说法正确的一项是：
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：B`
+      const raw = `1. 甲题：下列说法正确的一项是：
+A.甲
+B.乙
+C.丙
+D.丁
+答案：A
+2. 乙题：下列说法正确的一项是：
+A.甲
+B.乙
+C.丙
+D.丁
+答案：B`
+      return splitMarkdownBlocks(mergeMarkdownWithRules(ai, raw)).map((b) => ({ no: b.no, body: b.body }))
+    },
+    expect: (blocks) => blocks.length === 2 && blocks[0].no === 1 && blocks[1].no === 2
+      && blocks[0].body.includes('甲题') && blocks[1].body.includes('乙题'),
+    detail: (blocks) => JSON.stringify(blocks.map((b) => [b.no, b.body.slice(0, 24)])),
   },
 ]
 

@@ -1,6 +1,6 @@
 import {
   parseExamTemplate, pageEditorBody, updateTemplatePage, attachTemplateContext,
-  renderExamTemplate, formatExamTemplate, pageTextsToTemplate, templateStats,
+  renderExamTemplate, formatExamTemplate, pageTextsToTemplate, templateStats, canonicalSection,
 } from '../node_modules/.cache/exam-template.mjs'
 import { ruleMarkdownToQuestions, splitMarkdownBlocks } from '../node_modules/.cache/markdown-flow.mjs'
 
@@ -285,6 +285,30 @@ const cases = [
       && g.next.includes('2026年5月15日') && !g.next.includes('科幻作品仍然')
       && g.t.pages.length === 2 && g.t.pages[0].questionIndexes.length === 1,
     detail: (g) => JSON.stringify(g.t.pages.map((p) => [p.id, p.body.length])),
+  },
+  {
+    name: '用户样本：非标准模块标题「其他（常识）」识别为部分',
+    run: () => parseExamTemplate(`## 其他（常识）
+### 第 1 页
+#### 第 5 题
+题型：单选题
+模块：常识
+材料：
+题干：第一道第五题
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：A`),
+    expect: (t) => t.sections.includes('常识判断') && t.pages.length === 1
+      && t.pages[0].questionIndexes.length === 1,
+    detail: (t) => JSON.stringify({ sections: t.sections, pages: t.pages.length }),
+  },
+  {
+    name: '用户样本：部分标题括号中的模块名用于纠正 section',
+    run: () => canonicalSection('其他（常识）', ''),
+    expect: (section) => section === '常识判断',
+    detail: (section) => section,
   },
 ]
 

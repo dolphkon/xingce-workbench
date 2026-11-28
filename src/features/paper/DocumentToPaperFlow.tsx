@@ -9,7 +9,7 @@ import {
   extractDocumentText, markdownToQuestions, parseDocumentToQuestions,
   parseFileKind, textToMarkdown, type ParseProgress,
 } from '../../lib/paperParser'
-import { normalizeMarkdown } from '../../lib/markdownFlow'
+import { repairMarkdownTemplate } from '../../lib/markdownFlow'
 import { bankQuestionToQuiz, quizToBankQuestion } from '../../lib/bankSync'
 import { uid } from '../../lib/utils'
 import type { BankQuestion, KnowledgeDoc, Paper, QuizQuestion } from '../../types'
@@ -173,7 +173,7 @@ export default function DocumentToPaperFlow({ onBack, onPushed }: Props) {
 
   const uploadMarkdownFile = async (file: File) => {
     try {
-      const text = normalizeMarkdown(await file.text())
+      const text = repairMarkdownTemplate(await file.text())
       if (!text) throw new Error('Markdown 文件为空')
       setMdDraft((current) => current ? { ...current, markdown: text, defaultTitle: current.defaultTitle || file.name.replace(/\.md$/i, '') } : current)
     } catch (err) {

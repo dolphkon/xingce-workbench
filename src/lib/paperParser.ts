@@ -17,7 +17,7 @@ import {
 import { cleanExamText, stripResidualBoilerplate } from './examClean'
 import { findQuestionAnchors, formatStem, ruleParseAll } from './paperSplit'
 import {
-  ruleTextToMarkdown, ruleMarkdownToQuestions, mergeMarkdownWithRules,
+  ruleTextToMarkdown, ruleMarkdownToQuestions, mergeMarkdownWithRules, repairMarkdownTemplate,
 } from './markdownFlow'
 import { attachTemplateContext, formatExamTemplate, pageTextsToTemplate } from './examTemplate'
 import { uid } from './utils'
@@ -225,6 +225,8 @@ export async function textToMarkdown(
     const formatted = formatExamTemplate(markdown)
     if (formatted) markdown = formatted
   }
+  // 兜底修复：内联标题、重复题号、转场噪音等常见排版错误在交付人工校验前先规整
+  markdown = repairMarkdownTemplate(markdown)
 
   onProgress({ percent: 100, stage: 'done', message: '套卷模板中间稿已生成，请人工按页校验排版' })
   return { markdown, usedLlm, llmReason, llmMessage, rawText: text, textMethod, usedOcr, pageTexts }
@@ -247,7 +249,9 @@ export async function markdownToQuestions(
   onProgress: ProgressFn = noop,
   options: ParseOptions = {},
 ): Promise<MarkdownParseDraft> {
-  const rules = ruleMarkdownToQuestions(markdown)
+  // 人工上传/编辑过的 Markdown 同样先做结构修复，避免非标准标题污染题干
+  const cleaned = repairMarkdownTemplate(markdown)
+  const rules = ruleMarkdownToQuestions(cleaned)
   let llm: LlmQuestion[] = []
   let usedLlm = false
   let llmReason: LlmBlockReason | undefined
@@ -257,7 +261,7 @@ export async function markdownToQuestions(
   if (!options.disableLlm && probe.available) {
     try {
       onProgress({ percent: 62, stage: 'llm', message: '正在用大模型解析 Markdown…' })
-      llm = await structureMarkdown(markdown, options.signal, (p) => {
+      llm = await structureMarkdown(cleaned, options.signal, (p) => {
         onProgress({ percent: Math.min(92, 62 + Math.round(p.fraction * 30)), stage: 'llm', message: p.message })
       })
       usedLlm = llm.length > 0
