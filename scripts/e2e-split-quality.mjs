@@ -2,8 +2,8 @@ import { chromium } from 'playwright-core'
 import JSZip from 'jszip'
 import fs from 'node:fs'
 
-const BASE = 'http://localhost:5183/'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.E2E_BASE || 'http://localhost:5173/'
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 // 截图中的真实 OCR 形态：封面水印 + 页眉页码 + 推广串 + 题号从 42 起手 + 题号重置为 2
 const LINES = [
@@ -41,7 +41,10 @@ page.on('pageerror', (e) => errors.push(String(e)))
 await page.goto(BASE + '#/online-practice')
 await page.waitForSelector('.online-practice-page')
 await page.locator('input[type=file]').first().setInputFiles('/tmp/e2e-split-quality.docx')
-await page.waitForSelector('.op-review', { timeout: 30000 }).catch(() => {})
+// 当前默认走两阶段套卷模板：阶段①先出 Markdown，人工确认后再解析成题
+await page.waitForSelector('.md-review', { timeout: 40000 })
+await page.getByRole('button', { name: /解析为 \d+ 道题/ }).click()
+await page.waitForSelector('.op-review', { timeout: 40000 })
 await page.waitForTimeout(400)
 
 const text = await page.locator('.op-review').innerText().catch(() => '')

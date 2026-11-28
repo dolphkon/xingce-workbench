@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { Icon } from '../../components/ui'
 import SymbolPicker from '../../components/SymbolPicker'
-import { extractMarkdownImages, ruleMarkdownToQuestions } from '../../lib/markdownFlow'
+import { extractMarkdownImages, ruleMarkdownToQuestions, QUESTION_HEADING_RE } from '../../lib/markdownFlow'
 import {
   formatExamTemplate, pageEditorBody, parseExamTemplate, templateStats, updateTemplatePage,
+  type TemplatePage,
 } from '../../lib/examTemplate'
 import type { LlmBlockReason } from '../../lib/llm'
 
@@ -78,14 +79,16 @@ export default function MarkdownReviewPage({
   const [copied, setCopied] = useState(false)
   const [zoomSrc, setZoomSrc] = useState<string | null>(null)
   const [imageError, setImageError] = useState('')
-  const [selectedPage, setSelectedPage] = useState(1)
+  /** 多套卷页码会重复，使用 `paper:no` 作为唯一选中键 */
+  const [selectedPage, setSelectedPage] = useState<string | null>(null)
   const [visiblePages, setVisiblePages] = useState(PAGE_BATCH)
   const [loadingPage, setLoadingPage] = useState(false)
   const [fullMode, setFullMode] = useState(false)
 
   const template = useMemo(() => parseExamTemplate(draft.markdown), [draft.markdown])
   const stats = useMemo(() => templateStats(draft.markdown), [draft.markdown])
-  const page = template.pages.find((item) => item.no === selectedPage) ?? template.pages[0]
+  const page = template.pages.find((item) => item.id === selectedPage) ?? template.pages[0]
+  const pageIndex = template.pages.findIndex((item) => item.id === page.id)
   const pageText = pageEditorBody(page)
   const pageQuestions = useMemo(() => ruleMarkdownToQuestions(page.body), [page.body])
   const editorRef = fullMode ? fullEditorRef : pageEditorRef
@@ -93,7 +96,7 @@ export default function MarkdownReviewPage({
 
   const writeText = (value: string) => {
     if (fullMode) onMarkdownChange(value)
-    else onMarkdownChange(updateTemplatePage(draft.markdown, page.no, value))
+    else onMarkdownChange(updateTemplatePage(draft.markdown, page.id, value))
   }
 
   /** 在当前编辑器光标处插入文本 */
@@ -113,9 +116,10 @@ export default function MarkdownReviewPage({
   /** 光标所在题块「材料：」行末；找不到时挂到当前页第一个材料行 */
   const materialLineEnd = (text: string, cursor: number): number | null => {
     const before = text.slice(0, cursor)
-    const blockStart = Math.max(before.lastIndexOf('\n#### 第'), before.lastIndexOf('\n## 第'), before.lastIndexOf('#### 第'), before.lastIndexOf('## 第'))
+    const headings = [...before.matchAll(new RegExp(QUESTION_HEADING_RE.source, 'gm'))]
+    const blockStart = headings.length ? (headings[headings.length - 1].index ?? 0) : 0
     const after = text.slice(cursor)
-    const nextBlock = after.search(/\n#{2,4}\s*第?\s*\d{1,3}\s*题/)
+    const nextBlock = after.search(new RegExp(QUESTION_HEADING_RE.source, 'm'))
     const end = cursor + (nextBlock < 0 ? after.length : nextBlock)
     const block = text.slice(Math.max(0, blockStart), end)
     const match = block.match(/^[ \t]*(?:[-*][ \t]*)?材料[ \t]*[:：][^\n]*/m)
@@ -138,11 +142,13 @@ export default function MarkdownReviewPage({
     }
   }
 
-  const selectPage = (no: number) => {
-    if (no === selectedPage) return
+  const selectPage = (id: string) => {
+    if (id === page.id) return
+    const targetIndex = template.pages.findIndex((item) => item.id === id)
+    if (targetIndex < 0) return
     setLoadingPage(true)
-    setSelectedPage(no)
-    if (no > visiblePages) setVisiblePages(no)
+    setSelectedPage(id)
+    if (targetIndex >= visiblePages) setVisiblePages(targetIndex + 1)
     window.setTimeout(() => setLoadingPage(false), 220)
   }
 
@@ -172,11 +178,19 @@ export default function MarkdownReviewPage({
 
   const pageImages = extractMarkdownImages(page.body).images
   const hiddenPages = template.pages.length - Math.min(visiblePages, template.pages.length)
-  // 按页加载是全局的：多个部分时不能每部分各自显示前 N 页
-  const loadedPageNos = new Set(template.pages.slice(0, visiblePages).map((item) => item.no))
-  const groupedPages = template.sections.length
-    ? template.sections.map((section) => ({ section, pages: template.pages.filter((p) => p.section === section && loadedPageNos.has(p.no)) }))
-    : [{ section: '整卷题目', pages: template.pages.filter((p) => loadedPageNos.has(p.no)) }]
+  // 按页加载是全局的；同一 PDF 内多套卷的页码会重复，统一用 id 判定并分组
+  const loadedPageIds = new Set(template.pages.slice(0, visiblePages).map((item) => item.id))
+  const pageGroup = (item: TemplatePage) => {
+    const paper = item.paper > 1 || template.papers.length > 1
+      ? `第 ${item.paper} 套 · ${item.paperTitle || '试卷'}`
+      : (item.paperTitle || '整卷题目')
+    return `${paper} / ${item.section || '整卷题目'}`
+  }
+  const loadedPages = template.pages.filter((item) => loadedPageIds.has(item.id))
+  const groupedPages = Array.from(new Set(loadedPages.map(pageGroup))).map((section) => ({
+    section,
+    pages: loadedPages.filter((item) => pageGroup(item) === section),
+  }))
 
   return (
     <div className="md-review">
@@ -228,8 +242,8 @@ D. 选项正文
 #### 第 4 题
 ...`}</pre>
           <ul>
-            <li>层级固定：<code>## 第X部分</code> → <code>### 第 N 页</code> → <code>#### 第 N 题</code>；旧格式 <code>## 第 N 题</code> 自动识别为第 1 页。</li>
-            <li>题内字段顺序：题型 → 模块 → 材料 → 题干 → 选项 → 答案 → 解析；<code>题干：</code> 必须写出。</li>
+            <li>层级固定：<code>## 第X部分</code> → <code>### 第 N 页</code> → <code>#### 第 N 题</code>；旧格式 <code>## 第 N 题</code> 自动识别为第 1 页。人工写成 <code>##### 第  4  题</code>（# 过多、多余空格）也能识别，点「自动排版」会统一成标准四级标题。</li>
+            <li>题内字段顺序：题型 → 模块 → 材料 → 题干 → 选项 → 答案 → 解析；<code>题干：</code> 必须写出。<strong>模块优先于部分标题</strong>：把 <code>模块：常识</code> 改对后，目录会自动归入「常识判断」。</li>
             <li>材料可为空或含图片；图片按<strong>原始宽高比</strong>显示，符号用工具栏在光标处插入。</li>
             <li>选项支持 <code>A. XXX</code> / <code>1. XXX</code> / <code>① XXX</code>，按出现顺序对应四个选项。</li>
           </ul>
@@ -286,14 +300,14 @@ D. 选项正文
             {groupedPages.map((group) => (
               <div className="mdt-section" key={group.section}>
                 <div className="mdt-section-title">{group.section}</div>
-                {group.pages.slice(0, visiblePages).map((item) => (
+                {group.pages.map((item) => (
                   <button
                     type="button"
-                    key={item.no}
-                    className={`mdt-page-tab${item.no === page.no ? ' active' : ''}`}
-                    onClick={() => selectPage(item.no)}
+                    key={item.id}
+                    className={`mdt-page-tab${item.id === page.id ? ' active' : ''}`}
+                    onClick={() => selectPage(item.id)}
                   >
-                    <span>第 {item.no} 页</span>
+                    <span>{template.papers.length > 1 ? `第${item.paper}套 · ` : ''}第 {item.no} 页</span>
                     <span className="muted small">{item.questionIndexes.length} 题</span>
                   </button>
                 ))}
@@ -309,17 +323,17 @@ D. 选项正文
           <main className="mdt-main">
             <div className="mdt-page-head">
               <div>
-                <b>第 {page.no} 页</b>
-                <span className="muted small"> · {page.section || '整卷题目'} · {pageQuestions.length} 道题</span>
+                <b>{template.papers.length > 1 ? `第 ${page.paper} 套 · ` : ''}第 {page.no} 页</b>
+                <span className="muted small"> · {page.section || page.paperTitle || '整卷题目'} · {pageQuestions.length} 道题</span>
               </div>
               <div className="mdt-page-nav">
-                <button className="btn btn-sm" disabled={page.no <= template.pages[0].no} onClick={() => selectPage(page.no - 1)}>上一页</button>
-                <button className="btn btn-sm" disabled={page.no >= template.pages[template.pages.length - 1].no} onClick={() => selectPage(page.no + 1)}>下一页</button>
+                <button className="btn btn-sm" disabled={pageIndex <= 0} onClick={() => selectPage(template.pages[pageIndex - 1].id)}>上一页</button>
+                <button className="btn btn-sm" disabled={pageIndex >= template.pages.length - 1} onClick={() => selectPage(template.pages[pageIndex + 1].id)}>下一页</button>
               </div>
             </div>
 
             {loadingPage ? (
-              <div className="mdt-loading"><span className="mdt-spinner" /> 正在加载第 {selectedPage} 页…</div>
+              <div className="mdt-loading"><span className="mdt-spinner" /> 正在加载第 {page.no} 页…</div>
             ) : (
               <>
                 <textarea
@@ -335,7 +349,7 @@ D. 选项正文
                     void insertImage(imageItem.getAsFile() ?? undefined)
                   }}
                   spellCheck={false}
-                  aria-label={`第 ${page.no} 页模板编辑器`}
+                  aria-label={`第 ${page.paper} 套第 ${page.no} 页模板编辑器`}
                 />
 
                 <div className="mdt-paper-preview">

@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core'
 
-const BASE = 'http://localhost:5183/'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.E2E_BASE || 'http://localhost:5173/'
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 const papers = [
   {
@@ -75,7 +75,8 @@ await page.getByRole('button', { name: /确认无误并保存/ }).click()
 await page.waitForTimeout(300)
 results.editedStem = await page.locator('.pw-q-stem').first().textContent()
 
-// 添加题目
+// 添加题目（与同一套卷添加前比较，不能和切换前的试卷比）
+results.beforeAddQuestions = await page.locator('.pw-question').count()
 await page.locator('.pw-add-question').click()
 await page.waitForSelector('.modal')
 await page.locator('.modal textarea').first().fill('【题目】新增的题目内容？')
@@ -88,3 +89,8 @@ await page.screenshot({ path: '/tmp/xingce-workbench.png', fullPage: true })
 
 console.log(JSON.stringify({ results, errors }, null, 2))
 await browser.close()
+const ok = errors.length === 0 && results.paperItems === 2 && results.switchedQuestions === 1
+  && results.favorited >= 1 && String(results.editedStem).includes('编辑后的题干')
+  && results.afterAddQuestions > results.beforeAddQuestions
+console.log(ok ? '\nE2E PASS' : '\nE2E FAIL')
+process.exit(ok ? 0 : 1)

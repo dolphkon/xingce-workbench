@@ -2,8 +2,8 @@ import { chromium } from 'playwright-core'
 import JSZip from 'jszip'
 import fs from 'node:fs'
 
-const BASE = 'http://localhost:5173/'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.E2E_BASE || 'http://localhost:5173/'
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 // 含版式噪音 + 题号重置的试卷文本
 const LINES = [
@@ -123,7 +123,7 @@ const ok = blocks >= 2 && !/复制必究|biguo368|共 39 页/.test(mdText)
   && mdText.includes('题干：') && mdText.includes('材料：')
   && afterSymbol.includes('①') && afterImage.includes('![材料图](data:image/png') && imageCount >= 1
   && items === 2 && firstStem?.includes('以下对应表述正确的有') && answer?.includes('B')
-  && firstOptions.some((s) => s.includes('第二项'))
+  && firstOptions.some((s) => /第二项|第2项/.test(s))
   && errors.length === 0
 console.log(ok ? '\nE2E PASS' : '\nE2E FAIL')
 process.exit(ok ? 0 : 1)

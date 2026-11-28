@@ -132,6 +132,42 @@ const cases = [
     detail: (g) => JSON.stringify(g),
   },
   {
+    name: 'AI 错编题号与臆造试卷名：按原文题号锚点纠正',
+    run: () => {
+      const raw = '11. 2026年5月15日，国务院总理李强主持召开国务院常务会议，审议通过《城市更新“十五五”规划》。A.甲 B.乙 C.丙 D.丁 答案：A\n44. 当前，一系列科幻作品仍然______，零星几部的成功或失败。A.甲 B.乙 C.丙 D.丁 答案：B'
+      const ai = `# 公务员考试（行测）
+## 第一部分 言语理解与表达
+### 第 1 页
+#### 第 43 题
+题型：单选题
+模块：常识
+材料：
+题干：2026年5月15日，国务院总理李强主持召开国务院常务会议，审议通过《城市更新“十五五”规划》。
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：A
+
+#### 第 44 题
+题型：单选题
+模块：言语理解
+材料：
+题干：当前，一系列科幻作品仍然______，零星几部的成功或失败。
+A. 甲
+B. 乙
+C. 丙
+D. 丁
+答案：B`
+      const merged = mergeMarkdownWithRules(ai, raw)
+      return { merged, nos: splitMarkdownBlocks(merged).map((b) => b.no) }
+    },
+    expect: (g) => g.nos.join(',') === '11,44'
+      && !g.merged.includes('公务员考试（行测）')
+      && g.merged.includes('第 11 题') && g.merged.includes('第 44 题'),
+    detail: (g) => JSON.stringify({ nos: g.nos, head: g.merged.slice(0, 140) }),
+  },
+  {
     name: '无 AI 兜底：规则文本 → Markdown 中间稿',
     run: () => ruleTextToMarkdown(`1. 甲题：下列说法正确的一项是：
 A.甲

@@ -2,8 +2,8 @@ import { chromium } from 'playwright-core'
 import JSZip from 'jszip'
 import fs from 'node:fs'
 
-const BASE = 'http://localhost:5173/'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.E2E_BASE || 'http://localhost:5173/'
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 const LINES = [
   '1. 甲题：A.甲 B.乙 C.丙 D.丁 答案：A',

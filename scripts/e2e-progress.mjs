@@ -2,8 +2,8 @@ import { chromium } from 'playwright-core'
 import JSZip from 'jszip'
 import fs from 'node:fs'
 
-const BASE = 'http://localhost:5183/'
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const BASE = process.env.E2E_BASE || 'http://localhost:5173/'
+const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 // 构造一个含文本的 docx（zip 包）
 const zip = new JSZip()
@@ -71,3 +71,6 @@ const afterDone = {
 }
 console.log(JSON.stringify({ progressSeen, snapshot, afterDone, errors }, null, 2))
 await browser.close()
+const ok = errors.length === 0 && (progressSeen || afterDone.reviewVisible) && afterDone.progressGone
+console.log(ok ? '\nE2E PASS' : '\nE2E FAIL')
+process.exit(ok ? 0 : 1)
